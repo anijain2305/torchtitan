@@ -1,0 +1,775 @@
+{
+ "job": "raw-sh-l1h0cjmv",
+ "hosts": 4,
+ "fabric": "MNNVL, one NVL72 domain",
+ "rows": [
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1048576,
+   "s": 8.247872442007065e-05,
+   "busbw_GBps": 11.918710029913893
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1048576,
+   "s": 8.234559744596481e-05,
+   "busbw_GBps": 11.93797884149266
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1048576,
+   "s": 0.00032749950885772704,
+   "busbw_GBps": 3.00165335645451
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1048576,
+   "s": 6.985408067703248e-05,
+   "busbw_GBps": 15.010948391806183
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2097152,
+   "s": 7.59916752576828e-05,
+   "busbw_GBps": 25.872307635450213
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2097152,
+   "s": 7.640575617551803e-05,
+   "busbw_GBps": 25.73209269055009
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2097152,
+   "s": 0.00012426239997148514,
+   "busbw_GBps": 15.822002475818607
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2097152,
+   "s": 6.726143509149551e-05,
+   "busbw_GBps": 31.179114705882366
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 4194304,
+   "s": 6.637375801801681e-05,
+   "busbw_GBps": 59.24269044601385
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 4194304,
+   "s": 6.966719776391983e-05,
+   "busbw_GBps": 56.44205775758127
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 4194304,
+   "s": 0.00012127679586410523,
+   "busbw_GBps": 32.423020182740636
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 4194304,
+   "s": 6.213695928454399e-05,
+   "busbw_GBps": 67.50095351130733
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 8388608,
+   "s": 7.493631541728974e-05,
+   "busbw_GBps": 104.94671316846596
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 8388608,
+   "s": 7.515967637300492e-05,
+   "busbw_GBps": 104.6348305302792
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 8388608,
+   "s": 0.0001304972767829895,
+   "busbw_GBps": 60.26424607371673
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 8388608,
+   "s": 0.00011066240072250366,
+   "busbw_GBps": 75.80359675220873
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 7.14438408613205e-05,
+   "busbw_GBps": 220.15389724820133
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 7.474879920482635e-05,
+   "busbw_GBps": 210.41996884659574
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 16777216,
+   "s": 0.00013928960263729097,
+   "busbw_GBps": 112.92041690259721
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 16777216,
+   "s": 0.00021260032057762146,
+   "busbw_GBps": 78.91434949118316
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 8.520320057868958e-05,
+   "busbw_GBps": 369.2030321202261
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 9.057727456092835e-05,
+   "busbw_GBps": 347.29770963509975
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 33554432,
+   "s": 0.0001269964724779129,
+   "busbw_GBps": 247.70199822259644
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 33554432,
+   "s": 0.00041728127002716066,
+   "busbw_GBps": 80.41202519781432
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.0001394173800945282,
+   "busbw_GBps": 451.26769673438474
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.0001767735183238983,
+   "busbw_GBps": 355.90489229683715
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 67108864,
+   "s": 0.00014160552620887758,
+   "busbw_GBps": 444.2945249692928
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 67108864,
+   "s": 0.0004247426390647888,
+   "busbw_GBps": 157.99888644983307
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.0002418651431798935,
+   "busbw_GBps": 520.2449528099686
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.00033170512318611144,
+   "busbw_GBps": 379.3402971632742
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 134217728,
+   "s": 0.00024542628228664396,
+   "busbw_GBps": 512.696190593959
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 134217728,
+   "s": 0.00045355656743049623,
+   "busbw_GBps": 295.9227969299943
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.00041774171590805057,
+   "busbw_GBps": 602.425447152117
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.00041849598288536073,
+   "busbw_GBps": 601.3396789735426
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 268435456,
+   "s": 0.00044959086179733275,
+   "busbw_GBps": 559.7494553024142
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 268435456,
+   "s": 0.00047009828686714176,
+   "busbw_GBps": 571.0198558453047
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.0008084543943405151,
+   "busbw_GBps": 622.566323497534
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.0007971712350845337,
+   "busbw_GBps": 631.3781253617702
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 536870912,
+   "s": 0.0008372223973274231,
+   "busbw_GBps": 601.174170216521
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 536870912,
+   "s": 0.0007924416065216064,
+   "busbw_GBps": 677.4895558003009
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.001584671974182129,
+   "busbw_GBps": 635.2311244221612
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.001575372815132141,
+   "busbw_GBps": 638.9807862182543
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1073741824,
+   "s": 0.0016458431482315064,
+   "busbw_GBps": 611.621442226526
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1073741824,
+   "s": 0.0015554176568984986,
+   "busbw_GBps": 690.3237977515571
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2147483648,
+   "s": 0.0030791168212890626,
+   "busbw_GBps": 653.8452539638143
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2147483648,
+   "s": 0.003019449710845947,
+   "busbw_GBps": 666.7658390760055
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2147483648,
+   "s": 0.003145120143890381,
+   "busbw_GBps": 640.1236925434827
+  },
+  {
+   "tag": "nvl_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2147483648,
+   "s": 0.0030900352001190187,
+   "busbw_GBps": 694.970610016768
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1048576,
+   "s": 7.003264129161834e-05,
+   "busbw_GBps": 14.036883114355025
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1048576,
+   "s": 7.036671787500381e-05,
+   "busbw_GBps": 13.97024089920219
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1048576,
+   "s": 0.00012973567843437196,
+   "busbw_GBps": 7.57725254812831
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1048576,
+   "s": 8.000831305980682e-05,
+   "busbw_GBps": 13.105838129797606
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2097152,
+   "s": 7.28934407234192e-05,
+   "busbw_GBps": 26.971974165136896
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2097152,
+   "s": 7.36326426267624e-05,
+   "busbw_GBps": 26.701201123065655
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2097152,
+   "s": 0.00013224512338638305,
+   "busbw_GBps": 14.86693762049484
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2097152,
+   "s": 6.695615500211715e-05,
+   "busbw_GBps": 31.321272852864507
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 4194304,
+   "s": 7.265152037143707e-05,
+   "busbw_GBps": 54.12357483912929
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 4194304,
+   "s": 7.832064479589462e-05,
+   "busbw_GBps": 50.20591965563228
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 4194304,
+   "s": 0.00014343231916427612,
+   "busbw_GBps": 27.41474183023153
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 4194304,
+   "s": 7.137791812419892e-05,
+   "busbw_GBps": 58.76192680069251
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 8388608,
+   "s": 7.077887654304505e-05,
+   "busbw_GBps": 111.11111653795771
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 8388608,
+   "s": 7.481727749109268e-05,
+   "busbw_GBps": 105.1136884917562
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 8388608,
+   "s": 0.00013611839711666107,
+   "busbw_GBps": 57.7755848333994
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 8388608,
+   "s": 0.0001117958351969719,
+   "busbw_GBps": 75.03506714020429
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 8.235327899456024e-05,
+   "busbw_GBps": 190.98984511641532
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 7.207551598548889e-05,
+   "busbw_GBps": 218.22445229759686
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 16777216,
+   "s": 0.00014481599628925323,
+   "busbw_GBps": 108.61120596500858
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 16777216,
+   "s": 0.00021299265325069427,
+   "busbw_GBps": 78.7689891831765
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 8.565952628850937e-05,
+   "busbw_GBps": 367.23621251475186
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 9.119680523872376e-05,
+   "busbw_GBps": 344.9383990771936
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 33554432,
+   "s": 0.00013751168549060822,
+   "busbw_GBps": 228.7607768588399
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 33554432,
+   "s": 0.0004177305698394775,
+   "busbw_GBps": 80.3255361772878
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.0001397208273410797,
+   "busbw_GBps": 450.28762853240215
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.00017760440707206726,
+   "busbw_GBps": 354.23985833004076
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 67108864,
+   "s": 0.00014267916977405548,
+   "busbw_GBps": 440.9512621893617
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 67108864,
+   "s": 0.0004258328080177307,
+   "busbw_GBps": 157.59439558542832
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.0002430102825164795,
+   "busbw_GBps": 517.7933982750999
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.00033233597874641417,
+   "busbw_GBps": 378.6202158268657
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 134217728,
+   "s": 0.00024573028087615967,
+   "busbw_GBps": 512.0619223294418
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 134217728,
+   "s": 0.00045686629414558414,
+   "busbw_GBps": 293.7790108832814
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.00041951999068260196,
+   "busbw_GBps": 599.8718668698631
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.0004159725606441498,
+   "busbw_GBps": 604.9875972835741
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 268435456,
+   "s": 0.00045055541396141056,
+   "busbw_GBps": 558.5511397751269
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 268435456,
+   "s": 0.00047910401225090027,
+   "busbw_GBps": 560.2863869556242
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.0008129216432571411,
+   "busbw_GBps": 619.1451343125235
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.0008076928257942199,
+   "busbw_GBps": 623.1533374152224
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 536870912,
+   "s": 0.0008417536020278931,
+   "busbw_GBps": 597.9380174761897
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 536870912,
+   "s": 0.0008022080659866334,
+   "busbw_GBps": 669.2414783186006
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.0015959615707397462,
+   "busbw_GBps": 630.7375932200011
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.001583526372909546,
+   "busbw_GBps": 635.6906820253513
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1073741824,
+   "s": 0.0016439552307128907,
+   "busbw_GBps": 612.3238280421299
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1073741824,
+   "s": 0.0015602304935455323,
+   "busbw_GBps": 688.194358745024
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2147483648,
+   "s": 0.003080281734466553,
+   "busbw_GBps": 653.5979801693885
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2147483648,
+   "s": 0.003068134307861328,
+   "busbw_GBps": 656.1857200454064
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2147483648,
+   "s": 0.0031417407989501956,
+   "busbw_GBps": 640.8122276263935
+  },
+  {
+   "tag": "nvl_nvls_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2147483648,
+   "s": 0.0030972735881805422,
+   "busbw_GBps": 693.3464503087422
+  }
+ ]
+}

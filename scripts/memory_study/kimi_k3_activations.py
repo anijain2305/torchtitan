@@ -174,6 +174,7 @@ def run(
     remat_policy: str = "none",
     chunked_loss: int = 0,
     mxfp8: str = "off",
+    attn_res: str = "triton",
 ) -> tuple[object, "SavedTensorRecorder"]:
     # MXFP8 as TorchTitan applies it: converters swap the projection matrices to
     # MXFP8Linear (every converted linear keeps its backward input in MXFP8) and
@@ -199,6 +200,20 @@ def run(
         parallelism=ParallelismConfig(),
     )
     cfg = replace(cfg, vision_encoder=None)
+    if attn_res == "triton":
+        # The fused Triton attention residual (torchtitan_recipes override): it
+        # reads the block stack and the partial sum directly, so it saves no
+        # concatenated copy of them for backward.
+        from torchtitan_recipes.overrides.kimi_attention_residual import (
+            TritonAttentionResidual,
+        )
+
+        triton_cfg = TritonAttentionResidual.Config()
+        cfg = replace(
+            cfg,
+            attention_residual=triton_cfg,
+            layers=[replace(lc, attention_residual=triton_cfg) for lc in cfg.layers],
+        )
     fake = execution == "fake"
     # The min-cut partitioner's ban_recompute_materialized_backward (default
     # True) never recomputes a tensor that backward must materialize, e.g. an

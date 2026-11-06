@@ -1,0 +1,474 @@
+{
+ "job": "raw-sh-flw5z129",
+ "hosts": 4,
+ "fabric": "2 islands of 8 GPUs (MNNVL inside, NCCL_MNNVL_CLIQUE_ID split), IB between",
+ "channels": 32,
+ "rows": [
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1048576,
+   "s": 0.0001445075273513794,
+   "busbw_GBps": 6.80269061423821
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1048576,
+   "s": 0.00011592831462621689,
+   "busbw_GBps": 8.479723035477374
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1048576,
+   "s": 7.868479937314988e-05,
+   "busbw_GBps": 13.326284216946384
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2097152,
+   "s": 0.00011895231902599335,
+   "busbw_GBps": 16.5283032403124
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2097152,
+   "s": 0.00012145151942968369,
+   "busbw_GBps": 16.188187757817996
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2097152,
+   "s": 7.142655551433564e-05,
+   "busbw_GBps": 29.360956648386775
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 4194304,
+   "s": 0.0001232166364789009,
+   "busbw_GBps": 31.91257375925309
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 4194304,
+   "s": 0.00012566143274307252,
+   "busbw_GBps": 31.29170115416158
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 4194304,
+   "s": 8.152703940868378e-05,
+   "busbw_GBps": 51.44678416414135
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 8388608,
+   "s": 0.00012778623402118683,
+   "busbw_GBps": 61.54277931608896
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 8388608,
+   "s": 0.00013000383973121643,
+   "busbw_GBps": 60.492982486205946
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 8388608,
+   "s": 0.00012667392194271087,
+   "busbw_GBps": 66.2220595316675
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 0.00013454271852970123,
+   "busbw_GBps": 116.90443133515096
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 0.0001358092725276947,
+   "busbw_GBps": 115.81418342987267
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 16777216,
+   "s": 0.0002168998271226883,
+   "busbw_GBps": 77.35006626127947
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 0.00014369919896125793,
+   "busbw_GBps": 218.9106148634903
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 0.00014615167677402497,
+   "busbw_GBps": 215.2372158455509
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 33554432,
+   "s": 0.00039662975072860717,
+   "busbw_GBps": 84.59887826962212
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.00019122427701950075,
+   "busbw_GBps": 329.00927110622087
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.00022539255023002624,
+   "busbw_GBps": 279.1332718663151
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 67108864,
+   "s": 0.0007565859556198121,
+   "busbw_GBps": 88.69958991641991
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.0004248754382133484,
+   "busbw_GBps": 296.15531678914266
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.0004401371479034424,
+   "busbw_GBps": 285.8861620732919
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 134217728,
+   "s": 0.001525764584541321,
+   "busbw_GBps": 87.96752091368595
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.0007164342999458314,
+   "busbw_GBps": 351.26492410961833
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.0006194194555282593,
+   "busbw_GBps": 406.2808130322261
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 268435456,
+   "s": 0.003027369022369385,
+   "busbw_GBps": 88.66955234611858
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.0007958399653434754,
+   "busbw_GBps": 632.4342856830197
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.00088613760471344,
+   "busbw_GBps": 567.989076778615
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 536870912,
+   "s": 0.006013177394866944,
+   "busbw_GBps": 89.28240042582007
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.0014686272144317626,
+   "busbw_GBps": 685.4244222823311
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.0015106176137924194,
+   "busbw_GBps": 666.3717878099136
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1073741824,
+   "s": 0.011982233047485353,
+   "busbw_GBps": 89.61116177133113
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2147483648,
+   "s": 0.002788019180297852,
+   "busbw_GBps": 722.1133678803878
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2147483648,
+   "s": 0.002861759901046753,
+   "busbw_GBps": 703.5062302968194
+  },
+  {
+   "tag": "island8",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2147483648,
+   "s": 0.021863174438476563,
+   "busbw_GBps": 98.2237805421653
+  }
+ ],
+ "rail": [
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 0.0011666176319122315,
+   "busbw_GBps": 10.785806468032753
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 0.00017507199943065643,
+   "busbw_GBps": 71.87278400269778
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 0.00023787200450897216,
+   "busbw_GBps": 105.79565280054125
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 0.0002461855858564377,
+   "busbw_GBps": 102.22297910924553
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.0003616064190864563,
+   "busbw_GBps": 139.18903355519868
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.00038957759737968446,
+   "busbw_GBps": 129.195437156892
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.0005925183892250062,
+   "busbw_GBps": 169.89058539037777
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.0006361087560653687,
+   "busbw_GBps": 158.2485621211218
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.0011154367923736572,
+   "busbw_GBps": 180.49125990507775
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.001175119996070862,
+   "busbw_GBps": 171.32428405027295
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.002176121473312378,
+   "busbw_GBps": 185.03249425093097
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.002251667261123657,
+   "busbw_GBps": 178.82446085709066
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.004342995166778565,
+   "busbw_GBps": 185.42649417621607
+  },
+  {
+   "tag": "island8_rail",
+   "group": 4,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.004454089641571045,
+   "busbw_GBps": 180.8015627893723
+  }
+ ],
+ "overlap": {
+  "gpu": "NVIDIA GB300",
+  "sms": 152,
+  "world": 16,
+  "nccl_max_nchannels": "default",
+  "rows": [
+   {
+    "compute": "bf16_gemm",
+    "collective": "all_gather",
+    "size_mb": 1024,
+    "nccl_blocks": 32,
+    "compute_alone_ms": 0.7572720050811768,
+    "compute_overlapped_ms": 0.9740696531353574,
+    "compute_slowdown": 1.2862876834208876,
+    "comm_alone_ms": 1.6259552240371704,
+    "comm_total_ms": 353.2129211425781,
+    "comm_iters": 161,
+    "comm_slowdown": 1.551737795850216,
+    "rank": 0
+   },
+   {
+    "compute": "bf16_gemm",
+    "collective": "reduce_scatter",
+    "size_mb": 1024,
+    "nccl_blocks": 32,
+    "compute_alone_ms": 0.7572720050811768,
+    "compute_overlapped_ms": 0.9805926698626894,
+    "compute_slowdown": 1.2949015192468043,
+    "comm_alone_ms": 1.4760671854019165,
+    "comm_total_ms": 383.0690002441406,
+    "comm_iters": 178,
+    "comm_slowdown": 1.868504358399345,
+    "rank": 0
+   },
+   {
+    "compute": "memory_bound",
+    "collective": "all_gather",
+    "size_mb": 1024,
+    "nccl_blocks": 32,
+    "compute_alone_ms": 0.4437119960784912,
+    "compute_overlapped_ms": 0.5794087727864583,
+    "compute_slowdown": 1.3058217445262912,
+    "comm_alone_ms": 1.438582420349121,
+    "comm_total_ms": 347.4986267089844,
+    "comm_iters": 182,
+    "comm_slowdown": 1.4894204106837432,
+    "rank": 0
+   },
+   {
+    "compute": "memory_bound",
+    "collective": "reduce_scatter",
+    "size_mb": 1024,
+    "nccl_blocks": 32,
+    "compute_alone_ms": 0.4437119960784912,
+    "compute_overlapped_ms": 0.5534168836805555,
+    "compute_slowdown": 1.2472434565024875,
+    "comm_alone_ms": 1.4874240159988403,
+    "comm_total_ms": 372.5481872558594,
+    "comm_iters": 176,
+    "comm_slowdown": 1.801017751665057,
+    "rank": 0
+   }
+  ]
+ }
+}
