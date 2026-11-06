@@ -1,0 +1,185 @@
+{
+ "cluster": "MSL GB300",
+ "job": "raw-sh-kfjmjhtx",
+ "hosts": 2,
+ "gpus": 8,
+ "transport": "InfiniBand between hosts (NCCL_MNNVL_ENABLE=0)",
+ "rows": [
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "all_gather",
+   "size_mb": 256,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.153,
+   "comm_slowdown": 2.9,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 0.684
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "reduce_scatter",
+   "size_mb": 256,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.151,
+   "comm_slowdown": 2.228,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 0.749
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "all_to_all",
+   "size_mb": 256,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.111,
+   "comm_slowdown": 1.435,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 1.446
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "send_recv",
+   "size_mb": 256,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.082,
+   "comm_slowdown": 1.86,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 3.038
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "all_gather",
+   "size_mb": 1024,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.177,
+   "comm_slowdown": 1.887,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 2.536
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "reduce_scatter",
+   "size_mb": 1024,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.178,
+   "comm_slowdown": 1.721,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 2.64
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "all_to_all",
+   "size_mb": 1024,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.117,
+   "comm_slowdown": 1.259,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 5.638
+  },
+  {
+   "rank": 0,
+   "compute": "bf16_gemm",
+   "collective": "send_recv",
+   "size_mb": 1024,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.101,
+   "comm_slowdown": 1.836,
+   "compute_alone_ms": 0.768,
+   "comm_alone_ms": 11.995
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "all_gather",
+   "size_mb": 256,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.121,
+   "comm_slowdown": 1.731,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 0.681
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "reduce_scatter",
+   "size_mb": 256,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.109,
+   "comm_slowdown": 1.956,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 0.745
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "all_to_all",
+   "size_mb": 256,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.056,
+   "comm_slowdown": 1.73,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 1.456
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "send_recv",
+   "size_mb": 256,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.017,
+   "comm_slowdown": 1.776,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 3.037
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "all_gather",
+   "size_mb": 1024,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.16,
+   "comm_slowdown": 1.432,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 2.522
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "reduce_scatter",
+   "size_mb": 1024,
+   "nccl_blocks": 16,
+   "compute_slowdown": 1.136,
+   "comm_slowdown": 1.863,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 2.577
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "all_to_all",
+   "size_mb": 1024,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.065,
+   "comm_slowdown": 1.556,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 5.63
+  },
+  {
+   "rank": 0,
+   "compute": "memory_bound",
+   "collective": "send_recv",
+   "size_mb": 1024,
+   "nccl_blocks": 5,
+   "compute_slowdown": 1.017,
+   "comm_slowdown": 1.726,
+   "compute_alone_ms": 0.444,
+   "comm_alone_ms": 11.983
+  }
+ ]
+}

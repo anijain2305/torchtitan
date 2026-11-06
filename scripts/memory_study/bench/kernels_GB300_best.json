@@ -1,0 +1,9 @@
+{
+ "gpu": "NVIDIA GB300",
+ "provenance": "best of two runs of kimi_k3_kernel_bench.py on GPU 0 of a shared devserver (2026-10-19); another user's jobs overlapped both runs, so each point keeps the fastest time seen",
+ "notes": "expert GEMMs are dense per-expert GEMMs (grouped_mm unavailable on SM103); MXFP8 is GEMM-only with pre-quantized operands; MLA backward counted as 2.5x forward FLOPs",
+ "linears": {},
+ "experts": {},
+ "mla_attention": {},
+ "kda": {}
+}

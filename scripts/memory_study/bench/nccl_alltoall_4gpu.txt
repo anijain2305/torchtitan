@@ -1,0 +1,12 @@
+[devgpu071][[64884,1],0][btl_openib_component.c:1704:init_one_device] error obtaining device attributes for mlx5_0 errno says No space left on device
+--------------------------------------------------------------------------
+WARNING: There was an error initializing an OpenFabrics device.
+
+  Local host:   devgpu071
+  Local device: mlx5_0
+--------------------------------------------------------------------------
+# nThread 1 nGpus 4 minBytes 65536 maxBytes 4294967296 step: 2(factor) warmup iters: 10 iters: 50 agg iters: 1 validation: 1 graph: 0
+#
+# Using devices
+devgpu071: Test CUDA failure fbcode/param_bench/train/comms/cpp/nccl-tests/src/common.cu:1106 'no CUDA-capable device is detected'
+ .. devgpu071 pid 1810418: Test failure fbcode/param_bench/train/comms/cpp/nccl-tests/src/common.cu:1012

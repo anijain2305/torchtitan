@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roofline Analysis for Kimi K3</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.04);
+  --s-experts: #2a78d6;
+  --s-attention: #eb6834;
+  --s-other: #1baf7a;
+  --s-acts: #eda100;
+  --s-acts-full: #9a6400;
+  --s-pergpu: #52514e;
+  --s-weights: #e87ba4;
+  --s-grads: #008300;
+  --s-optstate: #4a3aa7;
+  --s-tiny: #c3c2b7;
+  --note-bg: #fdf1d6;
+}
+html, body { margin: 0; }
+.viz-root {
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  min-height: 100vh;
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding: 32px 24px 64px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
+h2 { font-size: 24px; font-weight: 700; margin: 48px 0 6px; }
+.sub { color: var(--text-secondary); margin: 0 0 16px; max-width: 860px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.topbar { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+button, .seg label {
+  font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+button:hover, .seg label:hover { background: var(--wash); }
+:focus-visible { outline: 2px solid var(--s-experts); outline-offset: 2px; }
+
+/* stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 8px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.tile .label { color: var(--text-secondary); font-size: 13px; }
+.tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.tile .note { color: var(--muted); font-size: 12px; }
+
+/* legend */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0; color: var(--text-secondary); font-size: 13px; }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* layer anatomy */
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.card .meta { color: var(--text-secondary); font-size: 13px; margin: 2px 0 10px; }
+.card .ids { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.strip { display: flex; gap: 2px; height: 14px; margin: 8px 0 4px; }
+.strip > div { border-radius: 2px; min-width: 2px; }
+.strip-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; gap: 12px; }
+.block { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.block.glue { background: transparent; }
+.block-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.block-title { font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.block-total { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+/* context-length toggle, pinned to the top-right while scrolling */
+.ctx-float {
+  position: fixed; top: 12px; right: 16px; z-index: 20;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 8px 6px 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+}
+.ctx-float .ctx-label { color: var(--text-secondary); font-size: 13px; }
+.ctx-float .ctx-batch { color: var(--text-secondary); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.subhead { font-size: 17px; font-weight: 600; margin: 24px 0 4px; }
+.subtitle { color: var(--muted); font-size: 12px; margin: 6px 0 2px; }
+.flow { color: var(--muted); font-size: 12px; text-align: center; line-height: 1; padding: 3px 0; }
+.flow::before { content: ""; display: block; width: 1px; height: 8px; background: var(--axis); margin: 0 auto 3px; }
+.note-step {
+  color: var(--text-secondary); font-size: 12px; background: var(--wash);
+  border-radius: 6px; padding: 4px 8px; margin: 6px 0;
+}
+.row {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 64px 112px;
+  align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px; cursor: default;
+}
+.row:hover, .row:focus { background: var(--wash); outline: none; }
+.row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .formula { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.row.tiny .name, .row.tiny .num { color: var(--muted); }
+.minibar { height: 8px; background: transparent; position: relative; }
+.minibar > div { height: 8px; border-radius: 0 3px 3px 0; }
+.tiny-summary { color: var(--muted); font-size: 12px; padding: 2px 4px; }
+.toolbar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.toolbar label.check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+
+/* chart section */
+.panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 8px; }
+.seg { display: inline-flex; gap: 0; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { border-radius: 0; margin-left: -1px; }
+.seg label:first-of-type { border-radius: 6px 0 0 6px; margin-left: 0; }
+.seg label:last-of-type { border-radius: 0 6px 6px 0; }
+.seg input:checked + label { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+.seg input:focus-visible + label { outline: 2px solid var(--s-experts); outline-offset: 2px; }
+.chart-title { font-weight: 600; margin: 6px 0 2px; }
+.chart-note { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+#bigstrip, #bigstrip4 { display: flex; gap: 2px; height: 28px; margin: 6px 0 4px; }
+#bigstrip > div, #bigstrip4 > div { border-radius: 3px; min-width: 2px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; overflow: visible; white-space: nowrap; }
+svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+svg .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg .rowlabel { fill: var(--text-primary); font-size: 13px; }
+svg .vallabel { fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums;
+  paint-order: stroke; stroke: var(--surface-1); stroke-width: 4px; stroke-linejoin: round; }
+svg .hit { fill: transparent; }
+svg g.bar:hover .hit, svg g.bar:focus .hit { fill: var(--wash); }
+svg g.bar:focus { outline: none; }
+/* linear horizontal bars (section 2) */
+.hbars { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; align-items: center; }
+.hbars .lbl { font-size: 13px; white-space: nowrap; }
+.hbars .lbl .muted { color: var(--muted); }
+.hbars .track { display: flex; align-items: center; gap: 8px; min-width: 0; border-radius: 4px; padding: 2px 0; }
+.hbars .track:hover, .hbars .track:focus { background: var(--wash); outline: none; }
+.hbars .bar { height: 14px; border-radius: 0 4px 4px 0; min-width: 2px; flex: none; }
+.hbars .val { color: var(--text-secondary); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.callout {
+  margin: 12px 0 4px; padding: 10px 14px; border-radius: 8px; background: var(--wash);
+  font-size: 14px;
+}
+.callout b { font-weight: 600; }
+.callout.note {
+  background: var(--note-bg); border-left: 4px solid var(--s-acts);
+  margin-top: 16px; padding: 12px 16px;
+}
+.callout.note .note-label { font-weight: 700; margin-right: 6px; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--text-secondary); }
+table { border-collapse: collapse; margin-top: 8px; width: 100%; }
+th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--grid); font-size: 13px; }
+td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+/* section 6: cells that changed from the row above */
+td.down { background: rgba(12, 163, 12, 0.10); }
+td.up { background: rgba(208, 59, 59, 0.10); }
+td .change { display: block; font-size: 11px; font-weight: 600; }
+td .row-detail { display: block; font-size: 11px; color: var(--text-secondary); }
+#zeroTable td.r, #zeroTable th.r, #zeroBufTable td.r, #zeroBufTable th.r,
+#quantZeroTable td.r, #quantZeroTable th.r { white-space: nowrap; }
+td.down .change { color: #006300; }
+td.up .change { color: #b02a2a; }
+.foot { color: var(--muted); font-size: 12px; margin-top: 32px; }
+
+/* tooltip */
+#tip {
+  position: fixed; z-index: 10; pointer-events: none; display: none;
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); font-size: 12px; max-width: 360px;
+}
+#tip .v { font-size: 15px; font-weight: 600; }
+#tip .k { color: var(--text-secondary); }
+#tip .line { display: flex; align-items: center; gap: 6px; }
+#tip .key { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+@media (max-width: 900px) {
+  .layers { grid-template-columns: 1fr; }
+  .tiles { grid-template-columns: 1fr 1fr; }
+}
+
+
+.blog { max-width: 760px; margin: 0 auto; font-size: 16px; line-height: 1.65; }
+.blog h1 { font-size: 30px; margin: 40px 0 12px; }
+.blog h2 { font-size: 22px; margin: 32px 0 8px; }
+.blog h3 { font-size: 18px; margin: 24px 0 6px; }
+.blog p, .blog li { color: var(--text-primary); }
+.blog a { color: #2a78d6; }
+.blog table { border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.blog th, .blog td { border-bottom: 1px solid var(--grid); padding: 6px 10px; text-align: left; }
+.blog blockquote { background: var(--note-bg); border-left: 3px solid #eda100; margin: 12px 0;
+                   padding: 8px 14px; border-radius: 6px; color: var(--text-secondary); }
+.blog code { background: var(--wash); padding: 1px 4px; border-radius: 4px; }
+.figure { margin: 18px 0 8px; }
+.placeholder { border: 1px dashed var(--axis); border-radius: 10px; padding: 18px; margin: 14px 0;
+               color: var(--muted); text-align: center; font-size: 14px; }
+.notes { border-top: 1px dashed var(--grid); margin-top: 18px; padding-top: 6px; color: var(--muted);
+         font-size: 14px; }
+.notes-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.toc ol { list-style: none; padding-left: 0; margin: 6px 0; }
+.toc li { margin: 3px 0; }
+.toc a { color: var(--text-primary); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.section-sep { border: 0; border-top: 1px solid var(--grid); margin: 40px 0; }
+.foot { color: var(--muted); font-size: 12px; margin: 40px 0; }
+
+</style>
+</head>
+<body>
+<div class="viz-root"><div class="wrap"><div class="blog">
+<h1 id="sec-intro">Roofline Analysis for Kimi K3</h1>
+
+<!-- One paragraph: the question and the answer. -->
+
+<p>If you haven't read it yet, start with Edward Yang's excellent
+<a href="https://deepseek-v3.ezyang.com/index.html">walkthrough of DeepSeek-V3</a>, which
+works out from first principles how the model is sharded across 2,048 H800 GPUs.</p>
+<p>This post tries the same exercise for Kimi K3, a 2.78T-parameter model. The
+setup: 512 GB200 GPUs with 192 GB of memory each, a global batch of 16M tokens
+per step, and two context lengths, 8K and 32K. First we find every parallelism
+config that fits the model on this cluster. Then we build a performance
+roofline to see which of them trains fastest.</p>
+<hr class="section-sep">
+<nav class="toc"><div class="notes-label">Contents</div><ol><li><a href="#sec-setup">1. Kimi K3 at a Glance</a></li><li><a href="#sec-cluster">2. The Cluster and the Training Run</a></li><li><a href="#sec-memory">3. What Fits in 192 GB</a></li><li><a href="#sec-compute_roofline">4. The Compute Roofline</a></li><li><a href="#sec-measurements">5. Does the Roofline Hold?</a></li><li><a href="#sec-communication">6. Communication</a></li><li><a href="#sec-ranking">7. Step Time and Ranking</a></li><li><a href="#sec-pp_deep_dive">8. How the PP Step Time Is Computed</a></li><li><a href="#sec-tp_vs_cp">9. TP vs CP</a></li><li><a href="#sec-what_changes_the_answer">10. What Changes the Answer</a></li><li><a href="#sec-open_problems">11. Open Problems</a></li><li><a href="#sec-methodology">Appendix A: Methodology</a></li></ol></nav>
+<hr class="section-sep">
+<h1 id="sec-setup">1. Kimi K3 at a Glance</h1>
+
+<p>Kimi K3 is a 93-layer decoder. Two kinds of attention alternate through it:</p>
+<ul>
+<li><strong>KDA</strong> (Kimi Delta Attention), a linear-attention layer whose cost grows
+  linearly with sequence length. 69 of the 93 layers use it.</li>
+<li><strong>MLA</strong> (Multi-head Latent Attention), DeepSeek's full attention with
+  compressed keys and values, whose cost grows quadratically. Every fourth layer
+  is MLA, 24 in all.</li>
+</ul>
+<div class="figure"><svg viewBox="0 0 768 344" width="100%" role="img" aria-label="Kimi K3 layers: 69 KDA and 24 MLA, in 8 attention-residual blocks of 12">
+<text x="193.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+0</text>
+<text x="242.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+1</text>
+<text x="291.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+2</text>
+<text x="340.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+3</text>
+<text x="389.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+4</text>
+<text x="438.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+5</text>
+<text x="487.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+6</text>
+<text x="536.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+7</text>
+<text x="585.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+8</text>
+<text x="634.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+9</text>
+<text x="683.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+10</text>
+<text x="732.0" y="24" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">+11</text>
+<text x="158" y="52.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 0  (layers 0-11)</text>
+<g><title>Layer 0: KDA attention, dense FFN</title><rect x="170" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">0*</text>
+</g>
+<g><title>Layer 1: KDA attention, MoE</title><rect x="219" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">1</text>
+</g>
+<g><title>Layer 2: KDA attention, MoE</title><rect x="268" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">2</text>
+</g>
+<g><title>Layer 3: MLA attention, MoE</title><rect x="317" y="34" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">3</text>
+</g>
+<g><title>Layer 4: KDA attention, MoE</title><rect x="366" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">4</text>
+</g>
+<g><title>Layer 5: KDA attention, MoE</title><rect x="415" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">5</text>
+</g>
+<g><title>Layer 6: KDA attention, MoE</title><rect x="464" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">6</text>
+</g>
+<g><title>Layer 7: MLA attention, MoE</title><rect x="513" y="34" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">7</text>
+</g>
+<g><title>Layer 8: KDA attention, MoE</title><rect x="562" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">8</text>
+</g>
+<g><title>Layer 9: KDA attention, MoE</title><rect x="611" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">9</text>
+</g>
+<g><title>Layer 10: KDA attention, MoE</title><rect x="660" y="34" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">10</text>
+</g>
+<g><title>Layer 11: MLA attention, MoE</title><rect x="709" y="34" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="52.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">11</text>
+</g>
+<text x="158" y="83.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 1  (layers 12-23)</text>
+<g><title>Layer 12: KDA attention, MoE</title><rect x="170" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">12</text>
+</g>
+<g><title>Layer 13: KDA attention, MoE</title><rect x="219" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">13</text>
+</g>
+<g><title>Layer 14: KDA attention, MoE</title><rect x="268" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">14</text>
+</g>
+<g><title>Layer 15: MLA attention, MoE</title><rect x="317" y="65" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">15</text>
+</g>
+<g><title>Layer 16: KDA attention, MoE</title><rect x="366" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">16</text>
+</g>
+<g><title>Layer 17: KDA attention, MoE</title><rect x="415" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">17</text>
+</g>
+<g><title>Layer 18: KDA attention, MoE</title><rect x="464" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">18</text>
+</g>
+<g><title>Layer 19: MLA attention, MoE</title><rect x="513" y="65" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">19</text>
+</g>
+<g><title>Layer 20: KDA attention, MoE</title><rect x="562" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">20</text>
+</g>
+<g><title>Layer 21: KDA attention, MoE</title><rect x="611" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">21</text>
+</g>
+<g><title>Layer 22: KDA attention, MoE</title><rect x="660" y="65" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">22</text>
+</g>
+<g><title>Layer 23: MLA attention, MoE</title><rect x="709" y="65" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="83.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">23</text>
+</g>
+<text x="158" y="114.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 2  (layers 24-35)</text>
+<g><title>Layer 24: KDA attention, MoE</title><rect x="170" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">24</text>
+</g>
+<g><title>Layer 25: KDA attention, MoE</title><rect x="219" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">25</text>
+</g>
+<g><title>Layer 26: KDA attention, MoE</title><rect x="268" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">26</text>
+</g>
+<g><title>Layer 27: MLA attention, MoE</title><rect x="317" y="96" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">27</text>
+</g>
+<g><title>Layer 28: KDA attention, MoE</title><rect x="366" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">28</text>
+</g>
+<g><title>Layer 29: KDA attention, MoE</title><rect x="415" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">29</text>
+</g>
+<g><title>Layer 30: KDA attention, MoE</title><rect x="464" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">30</text>
+</g>
+<g><title>Layer 31: MLA attention, MoE</title><rect x="513" y="96" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">31</text>
+</g>
+<g><title>Layer 32: KDA attention, MoE</title><rect x="562" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">32</text>
+</g>
+<g><title>Layer 33: KDA attention, MoE</title><rect x="611" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">33</text>
+</g>
+<g><title>Layer 34: KDA attention, MoE</title><rect x="660" y="96" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">34</text>
+</g>
+<g><title>Layer 35: MLA attention, MoE</title><rect x="709" y="96" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="114.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">35</text>
+</g>
+<text x="158" y="145.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 3  (layers 36-47)</text>
+<g><title>Layer 36: KDA attention, MoE</title><rect x="170" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">36</text>
+</g>
+<g><title>Layer 37: KDA attention, MoE</title><rect x="219" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">37</text>
+</g>
+<g><title>Layer 38: KDA attention, MoE</title><rect x="268" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">38</text>
+</g>
+<g><title>Layer 39: MLA attention, MoE</title><rect x="317" y="127" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">39</text>
+</g>
+<g><title>Layer 40: KDA attention, MoE</title><rect x="366" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">40</text>
+</g>
+<g><title>Layer 41: KDA attention, MoE</title><rect x="415" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">41</text>
+</g>
+<g><title>Layer 42: KDA attention, MoE</title><rect x="464" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">42</text>
+</g>
+<g><title>Layer 43: MLA attention, MoE</title><rect x="513" y="127" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">43</text>
+</g>
+<g><title>Layer 44: KDA attention, MoE</title><rect x="562" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">44</text>
+</g>
+<g><title>Layer 45: KDA attention, MoE</title><rect x="611" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">45</text>
+</g>
+<g><title>Layer 46: KDA attention, MoE</title><rect x="660" y="127" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">46</text>
+</g>
+<g><title>Layer 47: MLA attention, MoE</title><rect x="709" y="127" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="145.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">47</text>
+</g>
+<text x="158" y="176.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 4  (layers 48-59)</text>
+<g><title>Layer 48: KDA attention, MoE</title><rect x="170" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">48</text>
+</g>
+<g><title>Layer 49: KDA attention, MoE</title><rect x="219" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">49</text>
+</g>
+<g><title>Layer 50: KDA attention, MoE</title><rect x="268" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">50</text>
+</g>
+<g><title>Layer 51: MLA attention, MoE</title><rect x="317" y="158" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">51</text>
+</g>
+<g><title>Layer 52: KDA attention, MoE</title><rect x="366" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">52</text>
+</g>
+<g><title>Layer 53: KDA attention, MoE</title><rect x="415" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">53</text>
+</g>
+<g><title>Layer 54: KDA attention, MoE</title><rect x="464" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">54</text>
+</g>
+<g><title>Layer 55: MLA attention, MoE</title><rect x="513" y="158" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">55</text>
+</g>
+<g><title>Layer 56: KDA attention, MoE</title><rect x="562" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">56</text>
+</g>
+<g><title>Layer 57: KDA attention, MoE</title><rect x="611" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">57</text>
+</g>
+<g><title>Layer 58: KDA attention, MoE</title><rect x="660" y="158" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">58</text>
+</g>
+<g><title>Layer 59: MLA attention, MoE</title><rect x="709" y="158" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="176.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">59</text>
+</g>
+<text x="158" y="207.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 5  (layers 60-71)</text>
+<g><title>Layer 60: KDA attention, MoE</title><rect x="170" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">60</text>
+</g>
+<g><title>Layer 61: KDA attention, MoE</title><rect x="219" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">61</text>
+</g>
+<g><title>Layer 62: KDA attention, MoE</title><rect x="268" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">62</text>
+</g>
+<g><title>Layer 63: MLA attention, MoE</title><rect x="317" y="189" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">63</text>
+</g>
+<g><title>Layer 64: KDA attention, MoE</title><rect x="366" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">64</text>
+</g>
+<g><title>Layer 65: KDA attention, MoE</title><rect x="415" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">65</text>
+</g>
+<g><title>Layer 66: KDA attention, MoE</title><rect x="464" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">66</text>
+</g>
+<g><title>Layer 67: MLA attention, MoE</title><rect x="513" y="189" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">67</text>
+</g>
+<g><title>Layer 68: KDA attention, MoE</title><rect x="562" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">68</text>
+</g>
+<g><title>Layer 69: KDA attention, MoE</title><rect x="611" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">69</text>
+</g>
+<g><title>Layer 70: KDA attention, MoE</title><rect x="660" y="189" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">70</text>
+</g>
+<g><title>Layer 71: MLA attention, MoE</title><rect x="709" y="189" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="207.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">71</text>
+</g>
+<text x="158" y="238.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 6  (layers 72-83)</text>
+<g><title>Layer 72: KDA attention, MoE</title><rect x="170" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">72</text>
+</g>
+<g><title>Layer 73: KDA attention, MoE</title><rect x="219" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">73</text>
+</g>
+<g><title>Layer 74: KDA attention, MoE</title><rect x="268" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">74</text>
+</g>
+<g><title>Layer 75: MLA attention, MoE</title><rect x="317" y="220" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">75</text>
+</g>
+<g><title>Layer 76: KDA attention, MoE</title><rect x="366" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">76</text>
+</g>
+<g><title>Layer 77: KDA attention, MoE</title><rect x="415" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">77</text>
+</g>
+<g><title>Layer 78: KDA attention, MoE</title><rect x="464" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">78</text>
+</g>
+<g><title>Layer 79: MLA attention, MoE</title><rect x="513" y="220" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">79</text>
+</g>
+<g><title>Layer 80: KDA attention, MoE</title><rect x="562" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="585.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">80</text>
+</g>
+<g><title>Layer 81: KDA attention, MoE</title><rect x="611" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="634.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">81</text>
+</g>
+<g><title>Layer 82: KDA attention, MoE</title><rect x="660" y="220" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="683.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">82</text>
+</g>
+<g><title>Layer 83: MLA attention, MoE</title><rect x="709" y="220" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="732.0" y="238.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">83</text>
+</g>
+<text x="158" y="269.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 7  (layers 84-92)</text>
+<g><title>Layer 84: KDA attention, MoE</title><rect x="170" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="193.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">84</text>
+</g>
+<g><title>Layer 85: KDA attention, MoE</title><rect x="219" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="242.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">85</text>
+</g>
+<g><title>Layer 86: KDA attention, MoE</title><rect x="268" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="291.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">86</text>
+</g>
+<g><title>Layer 87: MLA attention, MoE</title><rect x="317" y="251" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="340.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">87</text>
+</g>
+<g><title>Layer 88: KDA attention, MoE</title><rect x="366" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="389.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">88</text>
+</g>
+<g><title>Layer 89: KDA attention, MoE</title><rect x="415" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="438.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">89</text>
+</g>
+<g><title>Layer 90: KDA attention, MoE</title><rect x="464" y="251" width="46" height="28" rx="4" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="487.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">90</text>
+</g>
+<g><title>Layer 91: MLA attention, MoE</title><rect x="513" y="251" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="536.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">91</text>
+</g>
+<g><title>Layer 92: MLA attention, MoE</title><rect x="562" y="251" width="46" height="28" rx="4" fill="#eb6834" fill-opacity="0.9"/>
+<text x="585.0" y="269.0" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">92</text>
+</g>
+<rect x="170" y="300" width="12" height="12" rx="2" fill="#2a78d6" fill-opacity="0.8"/>
+<text x="188" y="310" font-size="12" fill="#52514e" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">KDA (linear attention), 69 layers</text>
+<rect x="420" y="300" width="12" height="12" rx="2" fill="#eb6834" fill-opacity="0.9"/>
+<text x="438" y="310" font-size="12" fill="#52514e" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">MLA (full attention), 24 layers</text>
+<text x="170" y="330" font-size="12" fill="#898781" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">* layer 0 has a dense FFN instead of MoE</text>
+</svg></div>
+
+<p>Every layer except the first is a mixture-of-experts (MoE) layer: 896 routed
+experts, of which each token picks 16, plus one shared expert that every token
+uses.</p>
+<p><strong>Attention residuals</strong> are new in Kimi K3. Instead of taking only the previous
+layer's output, each layer's input is a learned, softmax-weighted mix of many
+earlier layers' outputs. Keeping every layer's output around would be
+expensive, so the layers are grouped into blocks of 12 (the rows above).
+Inside a block, outputs add up into a running sum; when the block ends, that
+sum becomes a single entry on a stack. Each layer's input mixes the stack
+entries (the embedding and every finished block) with the current block's
+running sum. With 93 layers that is at most 9 sources instead of 93, which
+keeps memory down and, as we will see later, keeps the data passed between
+pipeline stages manageable.</p>
+<div class="figure"><svg viewBox="0 0 760 330" width="100%" role="img" aria-label="Attention residuals for a layer in block 2">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+<text x="20" y="30" font-size="13" fill="#0b0b0b" text-anchor="start" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Sources (for a layer in block 2)</text>
+<rect x="20" y="46" width="210" height="36" rx="6" fill="#4a3aa7" fill-opacity="0.12" stroke="#4a3aa7" stroke-width="1.5"/>
+<text x="32" y="68.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Embedding output</text>
+<rect x="20" y="92" width="210" height="36" rx="6" fill="#4a3aa7" fill-opacity="0.12" stroke="#4a3aa7" stroke-width="1.5"/>
+<text x="32" y="114.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 0: sum of layers 0-11</text>
+<rect x="20" y="138" width="210" height="36" rx="6" fill="#4a3aa7" fill-opacity="0.12" stroke="#4a3aa7" stroke-width="1.5"/>
+<text x="32" y="160.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Block 1: sum of layers 12-23</text>
+<rect x="20" y="206" width="210" height="36" rx="6" fill="#1baf7a" fill-opacity="0.12" stroke="#1baf7a" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="32" y="228.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Partial: sum of block 2 so far</text>
+<text x="24" y="193" font-size="11" fill="#898781" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">the stack: one entry per finished block</text>
+<rect x="290" y="96" width="214" height="74" rx="8" fill="#fcfcfb" stroke="#52514e" stroke-width="1.5"/>
+<text x="397.0" y="122" font-size="13" fill="#0b0b0b" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Softmax mix over sources</text>
+<text x="397.0" y="142" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">per token, learned query</text>
+<text x="397.0" y="159" font-size="11" fill="#898781" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">(one per sublayer)</text>
+<path d="M230,64.0 C270,64.0 250,133.0 290,133.0" fill="none" stroke="#898781" stroke-width="1.3" marker-end="url(#arr)"/>
+<path d="M230,110.0 C270,110.0 250,133.0 290,133.0" fill="none" stroke="#898781" stroke-width="1.3" marker-end="url(#arr)"/>
+<path d="M230,156.0 C270,156.0 250,133.0 290,133.0" fill="none" stroke="#898781" stroke-width="1.3" marker-end="url(#arr)"/>
+<path d="M230,224.0 C270,224.0 250,133.0 290,133.0" fill="none" stroke="#898781" stroke-width="1.3" marker-end="url(#arr)"/>
+<rect x="540" y="96" width="190" height="74" rx="8" fill="#fcfcfb" stroke="#52514e" stroke-width="1.5"/>
+<text x="635.0" y="126" font-size="13" fill="#0b0b0b" text-anchor="middle" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Norm, then attention</text>
+<text x="635.0" y="146" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">(or the FFN / MoE)</text>
+<path d="M504,133.0 L540,133.0" stroke="#898781" stroke-width="1.3" marker-end="url(#arr)"/>
+<path d="M635.0,170 L635.0,264.0 L125.0,264.0 L125.0,244.0" fill="none" stroke="#1baf7a" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="627.0" y="256.0" font-size="12" fill="#52514e" text-anchor="end" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">output is added to the partial</text>
+<text x="20" y="298" font-size="12" fill="#52514e" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Each layer does this twice: once before its attention and once before its FFN / MoE, each with</text>
+<text x="20" y="316" font-size="12" fill="#52514e" text-anchor="start" font-weight="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif">its own learned query. Both outputs are added to the partial, which the next layer then mixes in.</text>
+</svg></div>
+
+<h2 id="sec-setup-1">1.1 Almost All of It Is Experts</h2>
+
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Parameters</th>
+<th>Share</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Routed experts</td>
+<td>2,723B</td>
+<td>98.0%</td>
+</tr>
+<tr>
+<td>Attention</td>
+<td>36B</td>
+<td>1.3%</td>
+</tr>
+<tr>
+<td>Shared experts</td>
+<td>12B</td>
+<td>0.4%</td>
+</tr>
+<tr>
+<td>Everything else</td>
+<td>8B</td>
+<td>0.3%</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>2,779B</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Routed experts are 98% of the model: 92 layers x 896 experts of 33M parameters
+each. Yet each token only visits 16 of the 896, so a token touches about
+<strong>105B parameters</strong>, under 4% of the model. That gap sets up everything that
+follows: memory has to hold all 2.78T parameters, but compute only pays for the
+105B each token uses.</p>
+<hr class="section-sep">
+<h1 id="sec-cluster">2. The Cluster and the Training Run</h1>
+
+<p>The intro gave the headline numbers; here are the details the rest of the post
+leans on.</p>
+<h2 id="sec-cluster-1">2.1 The Cluster</h2>
+
+<ul>
+<li>512 GB200 GPUs, each with 192 GB of HBM, 2.5 PFLOPS of dense bf16 compute and
+  5 PFLOPS in FP8.</li>
+<li>The GPUs sit in 8 NVLink domains of 64. Inside a domain every GPU reaches
+  every other at 900 GB/s per direction; between domains traffic goes over
+  InfiniBand, which we assume runs at 50 GB/s per GPU per direction -- about 18x
+  slower. Which parallelism lands on which link turns out to matter a lot
+  (<a href="#sec-communication">Section 6</a>).</li>
+</ul>
+<h2 id="sec-cluster-2">2.2 The Training Run</h2>
+
+<ul>
+<li>A global batch of 16M tokens per step: 2,048 sequences at 8K context, or 512
+  at 32K.</li>
+<li>fp32 master weights, gradients and optimizer state (Muon), with bf16 compute.</li>
+<li>Full activation rematerialization: each layer's forward is recomputed during
+  backward, trading compute for memory.</li>
+<li>Routed experts run on DistMoE, which fuses token dispatch, the grouped expert
+  GEMMs and the combine into a few kernels.</li>
+</ul>
+<hr class="section-sep">
+<h1 id="sec-memory">3. What Fits in 192 GB</h1>
+
+<!-- The memory story: persistent state forces sharding; activations decide
+the rest. Detailed version: kimi_k3_params.html. -->
+
+<ul>
+<li>Persistent state alone (fp32 weights, gradients, optimizer) is about 33 TB:
+  it has to be sharded over all 512 GPUs.</li>
+<li>Activations: full remat keeps one input per layer; DistMoE adds its saved
+  inputs, outputs and scratch.</li>
+<li>Sharding options: FSDP + EP 64, PP 8 / 16 (ZeRO-1 or ZeRO-3), CP and TP to
+  split each sequence.</li>
+</ul>
+<div class="placeholder">table: configs-that-fit (to come)</div>
+<p>At 8K all 45 configs fit; at 32K, 37 of 45 (nothing at CP 1 x TP 1).</p>
+<blockquote>
+<p>TODO: the fake-PG runs peaked at 166 GiB (8K) and 244 GiB (32K CP 2) against
+125 GB and 177 GB on the memory page. Explain or fix before publishing.</p>
+</blockquote>
+<hr class="section-sep">
+<h1 id="sec-compute_roofline">4. The Compute Roofline</h1>
+
+<ul>
+<li>Every GPU processes 16M / 512 = 32K tokens per step, whatever the
+  parallelism, so the FLOPs per GPU are fixed.</li>
+<li>8 FLOPs per parameter per token for the linears (forward, remat forward,
+  dgrad, wgrad); routed experts the same with k = 16; MLA 4.5x its forward;
+  KDA from a measured model.</li>
+<li>One assumed efficiency for every matmul: 70% of peak in bf16, 60% in MXFP8.</li>
+</ul>
+<div class="placeholder">table: step-compute (to come)</div>
+<p>Roofline compute per step: 17.1 s at 8K, 18.6 s at 32K (bf16).</p>
+<blockquote>
+<p>TODO: justify 70% -- big dense GEMMs reach 68-73% in forward / dgrad.</p>
+</blockquote>
+<hr class="section-sep">
+<h1 id="sec-measurements">5. Does the Roofline Hold?</h1>
+
+<h2 id="sec-measurements-1">5.1 Kernels</h2>
+
+<ul>
+<li>Dense GEMMs: 64-69% of peak at 2K+ rows; wgrad and small projections lower.</li>
+<li>DistMoE GEMM kernels: 60-67% at 2K+ local tokens, 44-56% at 1K; helper
+  kernels a roughly fixed ~2 ms per call. MXFP8 at most 43%.</li>
+<li>MLA (FA4): 36-52% forward + backward.</li>
+<li>KDA: costed from a measured model; under CP 1.3-2x slower than the same
+  tokens without CP.</li>
+</ul>
+<div class="placeholder">table: dense-gemms (to come)</div>
+<div class="placeholder">table: distmoe (to come)</div>
+<div class="placeholder">table: attention (to come)</div>
+<h2 id="sec-measurements-2">5.2 A Whole Step</h2>
+
+<p>Fake-process-group runs of TorchTitan's real step (FSDP + EP 64):</p>
+<ul>
+<li>8K: 31.4 s measured against 17.1 s roofline.</li>
+<li>32K CP 2: 31.6 s against 18.6 s.</li>
+<li>Where the gap goes: about 5-6 s of memory-bound work outside the roofline,
+  4-6 s of eager-mode idle, and KDA under CP.</li>
+</ul>
+<div class="placeholder">chart: fake-pg-pies (to come)</div>
+<hr class="section-sep">
+<h1 id="sec-communication">6. Communication</h1>
+
+<ul>
+<li>Topology: 8 NVLink domains of 64; InfiniBand between them.</li>
+<li>Which link each parallelism uses: EP, CP, TP inside a domain; a PP stage sits
+  in one domain, so FSDP within a stage is NVLink and PP hops are InfiniBand;
+  without PP, FSDP spans all 512 GPUs and crosses InfiniBand.</li>
+<li>Overlap rules: FSDP behind the neighbouring layer's compute, EP behind the
+  expert GEMMs (fused in DistMoE), TP async behind its GEMMs, CP assumed hidden.</li>
+</ul>
+<div class="placeholder">table: link-bandwidth (to come)</div>
+<div class="placeholder">table: link-placement (to come)</div>
+<blockquote>
+<p>TODO: nothing multi-node was measured; NVLink numbers are from 4 GPUs.</p>
+</blockquote>
+<hr class="section-sep">
+<h1 id="sec-ranking">7. Step Time and Ranking</h1>
+
+<ul>
+<li>Step = compute + PP bubble + exposed communication (+ FSDP staging copies).</li>
+<li>Two compute numbers: roofline (70% of peak) and calibrated (measured kernel
+  efficiencies + work outside the roofline).</li>
+<li>Without PP, FSDP over InfiniBand dominates (40+ s exposed at 8K).</li>
+<li>With PP, FSDP and EP hide on NVLink; the cost moves to the bubble and the
+  inter-stage hops.</li>
+</ul>
+<div class="placeholder">chart: ranking-bars (to come)</div>
+<div class="placeholder">table: ranking (to come)</div>
+<hr class="section-sep">
+<h1 id="sec-pp_deep_dive">8. How the PP Step Time Is Computed</h1>
+
+<ol>
+<li>Split 93 layers into stages (12 per stage at PP 8).</li>
+<li>Time each stage for one microbatch.</li>
+<li>Time the hop after each stage: hidden state + AttnRes blocks so far.</li>
+<li>1F1B: t_step = (M + P - 1) x (t_stage + 2 x t_hop).</li>
+</ol>
+<p>Worked example: PP 8, ZeRO-1, TP 2 at 8K -- compute 17.8 s, hops 1.3 s,
+bubble 1.9 s, step 21.1 s (roofline).</p>
+<div class="placeholder">table: pp-stages (to come)</div>
+<p>Observations:</p>
+<ul>
+<li>The last stage is underloaded (9 layers): idle about 25% of every slot.</li>
+<li>The hops grow with depth because the AttnRes stack grows.</li>
+<li>At 32K the bubble is large because M is small: M = P x cp x tp.</li>
+</ul>
+<hr class="section-sep">
+<h1 id="sec-tp_vs_cp">9. TP vs CP</h1>
+
+<ul>
+<li>At equal degree, the only real difference is KDA (and a little from dense
+  GEMM rows).</li>
+<li>Degree 2: TP slightly faster (no CP summary pass). Degree 4+: CP faster (KDA's
+  TP speedup flattens).</li>
+<li>Mixing pays both overheads.</li>
+<li>TP's real advantage is memory: it shards the dense weights (127 GB vs 150 GB
+  at 8K under ZeRO-1). Without PP it also halves FSDP's InfiniBand traffic.</li>
+</ul>
+<div class="placeholder">table: tp-vs-cp (to come)</div>
+<blockquote>
+<p>TODO: measure dense GEMMs at N / tp, async-TP overlap, KDA under CP 8.</p>
+</blockquote>
+<hr class="section-sep">
+<h1 id="sec-what_changes_the_answer">10. What Changes the Answer</h1>
+
+<ul>
+<li>More memory (GB300, 288 GB): no-PP FSDP + EP 64 at 32K CP 1 x TP 1 becomes the
+  fastest (25.8 s calibrated, 19.4 s roofline): one microbatch of 32K tokens
+  hides FSDP even at roofline speed.</li>
+<li>Rule of thumb: no-PP FSDP over InfiniBand works once a microbatch carries
+  about 20-30K tokens per GPU.</li>
+<li>Larger global batch: PP's bubble disappears, its hops and per-call penalty
+  stay; PP wins on the roofline from 2x the batch, no-PP stays ahead with
+  today's kernels.</li>
+<li>Faster kernels expose no-PP's FSDP: improvement moves the answer toward PP.</li>
+</ul>
+<hr class="section-sep">
+<h1 id="sec-open_problems">11. Open Problems</h1>
+
+<ul>
+<li>Memory: fake-PG peaks 40%+ above the memory model.</li>
+<li>KDA under CP: 0.7 s of the 2.4 s at 32K CP 2 unexplained (multi-document
+  kernels?); CP 8 not measured.</li>
+<li>MXFP8 DistMoE at most 43% of peak.</li>
+<li>DistMoE faults instead of raising when an expert overflows its scratch.</li>
+<li>Multi-node communication not measured; flat FSDP rings assumed.</li>
+<li>Eager-mode idle (4-6 s per step) needs a CUDA-graph or compiled run.</li>
+</ul>
+<hr class="section-sep">
+<h1 id="sec-methodology">Appendix A: Methodology</h1>
+
+<ul>
+<li>Kernel benchmarks: GB300 devserver (shared), CUDA-graph replays for GEMMs,
+  minimum over repeats where other jobs interfered.</li>
+<li>DistMoE: EP 4 over NVLink, Kimi K3's 14 / 28 local experts, balanced routing,
+  25% scratch headroom; GEMM kernel time separated from helper kernels.</li>
+<li>Fake-process-group runs: one GPU stands in for rank 0 of 512; real kernels,
+  collectives move no data; DistMoE stand-in (SwiGLU, 1,024 experts).</li>
+<li>Communication: nccl-tests on 4 GPUs; InfiniBand assumed.</li>
+<li>Configs and memory: the memory page (kimi_k3_params.html).</li>
+</ul>
+<p class="foot">Draft built 2026-11-06 13:10 by scripts/memory_study/kimi_k3_blog.py from blog/*.md.</p>
+</div></div></div>
+</body>
+</html>

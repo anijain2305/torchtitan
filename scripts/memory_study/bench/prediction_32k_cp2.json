@@ -1,0 +1,20 @@
+{
+ "written_at": "2026-11-06T11:44:29",
+ "config": "kimi_k3_fsdp_ep64_32k_cp2_distmoe_longdocs_profiled",
+ "basis": "8K c4 fake-PG run (DistMoE stand-in) + kernel microbenchmarks; written before the run",
+ "terms_s": {
+  "gemms": 17.0,
+  "mla": 2.6,
+  "kda": 1.1,
+  "non_matmul": 5.2,
+  "idle": 4.0
+ },
+ "reasoning": {
+  "gemms": "same tokens per GPU per step; 8K run measured 17.0 s (1.01x roofline); 16K local GEMMs at least as efficient",
+  "mla": "Ulysses CP 2 -> 48 heads at T = 32K: FA4 fwd+bwd 52%, remat fwd 66% -> 2.6 s (roofline 2.2 s)",
+  "kda": "model 1.02 s + ~10% for the unmeasured CP summary pass",
+  "non_matmul": "8K: 6.07 s; FSDP staging copies (1.80 s) are per microbatch and halve with 2 microbatches",
+  "idle": "8K: 7.05 s over ~129K kernels (~55 us each); half the microbatches, some extra CP kernels"
+ },
+ "step_s": 29.9
+}

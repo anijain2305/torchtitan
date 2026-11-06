@@ -1,0 +1,395 @@
+{
+ "cluster": "MSL GB300 (msl_infra_pytorch_dct, region ofn)",
+ "job": "raw-sh-q4dkqt1q",
+ "hosts": 4,
+ "gpus": 16,
+ "transport": "InfiniBand between hosts (NCCL_MNNVL_ENABLE=0), NVLink inside a host; 4 x 800 Gb/s XDR HCAs per host, one per GPU",
+ "nccl": "2.32.3 (pip, torch 2.16.0.dev20261030+cu130)",
+ "busbw_convention": "nccl-tests",
+ "rows": [
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1048576,
+   "s": 0.00011053759604692459,
+   "busbw_GBps": 8.89326378676344
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1048576,
+   "s": 0.00011161535978317261,
+   "busbw_GBps": 8.807389967739955
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1048576,
+   "s": 0.00011504063755273819,
+   "busbw_GBps": 8.545154311660903
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1048576,
+   "s": 6.535039842128754e-05,
+   "busbw_GBps": 16.04544157849284
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2097152,
+   "s": 0.00010814528167247773,
+   "busbw_GBps": 18.17998871142942
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2097152,
+   "s": 0.0001102924793958664,
+   "busbw_GBps": 17.826056778932887
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2097152,
+   "s": 0.00011614271998405457,
+   "busbw_GBps": 16.928138072450228
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2097152,
+   "s": 6.509631872177124e-05,
+   "busbw_GBps": 32.21613819613143
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 4194304,
+   "s": 0.00011093888431787491,
+   "busbw_GBps": 35.4443802475345
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 4194304,
+   "s": 0.00011413951963186264,
+   "busbw_GBps": 34.45046915111001
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 4194304,
+   "s": 0.00011675775796175004,
+   "busbw_GBps": 33.677933429384446
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 4194304,
+   "s": 8.158911764621735e-05,
+   "busbw_GBps": 51.40764014861799
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 8388608,
+   "s": 0.0001163724809885025,
+   "busbw_GBps": 67.57886343230052
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 8388608,
+   "s": 0.00011960767954587936,
+   "busbw_GBps": 65.75096206078798
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 8388608,
+   "s": 0.00011870143562555313,
+   "busbw_GBps": 66.25294764595947
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 8388608,
+   "s": 0.0001268051266670227,
+   "busbw_GBps": 66.15353984880775
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 0.00013676351308822632,
+   "busbw_GBps": 115.00611270385716
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 0.00013957184553146362,
+   "busbw_GBps": 112.69206866261791
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 16777216,
+   "s": 0.00018427711725234986,
+   "busbw_GBps": 85.35319107722493
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 16777216,
+   "s": 0.0002172486335039139,
+   "busbw_GBps": 77.22587585204649
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 0.000181416317820549,
+   "busbw_GBps": 173.39829392368384
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 0.00019699199497699737,
+   "busbw_GBps": 159.68811323360245
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 33554432,
+   "s": 0.000313887357711792,
+   "busbw_GBps": 100.2183720597111
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 33554432,
+   "s": 0.00039667904376983643,
+   "busbw_GBps": 84.58836564975981
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.00027260690927505493,
+   "busbw_GBps": 230.78857453506603
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.0003196226358413696,
+   "busbw_GBps": 196.8401262769913
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 67108864,
+   "s": 0.0005758245587348938,
+   "busbw_GBps": 109.25994566509188
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 67108864,
+   "s": 0.0007571123242378235,
+   "busbw_GBps": 88.63792313453322
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.00048610284924507143,
+   "busbw_GBps": 258.85287485028203
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.0005006560087203979,
+   "busbw_GBps": 251.32849263429486
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 134217728,
+   "s": 0.0011205989122390746,
+   "busbw_GBps": 112.28738367109439
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 134217728,
+   "s": 0.0014961851835250855,
+   "busbw_GBps": 89.70662821548365
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.0007963794469833374,
+   "busbw_GBps": 316.00293170959424
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.0008155199885368348,
+   "busbw_GBps": 308.586231530036
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 268435456,
+   "s": 0.002197645664215088,
+   "busbw_GBps": 114.51265510988658
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 268435456,
+   "s": 0.0030292389392852785,
+   "busbw_GBps": 88.6148175763695
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.0013935359716415407,
+   "busbw_GBps": 361.1793956112302
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.0014912256002426148,
+   "busbw_GBps": 337.518669152483
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 536870912,
+   "s": 0.004403641700744629,
+   "busbw_GBps": 114.29551135254539
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 536870912,
+   "s": 0.006021875381469727,
+   "busbw_GBps": 89.15344107784722
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.002712819337844849,
+   "busbw_GBps": 371.06524048877566
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.002844831943511963,
+   "busbw_GBps": 353.84619548292375
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 1073741824,
+   "s": 0.008682623863220214,
+   "busbw_GBps": 115.93649291478803
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 1073741824,
+   "s": 0.011992915153503418,
+   "busbw_GBps": 89.53134498632171
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "allgather",
+   "bytes": 2147483648,
+   "s": 0.005331590175628662,
+   "busbw_GBps": 377.6107790885503
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "reducescatter",
+   "bytes": 2147483648,
+   "s": 0.005571385383605957,
+   "busbw_GBps": 361.35822266471143
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "alltoall",
+   "bytes": 2147483648,
+   "s": 0.017284038543701172,
+   "busbw_GBps": 116.48122138293282
+  },
+  {
+   "tag": "ib_4hosts",
+   "world": 16,
+   "op": "sendrecv",
+   "bytes": 2147483648,
+   "s": 0.021869997024536132,
+   "busbw_GBps": 98.19313855373278
+  }
+ ]
+}

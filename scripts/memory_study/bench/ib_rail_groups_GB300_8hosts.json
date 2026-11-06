@@ -1,0 +1,231 @@
+{
+ "job": "raw-sh-gjlwn63r",
+ "hosts": 8,
+ "what": "AG/RS in 4 concurrent groups of one GPU per host (8 GPUs each), IB only",
+ "rows": [
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 0.0003126975893974304,
+   "busbw_GBps": 46.94652116854673
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 0.0003099456131458283,
+   "busbw_GBps": 47.3633546576221
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 0.000679967999458313,
+   "busbw_GBps": 43.17869079631591
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 0.0004553183913230896,
+   "busbw_GBps": 64.48263140586899
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.0012003264427185058,
+   "busbw_GBps": 48.920238620262374
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.0008011487722396851,
+   "busbw_GBps": 73.29507082166789
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.002095887899398804,
+   "busbw_GBps": 56.033775486602735
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.0014511584043502808,
+   "busbw_GBps": 80.92880256761563
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.0037379746437072757,
+   "busbw_GBps": 62.83644122503945
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.0028148865699768066,
+   "busbw_GBps": 83.44244720380877
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.007232937812805176,
+   "busbw_GBps": 64.94761328769265
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.00542639684677124,
+   "busbw_GBps": 86.56979230693625
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.012415376663208008,
+   "busbw_GBps": 75.67423216278293
+  },
+  {
+   "tag": "pxn_off",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.010623964309692382,
+   "busbw_GBps": 88.43441756885984
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 16777216,
+   "s": 0.0012379584312438964,
+   "busbw_GBps": 11.858285084136082
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 16777216,
+   "s": 0.00024568000435829163,
+   "busbw_GBps": 59.75278304941365
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 33554432,
+   "s": 0.000495398372411728,
+   "busbw_GBps": 59.265693298642205
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 33554432,
+   "s": 0.0004599808156490326,
+   "busbw_GBps": 63.82902721404344
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 67108864,
+   "s": 0.0008265983462333679,
+   "busbw_GBps": 71.03843876239974
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 67108864,
+   "s": 0.0008015936017036438,
+   "busbw_GBps": 73.25439708500741
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 134217728,
+   "s": 0.001534982442855835,
+   "busbw_GBps": 76.50935197766948
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 134217728,
+   "s": 0.0014511743783950806,
+   "busbw_GBps": 80.92791173027928
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 268435456,
+   "s": 0.0032154529094696044,
+   "busbw_GBps": 73.04757078179202
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 268435456,
+   "s": 0.002807971239089966,
+   "busbw_GBps": 83.64794508227317
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 536870912,
+   "s": 0.006725110530853271,
+   "busbw_GBps": 69.85194456579397
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 536870912,
+   "s": 0.00543682861328125,
+   "busbw_GBps": 86.40368888076608
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "allgather",
+   "bytes": 1073741824,
+   "s": 0.01393535614013672,
+   "busbw_GBps": 67.4201711496971
+  },
+  {
+   "tag": "pxn_on",
+   "group": 8,
+   "op": "reducescatter",
+   "bytes": 1073741824,
+   "s": 0.010661741256713868,
+   "busbw_GBps": 88.12107453914872
+  }
+ ]
+}
