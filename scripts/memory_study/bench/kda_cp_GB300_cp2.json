@@ -1,0 +1,38 @@
+{
+ "gpu": "NVIDIA GB300",
+ "results": [
+  {
+   "seq_len": 8192,
+   "cp": 2,
+   "local_tokens": 4096,
+   "cp_fwd_ms": 0.6488494000000005,
+   "cp_fwd_bwd_ms": 2.2039871999999976,
+   "local_fwd_ms": 0.22086800000000015,
+   "local_fwd_bwd_ms": 1.6413616999999991,
+   "full_fwd_ms": 0.4278078999999998,
+   "full_fwd_bwd_ms": 3.2413271000000017
+  },
+  {
+   "seq_len": 16384,
+   "cp": 2,
+   "local_tokens": 8192,
+   "cp_fwd_ms": 1.1861694000000005,
+   "cp_fwd_bwd_ms": 4.069488400000006,
+   "local_fwd_ms": 0.4293059000000004,
+   "local_fwd_bwd_ms": 3.244696600000001,
+   "full_fwd_ms": 0.8440779999999994,
+   "full_fwd_bwd_ms": 6.430411100000002
+  },
+  {
+   "seq_len": 32768,
+   "cp": 2,
+   "local_tokens": 16384,
+   "cp_fwd_ms": 2.252838799999998,
+   "cp_fwd_bwd_ms": 10.046095499999996,
+   "local_fwd_ms": 0.8435822999999999,
+   "local_fwd_bwd_ms": 6.4271524000000015,
+   "full_fwd_ms": 1.6742290000000009,
+   "full_fwd_bwd_ms": 12.810803099999998
+  }
+ ]
+}
