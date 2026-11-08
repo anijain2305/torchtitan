@@ -1,0 +1,18 @@
+{
+ "trace": "outputs/profiling/perf_sweep_8k_cp2_tp1/iteration_4/rank0_trace.json.gz",
+ "fwd_bwd_span_s": 107.7290326953125,
+ "fwd_bwd_busy_s": 24.000258446777345,
+ "optimizer_span_s": 7.020012526855469,
+ "optimizer_busy_s": 0.8119613369140625,
+ "fwd_bwd_by_class_s": {
+  "Dense GEMM bf16": 8.053673127999865,
+  "DistMoE grouped GEMM (+fused dispatch/combine)": 5.357863132000134,
+  "FSDP buffer copies": 3.1953007280000185,
+  "Other elementwise, casts, reductions": 2.8016643589999846,
+  "Attention residuals": 1.7110050960000127,
+  "KDA": 1.404968157999997,
+  "MLA": 0.6885456019999999,
+  "MXFP8 quantize": 0.5980035459999996,
+  "Norms (RMSNorm, L2)": 0.2236255070000003
+ }
+}
