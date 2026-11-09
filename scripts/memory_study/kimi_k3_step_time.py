@@ -12,10 +12,9 @@ Per layer and microbatch on one GPU, forward and backward separately:
     the memory-bound work at its measured bandwidth (blog section 5.2);
   - communication: what each parallelism moves, on its link (NVLink from the
     4-GPU nccl-tests curves; InfiniBand at IB_GBPS per GPU per direction);
-  - overlap: each collective runs in the window it hides behind, stretched by
-    the measured collective slowdown; the compute it overlaps is charged the
-    measured compute slowdown for as long as the collective runs; what does
-    not fit in the window is exposed:
+  - overlap: a collective and the compute it hides behind slow each other
+    down by the measured factors for as long as they run together; whatever
+    of the collective is left when the compute ends runs alone, exposed:
       FSDP (ZeRO-3, without PP): the next layer's all-gather behind this
         layer's forward; all-gather + reduce-scatter behind its backward;
       EP: DistMoE's dispatch + combine behind the routed-expert GEMMs (fused,
@@ -40,7 +39,7 @@ import blog_figures as bf
 HERE = Path(__file__).resolve().parent
 NUM_GPUS, NUM_LAYERS, BLOCK = 512, 93, 12
 NVLINK_DOMAIN = 64
-IB_GBPS = 50.0  # GB200 NIC line rate per GPU per direction (400 Gb/s)
+IB_GBPS = 100.0  # GB200 NIC line rate per GPU per direction (2 x 400 Gb/s CX7)
 # Measured on the GB300 cluster (islands of 4 or 8 GPUs on NVLink, 800 Gb/s NIC
 # per GPU): point-to-point send/recv reaches 0.90 of line rate. NCCL runs
 # all-gather / reduce-scatter as a flat ring per channel, with 4 channels per
@@ -82,11 +81,18 @@ COMM_SLOWDOWN = 1.6
 # domains.
 COMPUTE_SLOWDOWN_IB = 1.29
 COMM_SLOWDOWN_IB = 1.7
+# A group with one GPU per NVL domain (an expert shard's FSDP replicas) uses
+# one NIC, and NCCL only 1 (all-gather) to 8 (reduce-scatter) SMs: measured with
+# one GPU per host (8 hosts, 1 GB), the overlapped compute slows down about
+# 1.10x and the collective about 1.2x.
+COMPUTE_SLOWDOWN_ONE_NIC = 1.10
+COMM_SLOWDOWN_ONE_NIC = 1.2
 # A one-way transfer (PP hop) across InfiniBand (rank i -> rank i + N / 2, 8
 # and 32 GPUs alike): NCCL runs one thread block per side (the NIC moves the
 # data), and the compute slows down about the same on the sender and the
-# receiver: GEMMs 1.10x, memory-bound kernels 1.01x.
-HOP_GEMM_SLOWDOWN, HOP_MEM_SLOWDOWN = 1.10, 1.01
+# receiver: GEMMs 1.10x, memory-bound kernels 1.01x; we charge 1.10x on all of
+# it. The hop itself slows down 1.0-1.2x meanwhile, which we leave out.
+HOP_COMPUTE_SLOWDOWN = 1.10
 
 
 def _interp(pts, x):
@@ -163,17 +169,42 @@ class Links:
 
 
 class Config:
-    def __init__(self, ctx, P=1, cp=1, tp=1, v=1, transport=None):
+    """ctx: sequence length ("4K", "8K", "32K"). rows: sequences packed into one
+    microbatch (attention per sequence). expert_precision: the routed experts'
+    GEMMs, "mxfp8" or "bf16". prefetch: FSDP prefetches the next layer's
+    all-gather in backward (without PP); off, under CUDA graphs, a layer's
+    backward, reduce-scatter and the next all-gather run in sequence."""
+
+    def __init__(
+        self,
+        ctx,
+        P=1,
+        cp=1,
+        tp=1,
+        v=1,
+        transport=None,
+        *,
+        rows=1,
+        expert_precision="mxfp8",
+        prefetch=True,
+    ):
         d = bf._data()
         self.ctx, self.P, self.cp, self.tp = ctx, P, cp, tp
-        self.T = 8192 if ctx == "8K" else 32768
+        self.rows, self.expert_precision, self.prefetch = (
+            rows,
+            expert_precision,
+            prefetch,
+        )
+        self.T = bf.CTX_TOKENS[ctx]
         self.ep = NUM_GPUS // P if P > 1 else 64
-        self.Tm = self.T // cp  # GEMM rows per microbatch (after the SP all-gather)
-        self.Tl = self.T // (cp * tp)  # local tokens per microbatch
+        self.Tm = (
+            rows * self.T // cp
+        )  # GEMM rows per microbatch (after the SP all-gather)
+        self.Tl = rows * self.T // (cp * tp)  # local tokens per microbatch
         self.stage_gpus = NUM_GPUS // P
         self.dp = NUM_GPUS // (P * cp * tp)
         self.M = int(
-            d["global_tokens"] // self.T // self.dp
+            d["global_tokens"] // (rows * self.T) // self.dp
         )  # microbatches per pipeline
         self.v = v
         self.transport = transport or ("chain" if v == 1 else "cache")
@@ -190,8 +221,76 @@ class Config:
         ]
 
 
+def simulate_pipeline(P, v, M, fwd, bwd, hop, jit_fwd_recv=False):
+    """Time of one step of 1F1B (v = 1) or interleaved 1F1B on P ranks, by event
+    simulation in PyTorch's op order: virtual stage q runs on rank q % P; rank r
+    runs (v - 1) P + 2 (P - 1 - r) warmup forwards when interleaved (P - 1 - r
+    otherwise), then alternates forward / backward. fwd[q] / bwd[q]: one
+    microbatch's forward / backward time on virtual stage q; hop[q]: a hop
+    across boundary q -> q + 1 (either direction). An op starts when its rank
+    is free and its input has arrived. Interleaved 1F1B posts its receives
+    early, so a hop moves as soon as it is sent; plain 1F1B posts a forward
+    receive only when the rank is ready for it (jit_fwd_recv), and the transfer
+    starts then."""
+    Q = P * v
+
+    def nth(k, back):
+        mb = (k // Q) * P + k % P if v > 1 else k
+        c = (k // P) % v
+        return mb, (v - 1 - c if back else c)
+
+    order = []
+    for r in range(P):
+        n = M * v
+        warm = min(n, (v - 1) * P + 2 * (P - 1 - r)) if v > 1 else min(n, P - 1 - r)
+        ops = [(0,) + nth(k, False) for k in range(warm)]
+        f, b = warm, 0
+        while b < n:
+            if f < n:
+                ops.append((0,) + nth(f, False))
+                f += 1
+            ops.append((1,) + nth(b, True))
+            b += 1
+        order.append(ops)
+    end = {}
+    free, idx = [0.0] * P, [0] * P
+    remaining = P * M * v * 2
+    while remaining:
+        progressed = False
+        for r in range(P):
+            while idx[r] < len(order[r]):
+                back, mb, c = order[r][idx[r]]
+                q = c * P + r
+                if not back:
+                    dep, h = ((0, mb, q - 1), hop[q - 1]) if q > 0 else (None, 0.0)
+                else:
+                    dep, h = (
+                        ((0, mb, q), 0.0) if q == Q - 1 else ((1, mb, q + 1), hop[q])
+                    )
+                if dep is not None and dep not in end:
+                    break
+                if dep is None:
+                    ready = 0.0
+                elif not back and jit_fwd_recv:
+                    ready = max(free[r], end[dep]) + h
+                else:
+                    ready = end[dep] + h
+                start = max(free[r], ready)
+                free[r] = end[(back, mb, q)] = start + (bwd[q] if back else fwd[q])
+                idx[r] += 1
+                remaining -= 1
+                progressed = True
+        if not progressed:
+            raise RuntimeError("pipeline schedule deadlock")
+    return max(free)
+
+
 class StepModel:
-    def __init__(self):
+    def __init__(self, overlap_tp_cp: bool = False):
+        """overlap_tp_cp: a what-if in which TP's collectives hide behind the
+        dense GEMMs and CP's behind the rest of the layer, with the NVLink
+        overlap penalties, instead of running exposed as in TorchTitan today."""
+        self.overlap_tp_cp = overlap_tp_cp
         d = bf._data()
         self.S = d["symbols"]
         sc = {
@@ -217,41 +316,49 @@ class StepModel:
         S = self.S
         mla = i in MLA_LAYERS
         scope = "mla_layer" if mla else "kda_layer"
-        g = self.shapes["dense"]["data"][f"m{c.Tm}_tp{c.tp}"][scope]["gemms"]
+        g = self.shapes[bf.DENSE_SHAPES]["data"][f"m{c.Tm}_tp{c.tp}"][scope]["gemms"]
         fwd_d = sum(x["fwd"] for x in g) * 1e-3
         bwd_d = sum(x["fwd"] + x["dgrad"] + x["wgrad"] for x in g) * 1e-3
         if (
             i == 0
         ):  # dense FFN instead of MoE (about 3 D F parameters), at the layer's rate
-            eff = self.shapes["dense"]["data"][f"m{c.Tm}_tp{c.tp}"]["kda_layer"]["eff"]
-            ffn = 2 * c.Tm * 3 * S["D"] * S["F"] / c.tp / (eff * bf.MXFP8_PEAK)
+            eff = self.shapes[bf.DENSE_SHAPES]["data"][f"m{c.Tm}_tp{c.tp}"][
+                "kda_layer"
+            ]["eff"]
+            ffn = 2 * c.Tm * 3 * S["D"] * S["F"] / c.tp / (eff * bf.DENSE_PEAK)
             fwd_d, bwd_d = fwd_d + ffn, bwd_d + 3 * ffn
         ex_f = ex_b = 0.0
         if i > 0:
+            peak = bf.MXFP8_PEAK if c.expert_precision == "mxfp8" else bf.BF16_PEAK
             t = (
                 8
                 * c.Tl
                 * S["k"]
                 * self.n_expert
-                / (bf.distmoe_eff(c.Tl, c.ep) * bf.MXFP8_PEAK)
+                / (bf.distmoe_eff(c.Tl, c.ep, c.expert_precision) * peak)
             )
             ex_f, ex_b = t / 4, 3 * t / 4
         if mla:
             fa = self.fa4[str(c.T)][str(96 // (c.cp * c.tp))]
             F = (
-                c.T * c.T * (96 // (c.cp * c.tp)) * (S["Dn"] + S["Dr"] + S["Dv"])
+                c.rows
+                * c.T
+                * c.T
+                * (96 // (c.cp * c.tp))
+                * (S["Dn"] + S["Dr"] + S["Dv"])
             )  # one forward
             at_f = F / (fa["fwd_tflops"] * 1e12)
             at_b = 3.5 * F / (fa["fwd_bwd_tflops"] * 1e12)  # remat forward + backward
         else:
             cpf = {"fwd_bwd": 1.0, "fwd": 1.0}
             if c.cp > 1:
+                # measured at CP 2 and 4; a larger CP takes CP 4's slowdown
                 r = {
                     x["seq_len"]: x
-                    for x in bf._bench(f"kda_cp_GB300_cp{c.cp}.json")["results"]
+                    for x in bf._bench(f"kda_cp_GB300_cp{min(c.cp, 4)}.json")["results"]
                 }[c.T]
                 cpf = {k: r[f"cp_{k}_ms"] / r[f"local_{k}_ms"] for k in cpf}
-            sp = bf.KDA_TP_SPEEDUP[c.ctx][c.tp]
+            sp = 1.0 if c.tp == 1 else bf.KDA_TP_SPEEDUP[c.ctx][c.tp]
             tok = c.Tm  # tokens through the GPU's 1 / TP of the heads
             at_f = tok * bf.KDA_FWD_US * cpf["fwd"] * 1e-6 / sp
             at_b = tok * bf.KDA_FWD_BWD_US * cpf["fwd_bwd"] * 1e-6 / sp
@@ -283,7 +390,14 @@ class StepModel:
         meas = bf._bench("step_graphs_fsdp_ep64_8k.json")["fwd_bwd_by_class_s"]
         ref = bf.nonmatmul_bytes("8K")
         nm = bf.nonmatmul_bytes(
-            c.ctx, cp=c.cp, tp=c.tp, ep=c.ep, P=c.P, split_weights=True
+            c.ctx,
+            cp=c.cp,
+            tp=c.tp,
+            ep=c.ep,
+            P=c.P,
+            split_weights=True,
+            rows=c.rows,
+            expert_mxfp8=c.expert_precision == "mxfp8",
         )
         wq = nm.pop("MXFP8 quantize (weights)")
         eff = {
@@ -306,10 +420,13 @@ class StepModel:
         nd = self.dense_params(i) / c.tp
         ag = L.time("allgather", 2 * nd, n_dense, link)
         rs = L.time("reducescatter", 4 * nd, n_dense, link)
+        ag_e = rs_e = 0.0
         if i > 0 and edp > 1:
             shard = S["E"] * self.n_expert / c.ep
-            ag += L.time("allgather", 2 * shard, edp, link)
-            rs += L.time("reducescatter", 4 * shard, edp, link)
+            ag_e = L.time("allgather", 2 * shard, edp, link)
+            rs_e = L.time("reducescatter", 4 * shard, edp, link)
+            ag += ag_e
+            rs += rs_e
         ep = (
             L.time("alltoall", c.Tl * S["k"] * S["L"] * 2, c.ep, "nvlink") * 2
             if i > 0
@@ -330,11 +447,19 @@ class StepModel:
             else:
                 cpt = L.time(
                     "allgather",
-                    c.cp * S["H"] / c.tp * S["K"] * S["K"] * 4,
+                    c.rows * c.cp * S["H"] / c.tp * S["K"] * S["K"] * 4,
                     c.cp,
                     "nvlink",
                 )
-        return {"fsdp_ag": ag, "fsdp_rs": rs, "ep": ep, "tp": tp, "cp": cpt}
+        return {
+            "fsdp_ag": ag,
+            "fsdp_rs": rs,
+            "fsdp_ag_experts": ag_e,
+            "fsdp_rs_experts": rs_e,
+            "ep": ep,
+            "tp": tp,
+            "cp": cpt,
+        }
 
     def hop_bytes(self, c, vs):
         """Bytes of the hop into virtual stage vs on the critical path, by
@@ -384,19 +509,31 @@ class StepModel:
 
     # ------------------------------------------------------------ overlap
     @staticmethod
-    def overlap(comm, window, ib=False):
-        """A collective of solo time comm in a compute window: (exposed time,
-        compute penalty). ib: the collective crosses NVLink domains."""
+    def overlap(comm, window, ib=False, slowdowns=None):
+        """A collective of solo time comm overlapping compute of solo time
+        window: (exposed time, compute penalty, collective penalty). While they
+        run together, the compute runs comp_sd x slower and the collective
+        comm_sd x slower, so they share T = min(comm_sd x comm, comp_sd x
+        window) of wall time; whichever is left runs alone at full speed after
+        that. Exposed is what would not fit even at full speed; the collective
+        penalty is the extra exposed time its slowdown causes. ib: the
+        collective crosses NVLink domains."""
         if comm <= 0:
-            return 0.0, 0.0
-        comp_sd, comm_sd = (
+            return 0.0, 0.0, 0.0
+        comp_sd, comm_sd = slowdowns or (
             (COMPUTE_SLOWDOWN_IB, COMM_SLOWDOWN_IB)
             if ib
             else (COMPUTE_SLOWDOWN, COMM_SLOWDOWN)
         )
-        stretched = comm * comm_sd
-        hidden = min(stretched, window)
-        return max(0.0, stretched - window), hidden * (comp_sd - 1)
+        overlapped_compute = min(
+            comm * comm_sd / comp_sd, window
+        )  # compute run alongside it
+        compute_penalty = overlapped_compute * (comp_sd - 1)
+        tail = max(
+            0.0, comm - overlapped_compute * comp_sd / comm_sd
+        )  # the collective left, at full speed
+        exposed = max(0.0, comm - window)
+        return exposed, compute_penalty, tail - exposed
 
     def stage_period(self, c, layers):
         """Per microbatch on one GPU of the stage (or the whole model without
@@ -410,6 +547,8 @@ class StepModel:
             "exposed_tp": 0.0,
             "exposed_cp": 0.0,
             "penalty_fsdp": 0.0,
+            "penalty_fsdp_comm": 0.0,
+            "penalty_tpcp": 0.0,
         }
         lcs = [self.layer_compute(c, i) for i in layers]
         for j, i in enumerate(layers):
@@ -419,19 +558,58 @@ class StepModel:
             if c.P == 1:  # ZeRO-3: gather + reduce-scatter every microbatch
                 nxt = lcs[j + 1]["fwd"] if j + 1 < len(lcs) else lc["fwd"]
                 ib = c.stage_gpus > NVLINK_DOMAIN
-                e1, p1 = self.overlap(cm["fsdp_ag"], lc["fwd"] + mem_per / 4, ib)
-                e2, p2 = self.overlap(
-                    cm["fsdp_ag"] + cm["fsdp_rs"], lc["bwd"] + 3 * mem_per / 4, ib
+
+                def mix(total, experts):
+                    # the expert part runs on one NIC (its own, smaller
+                    # slowdowns); weight both by their share of the time
+                    if not ib or total <= 0:
+                        return None
+                    f = experts / total
+                    return (
+                        COMPUTE_SLOWDOWN_IB * (1 - f) + COMPUTE_SLOWDOWN_ONE_NIC * f,
+                        COMM_SLOWDOWN_IB * (1 - f) + COMM_SLOWDOWN_ONE_NIC * f,
+                    )
+
+                e1, p1, q1 = self.overlap(
+                    cm["fsdp_ag"],
+                    lc["fwd"] + mem_per / 4,
+                    ib,
+                    mix(cm["fsdp_ag"], cm["fsdp_ag_experts"]),
                 )
+                if c.prefetch:
+                    bwd_c = cm["fsdp_ag"] + cm["fsdp_rs"]
+                    e2, p2, q2 = self.overlap(
+                        bwd_c,
+                        lc["bwd"] + 3 * mem_per / 4,
+                        ib,
+                        mix(bwd_c, cm["fsdp_ag_experts"] + cm["fsdp_rs_experts"]),
+                    )
+                else:
+                    # the layer's all-gather is issued after the previous
+                    # layer's reduce-scatter on the same communicator, and its
+                    # backward waits for it: backward, reduce-scatter and
+                    # all-gather run one after another
+                    e2, p2, q2 = cm["fsdp_ag"] + cm["fsdp_rs"], 0.0, 0.0
                 out["exposed_fsdp"] += e1 + e2
                 out["penalty_fsdp"] += p1 + p2
+                out["penalty_fsdp_comm"] += q1 + q2
             out["exposed_ep"] += max(0.0, cm["ep"] - lc["ex_fwd"]) + 2 * max(
                 0.0, cm["ep"] - lc["ex_bwd"] / 2
             )
             # TP and CP run in sequence with the compute: forward, remat forward
             # and backward each pay their collectives in full
-            out["exposed_tp"] += 3 * cm["tp"]
-            out["exposed_cp"] += 3 * cm["cp"]
+            if not self.overlap_tp_cp:
+                out["exposed_tp"] += 3 * cm["tp"]
+                out["exposed_cp"] += 3 * cm["cp"]
+            else:
+                dense = lc["dense_fwd"] + lc["dense_bwd"]
+                for key, comm, window in (
+                    ("exposed_tp", cm["tp"], dense),
+                    ("exposed_cp", cm["cp"], lc["fwd"] + lc["bwd"] - dense),
+                ):
+                    e, p, q = self.overlap(3 * comm, window)
+                    out[key] += e
+                    out["penalty_tpcp"] += p + q
         if layers[0] == 0:  # embedding (memory-bound) on the first stage
             tl, D = c.Tl, self.S["D"]
             out["memory"] += (4 + 10) * tl * D / bf.HBM_BW
@@ -462,6 +640,10 @@ class StepModel:
             "config": f"{c.ctx} P{c.P} v{c.v} CP{c.cp} TP{c.tp} {c.transport if c.P > 1 else ''}",
             "M": c.M,
         }
+        if c.rows > 1 or c.expert_precision != "mxfp8" or not c.prefetch:
+            res[
+                "config"
+            ] += f" rows{c.rows} {c.expert_precision}{'' if c.prefetch else ' no-prefetch'}"
         if c.P == 1:
             per = self.stage_period(c, list(range(NUM_LAYERS)))
             res["parts"] = {k: v * c.M for k, v in per.items()}
@@ -480,50 +662,56 @@ class StepModel:
             res["split"] = self._split(res["detail"])
             return res
         L = self.links
+        Q = c.P * c.v
+        hop_pen = 1 - 1 / HOP_COMPUTE_SLOWDOWN
+        # hop across boundary q -> q + 1 (the transport sets its bytes)
+        hop = [
+            L.time("sendrecv", self.hop_bytes(c, q + 1), 2, "ib") for q in range(Q - 1)
+        ]
+        vstage = []  # per virtual stage: (seconds per microbatch, forward share, parts)
+        for q in range(Q):
+            lay = c.vstages[q]
+            per = self.stage_period(c, lay)
+            lcs = [self.layer_compute(c, i) for i in lay]
+            fwd = sum(x["fwd"] for x in lcs)
+            share = fwd / max(fwd + sum(x["bwd"] for x in lcs), 1e-12)
+            vstage.append([sum(per.values()), share, per])
         ranks = []
         for r in range(c.P):
-            t = hops = pen = 0.0
+            qs = list(range(r, Q, c.P))
+            t = sum(vstage[q][0] for q in qs)
             parts = {}
-            for vs in range(r, c.P * c.v, c.P):
-                per = self.stage_period(c, c.vstages[vs])
-                t += sum(per.values())
-                for k, x in per.items():
+            for q in qs:
+                for k, x in vstage[q][2].items():
                     parts[k] = parts.get(k, 0.0) + x
-            mm, mem = parts["compute"], parts["memory"]
-            # a hop slows whatever the rank computes meanwhile, by its mix of GEMMs
-            # and memory-bound work
-            hop_pen = (
-                mm * (HOP_GEMM_SLOWDOWN - 1) + mem * (HOP_MEM_SLOWDOWN - 1)
-            ) / max(mm + mem, 1e-9)
-            for vs in range(r, c.P * c.v, c.P):
-                # forward hop into the chunk and the backward hop (its gradient)
-                # out of it sit on the critical path
-                t_in = (
-                    L.time("sendrecv", self.hop_bytes(c, vs), 2, "ib")
-                    if vs > 0
-                    else 0.0
-                )
-                t_out = (
-                    L.time("sendrecv", self.hop_bytes(c, vs + 1), 2, "ib")
-                    if vs + 1 < c.P * c.v
-                    else 0.0
-                )
-                hops += t_in + t_out
-                pen += (t_in + t_out) * hop_pen
+            # a hop slows whatever the rank computes meanwhile: over the hop's
+            # time, the compute gets 1 / 1.10 of it done. Per chunk the rank
+            # takes part in four hops: forward in and out, backward in and out
+            hops_r = sum(
+                (hop[q - 1] if q > 0 else 0.0) + (hop[q] if q < Q - 1 else 0.0)
+                for q in qs
+            )
+            pen = 2 * hops_r * hop_pen
             if c.transport == "direct":
                 f, b = self.direct_side_bytes(c, r)
                 pen += (f + b) / (IB_GBPS * 1e9 * IB_P2P_EFF) * hop_pen
+            for q in qs:  # the penalty lengthens the rank's stages in proportion
+                vstage[q][0] *= 1 + pen / max(t, 1e-12)
             ranks.append(
                 {
                     "rank": r,
                     "compute+mem+comm": t,
-                    "hops": hops,
                     "hop_penalty": pen,
-                    "period": t + hops + pen,
+                    "period": t + pen,
                     "parts": parts,
                 }
             )
         worst = max(ranks, key=lambda p: p["period"])
+        fwd_t = [x[0] * x[1] for x in vstage]
+        bwd_t = [x[0] * (1 - x[1]) for x in vstage]
+        # receives posted early in both schedules (a good implementation)
+        t_hops = simulate_pipeline(c.P, c.v, c.M, fwd_t, bwd_t, hop)
+        t_none = simulate_pipeline(c.P, c.v, c.M, fwd_t, bwd_t, [0.0] * (Q - 1))
         # ZeRO-1: the stage's FSDP gather (first forward) and reduce-scatter (last
         # backward), once per step, plus the once-per-step memory-bound copies
         _, once_mem = self.memory_bound(c)
@@ -531,18 +719,11 @@ class StepModel:
         ag = sum(self.layer_comm(c, i)["fsdp_ag"] for i in layers)
         rs = sum(self.layer_comm(c, i)["fsdp_rs"] for i in layers)
         res["period"] = worst
-        bubble = (c.M + (c.P - 1) / c.v) / c.M
-        res["bubble_factor"] = bubble
-        res["step"] = c.M * bubble * worst["period"] + ag + rs + once_mem
-        res["parts"] = {
-            "pipeline": c.M * bubble * worst["period"],
-            "zero1_fsdp": ag + rs,
-            "once_mem": once_mem,
-        }
-        # the step by part (the slowest rank, M microbatches): bubble = idle time
-        # while the pipeline fills and drains, (P - 1) / v periods; hops = the
-        # critical-path transfers of the M steady-state microbatches; zero1 = the
-        # stage's gather and reduce-scatter, once per step
+        res["step"] = t_hops + ag + rs + once_mem
+        res["parts"] = {"pipeline": t_hops, "zero1_fsdp": ag + rs, "once_mem": once_mem}
+        # the step by part: the slowest rank's work over M microbatches; bubble =
+        # what the schedule adds without hops (fill, drain, uneven stages); hops =
+        # what the hops add on top; zero1 = the stage's gather and reduce-scatter
         wp, M = worst["parts"], c.M
         res["detail"] = {k: M * x for k, x in wp.items()}
         _, _, wfrac = self._memory_bound_parts(c)
@@ -550,8 +731,8 @@ class StepModel:
             memory=M * wp["memory"] * (1 - wfrac),
             weight_prep=M * wp["memory"] * wfrac + once_mem,
             penalty_hop=M * worst["hop_penalty"],
-            bubble=(bubble - 1) * M * worst["period"],
-            hops=M * worst["hops"],
+            bubble=max(0.0, t_none - M * worst["period"]),
+            hops=t_hops - t_none,
             zero1=ag + rs,
         )
         res["split"] = self._split(res["detail"])
@@ -566,7 +747,10 @@ class StepModel:
             + d["exposed_ep"]
             + d["exposed_tp"]
             + d["exposed_cp"],
-            "penalty": d["penalty_fsdp"] + d["penalty_hop"],
+            "penalty": d["penalty_fsdp"]
+            + d["penalty_fsdp_comm"]
+            + d["penalty_hop"]
+            + d["penalty_tpcp"],
             "pipeline": d["bubble"] + d["hops"] + d["zero1"],
         }
 

@@ -10,7 +10,8 @@ Each rank holds its T / cp tokens of one T-token document (TorchTitan's
 contiguous CP sharding) and runs Attention Gym's context_parallel_kda, the
 kernel ContextParallelInnerKDA calls. For comparison it also times plain
 chunk_kda on the full T tokens and on a standalone T / cp-token document.
-Times are per call, forward and forward + backward, measured on rank 0.
+Times are summed GPU kernel time per call (NCCL kernels included), forward and
+forward + backward, measured on rank 0.
 
 Run (writes bench/kda_cp_<gpu>_cp<world>.json):
   torchrun --standalone --nproc-per-node=2 scripts/memory_study/kimi_k3_kda_cp_bench.py
@@ -24,8 +25,9 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-from torchtitan.distributed.context_parallel import get_token_fragments
+# attention before context_parallel: the reverse order is a circular import
 from torchtitan.models.common.attention.linear_attention import chunk_kernel_options
+from torchtitan.distributed.context_parallel import get_token_fragments  # usort: skip
 from torchtitan.models.common.attn_gym import (
     chunk_kda,
     context_parallel_kda,
@@ -36,20 +38,31 @@ HEADS, DIM = 96, 128  # Kimi K3 KDA
 SEQ_LENS = (8192, 16384, 32768)
 
 
-def time_ms(fn, iters: int = 10, warmup: int = 3) -> float:
+def time_ms(fn, iters: int = 10, warmup: int = 3, repeats: int = 5) -> float:
+    """Summed GPU kernel time per call, minimum over repeats. KDA launches many
+    small kernels, so wall time on a shared host is dominated by CPU launch
+    jitter; the fake-PG trace breakdown also sums kernel time, so this is the
+    comparable number. The minimum drops bursts of interference from other jobs
+    sharing the GPU (up to 2.4x slower on identical calls)."""
     for _ in range(warmup):
         fn()
-    torch.cuda.synchronize()
-    dist.barrier()
-    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(
-        enable_timing=True
-    )
-    start.record()
-    for _ in range(iters):
-        fn()
-    end.record()
-    torch.cuda.synchronize()
-    return start.elapsed_time(end) / iters
+    best = float("inf")
+    for _ in range(repeats):
+        torch.cuda.synchronize()
+        dist.barrier()
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CUDA]
+        ) as prof:
+            for _ in range(iters):
+                fn()
+            torch.cuda.synchronize()
+        kernel_us = sum(
+            e.device_time
+            for e in prof.events()
+            if e.device_type == torch.autograd.DeviceType.CUDA
+        )
+        best = min(best, kernel_us / 1e3 / iters)
+    return best
 
 
 def inputs(t: int, device):

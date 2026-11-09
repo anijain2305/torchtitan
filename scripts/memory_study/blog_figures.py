@@ -224,44 +224,72 @@ def _bin(e: int) -> str:
                                                 if e > 30 else f"{2 ** (e - 20)} MiB")
 
 
-def log2_bars(rows, aria, lo=30, hi=45) -> str:
+def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
     """Horizontal bars on a log2 axis (one gridline per power of 2, labels every
-    4x) with a line at one GB200's 192 GB. rows: (label, bytes, color)."""
+    4x) with a line at one GB200's 192 GB. rows: (label, bytes, color), or
+    (label, [(bytes, color, part label), ...], None) for a bar stacked from parts
+    (each part's length on the log axis is the increase it adds)."""
     lab, w, bar, gap, top = 250, 760, 22, 10, 24  # w leaves room for the last axis label
-    h = top + len(rows) * (bar + gap) + 40
+    leg_rows, cur, cw = [], [], 40
+    for name, color in legend or []:
+        iw = 18 + 6.3 * len(name) + 22
+        if cur and cw + iw > w - 10:
+            leg_rows.append(cur); cur, cw = [], 40
+        cur.append((name, color, cw)); cw += iw
+    if cur:
+        leg_rows.append(cur)
+    h = top + len(rows) * (bar + gap) + 40 + 22 * len(leg_rows)
+    axis_y = h - 18 - 22 * len(leg_rows)
     x = lambda b: lab + (w - lab - 64) * (_math.log2(max(b, 2 ** lo)) - lo) / (hi - lo)
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{html.escape(aria)}">']
     for e in range(lo, hi + 1):
-        out.append(f'<line x1="{x(2 ** e):.1f}" x2="{x(2 ** e):.1f}" y1="{top - 6}" y2="{h - 34}" stroke="{GRID}" '
+        out.append(f'<line x1="{x(2 ** e):.1f}" x2="{x(2 ** e):.1f}" y1="{top - 6}" y2="{axis_y - 16}" stroke="{GRID}" '
                    f'stroke-width="{1 if e % 2 else 1.4}"/>')
         if e % 2 == 0:
-            out.append(_text(x(2 ** e), h - 18, _bin(e), 11, MUTED, "middle"))
+            out.append(_text(x(2 ** e), axis_y, _bin(e), 11, MUTED, "middle"))
     gx = x(GB200_BYTES)
-    out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{h - 34}" stroke="{INK}" stroke-width="1.5" '
+    out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{axis_y - 16}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, top - 12, "one GB200: 192 GB", 11, INK))
     for k, (label, b, color) in enumerate(rows):
         y = top + k * (bar + gap)
         out.append(_text(lab - 10, y + bar / 2 + 4, label, 12, INK2, "end"))
-        out.append(f'<g><title>{html.escape(label)}: {_dec(b)} (2^{_math.log2(b):.2f})</title>'
-                   f'<rect x="{lab}" y="{y}" width="{x(b) - lab:.1f}" height="{bar}" rx="4" fill="{color}"/></g>')
+        if isinstance(b, list):
+            parts, b = b, sum(p[0] for p in b)
+            tip = "; ".join(f"{pl} {_dec(pb)}" for pb, _, pl in parts)
+            out.append(f'<g><title>{html.escape(label)}: {_dec(b)} ({html.escape(tip)})</title>')
+            start = 0.0
+            for i, (pb, pc, _) in enumerate(parts):
+                x0, x1 = (lab if i == 0 else x(start)), x(start + pb)
+                out.append(f'<rect x="{x0:.1f}" y="{y}" width="{x1 - x0:.1f}" height="{bar}" '
+                           f'rx="{4 if i in (0, len(parts) - 1) else 0}" fill="{pc}"/>')
+                start += pb
+            out.append("</g>")
+        else:
+            out.append(f'<g><title>{html.escape(label)}: {_dec(b)} (2^{_math.log2(b):.2f})</title>'
+                       f'<rect x="{lab}" y="{y}" width="{x(b) - lab:.1f}" height="{bar}" rx="4" fill="{color}"/></g>')
         out.append(_text(x(b) + 6, y + bar / 2 + 4, _dec(b), 12, INK, weight=600)
                    .replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1))
+    for r, entries in enumerate(leg_rows):
+        ly = h - 22 * (len(leg_rows) - r) + 10
+        for name, color, lx in entries:
+            out.append(f'<rect x="{lx}" y="{ly - 10}" width="12" height="12" rx="2" fill="{color}"/>')
+            out.append(_text(lx + 18, ly, name, 12, INK2))
     out.append("</svg>")
     return "\n".join(out)
 
 
 def memory_weights_bf16() -> str:
-    """bf16 weights by component and one 8K sequence's saved activations."""
+    """fp32 weights by component and one 8K sequence's saved activations."""
     d = _data()
     w = d["persistent"]["model"]["weights"]  # fp32 bytes
     acts = d["contexts"]["8K"]["activations"]["total"]
-    return log2_bars([("Routed experts (weights)", w["routed"] / 2, COLORS["experts"]),
+    return log2_bars([("Routed experts (weights)", w["routed"], COLORS["experts"]),
                       ("Saved activations, one 8K sequence", acts, COLORS["acts"]),
-                      ("Attention (weights)", w["attention"] / 2, COLORS["attention"]),
-                      ("Shared experts (weights)", w["shared"] / 2, COLORS["other"]),
-                      ("Everything else (weights)", w["others"] / 2, "#c3c2b7")],
-                     "bf16 weights by component and saved activations, log2 axis")
+                      ("Attention (weights)", w["attention"], COLORS["attention"]),
+                      ("Shared experts (weights)", w["shared"], COLORS["other"]),
+                      ("Everything else (weights)", w["others"], "#c3c2b7")],
+                     "fp32 weights by component and saved activations, log2 axis")
 
 
 def memory_by_kind(ctx: str = "8K") -> str:
@@ -272,21 +300,24 @@ def memory_by_kind(ctx: str = "8K") -> str:
     acts = d["contexts"][ctx]["activations"]["total"]
     return log2_bars([("Master weights + optimizer (fp32)", tot("weights") + tot("state"), COLORS["optstate"]),
                       ("Gradients (fp32)", tot("grads"), COLORS["grads"]),
-                      (f"Saved activations, one {ctx} sequence", acts, COLORS["acts"])],
+                      (f"Stashed activations, one {ctx} sequence", acts, COLORS["acts"])],
                      f"persistent state by kind and saved activations at {ctx}, log2 axis")
 
 
 def memory_remat(ctx: str = "8K") -> str:
-    """Saved activations of one sequence at each remat level, plus DistMoE."""
+    """Saved activations of one sequence at each remat level; full remat as its
+    stash plus the recompute working set at the backward peak."""
     d = _data()
     c = d["contexts"][ctx]
-    dm = d["cp_sweep"][ctx]["1"]["nopp_f4"]
     full = c["quant"]["full"]["off"]["total"]
+    rws = recompute_working_set(ctx, c["seq_len"])
     return log2_bars([("No remat", c["activations"]["total"], COLORS["acts"]),
                       ("Default remat", c["remat"]["default"]["total"], COLORS["acts"]),
-                      ("Full remat (chunked loss)", full, COLORS["acts_full"]),
-                      ("Full remat + DistMoE", full + dm["saved"] + dm["output"] + dm["scratch"], COLORS["experts"])],
-                     f"saved activations of one {ctx} sequence by remat level, log2 axis")
+                      ("Full remat", [(full, COLORS["acts_full"], "stashed"),
+                                      (rws, "#e87ba4", "recompute peak")], None)],
+                     f"stashed activations of one {ctx} sequence by remat level, log2 axis",
+                     legend=[("Stashed (no / default remat)", COLORS["acts"]), ("Stashed (full remat)", COLORS["acts_full"]),
+                             ("Recompute peak (full remat)", "#e87ba4")])
 
 
 def linear_stacked_bars(rows, aria, legend, top_gb=None, clip=()) -> str:
@@ -376,15 +407,23 @@ def memory_summary(ctx: str = "8K") -> str:
     tot = lambda k: sum(P[k].values())
     c = d["contexts"][ctx]
     dm = d["cp_sweep"][ctx]["1"]["nopp_f4"]
-    acts = c["quant"]["full"]["off"]["total"] + dm["saved"] + dm["output"] + dm["scratch"]
+    acts = (c["quant"]["full"]["off"]["total"] + recompute_working_set(ctx, c["seq_len"])
+            + dm["saved"] + dm["output"] + dm["scratch"])
     return log2_bars([("Master weights + optimizer (fp32)", tot("weights") + tot("state"), COLORS["optstate"]),
                       ("Gradients (fp32)", tot("grads"), COLORS["grads"]),
-                      (f"Stashed activations, no remat ({ctx})", c["activations"]["total"], COLORS["acts"]),
                       (f"Activations: full remat + DistMoE ({ctx})", acts, COLORS["experts"])],
-                     f"persistent state and activations before and after remat at {ctx}, log2 axis")
+                     f"persistent state and activations at {ctx}, log2 axis")
 
 
 MXFP8_WEIGHT_BYTES = 1 + 1 / 1024  # e4m3 data + one scale per 32x32 block
+# MXFP8 for the routed experts only (DistMoE); the dense linears run bf16, as in
+# Kimi K3's pre-training. True restores MXFP8 dense linears everywhere.
+DENSE_MXFP8 = False
+
+
+def dense_quantized_params() -> int:
+    """Dense params per layer whose compute copy is MXFP8 (0 with bf16 dense)."""
+    return _data()["mxfp8_linear_params"]["kda_block"] if DENSE_MXFP8 else 0
 TOP_K, NUM_EXPERTS, MOE_LAYERS = 16, 896, 92
 
 
@@ -440,10 +479,10 @@ def zero_parts(ctx: str = "8K") -> list:
     c = d["contexts"][ctx]
     dm = d["cp_sweep"][ctx]["1"]["nopp_f4"]
     base_acts = c["quant"]["full"]["off"]["total"] + dm["saved"] + dm["output"] + dm["scratch"]
-    quantized = d["mxfp8_linear_params"]["model"] + P["weights"]["routed"] / 4  # params in quantized matrices
+    quantized = d["mxfp8_linear_params"]["model"] * DENSE_MXFP8 + P["weights"]["routed"] / 4  # params in quantized matrices
     copy = MXFP8_WEIGHT_BYTES * quantized + 2 * (n - quantized)  # whole compute copy
     blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
-    q_blk = d["mxfp8_linear_params"]["kda_block"]
+    q_blk = dense_quantized_params()
     layer_w = lambda routed: MXFP8_WEIGHT_BYTES * (q_blk + routed) + 2 * (sum(blk.values()) - blk["routed"] - q_blk)
     layer_g = lambda routed: 4 * (sum(blk.values()) - blk["routed"] + routed)  # one layer's fp32 gradient
     chunks = d["chunked_loss"]
@@ -454,10 +493,10 @@ def zero_parts(ctx: str = "8K") -> list:
     pad = expert_padding(NUM_EXPERTS, 512)  # without EP, each layer's 896 experts over 512 GPUs
     g_shard, mo_shard = padded_shards(d, 512, pad)
     meta1 = MOE_LAYERS * routing_metadata(1, NUM_EXPERTS, T)
-    acts1 = base_acts + meta1
+    acts1 = base_acts + rws + meta1  # full remat's stash and recompute peak, DistMoE, routing indices
     out = []
     for label, w, g, mo in (("No sharding", 0, G, MO), ("ZeRO-1", copy, G, mo_shard), ("ZeRO-2", copy, g_shard, mo_shard)):
-        out.append((label, w, g, mo, acts1, 0, w + g + mo + acts1 + rws, (base_acts, meta1, rws)))
+        out.append((label, w, g, mo, acts1, 0, w + g + mo + acts1, (base_acts, meta1, rws)))
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
@@ -465,10 +504,10 @@ def zero_parts(ctx: str = "8K") -> list:
     for label, routed, ep in (("ZeRO-3 / FSDP", blk["routed"], 1), ("FSDP + EP 64", blk["routed"] / 64, 64)):
         meta = MOE_LAYERS * routing_metadata(ep, NUM_EXPERTS / ep, T)
         g_s, mo_s = padded_shards(d, 512, expert_padding(NUM_EXPERTS / ep, 512 // ep))
-        acts = base_acts + meta
+        acts = base_acts + rws + meta
         w, g = 2 * layer_w(routed), g_s + 2 * layer_g(routed)
-        backward_peak = w + g + mo_s + acts + rws
-        loss_peak = g_s + mo_s + acts + chunk_loop
+        backward_peak = w + g + mo_s + acts
+        loss_peak = g_s + mo_s + acts - rws + chunk_loop  # the loss runs before the recompute peak
         out.append((label, w, g, mo_s, acts, chunk_loop if loss_peak > backward_peak else 0,
                     max(backward_peak, loss_peak), (base_acts, meta, rws)))
     return out
@@ -489,10 +528,11 @@ def zero_table(ctx: str = "8K") -> str:
     """The per-GPU table behind sharding-steps."""
     rows = zero_parts(ctx)
     G512 = rows[2][2]  # ZeRO-2's gradient shard
-    head = ["Per GPU", "Master + optimizer", "Gradients", "Activations", "Compute weights", "Total", "x GPU"]
+    head = ["Per GPU", "Master + optimizer", "Gradients", "Activations", "Compute weights (MXFP8)",
+            "Total", "x GPU"]
     w_notes = {"ZeRO-1": "whole model", "ZeRO-2": "whole model",
-               "ZeRO-3 / FSDP": "2 layers x <b>896 experts</b>",
-               "FSDP + EP 64": "2 layers x <b>14 experts</b>"}
+               "ZeRO-3 / FSDP": "2 x <b>896 experts</b>",
+               "FSDP + EP 64": "2 x <b>14 experts</b>"}
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     prev = None
 
@@ -502,17 +542,18 @@ def zero_table(ctx: str = "8K") -> str:
             return ""
         return ' style="background: rgba(0, 131, 0, 0.12)"' if v < pv else ' style="background: rgba(227, 73, 72, 0.15)"'
 
-    for label, w, g, mo, a, loop, total in rows:
+    for label, w, g, mo, a, loop, total, (base_a, meta, rws) in rows:
         cell = lambda v, note="": (f"{_dec(v) if v else '-'}" + (f'<span class="sub">{note}</span>' if note else ""))
+        a_note = f"incl. {_dec(meta)} DistMoE indices" if meta > 1e9 else ""
         if label in ("ZeRO-3 / FSDP", "FSDP + EP 64"):
             experts = "896 experts" if label == "ZeRO-3 / FSDP" else "14 experts"
-            g_note = f"{_dec(G512)} shard + {_dec(g - G512)} (2 layers x <b>{experts}</b>)"
+            g_note = f"{_dec(G512)} + {_dec(g - G512)} (2 x <b>{experts}</b>)"
         else:
             g_note = {"No sharding": "", "ZeRO-1": "unsharded", "ZeRO-2": "1/512"}[label]
         tot = f"<b>{_dec(total)}</b>" + ('<span class="sub">peak: chunked-loss loop</span>' if loop else "")
         p = prev or (None,) * 5
         out.append(f"<tr><td>{label}</td><td{shade(mo, p[0])}>{cell(mo, '' if label == 'No sharding' else '1/512')}</td>"
-                   f"<td{shade(g, p[1])}>{cell(g, g_note)}</td><td{shade(a, p[2])}>{cell(a)}</td>"
+                   f"<td{shade(g, p[1])}>{cell(g, g_note)}</td><td{shade(a, p[2])}>{cell(a, a_note)}</td>"
                    f"<td{shade(w, p[3])}>{cell(w, w_notes.get(label, ''))}</td>"
                    f"<td{shade(total, p[4])}>{tot}</td><td>{total / GB200_BYTES:.2f}</td></tr>")
         prev = (mo, g, a, w, total)
@@ -520,29 +561,35 @@ def zero_table(ctx: str = "8K") -> str:
     return "".join(out)
 
 
-def fsdp_ep_parts(ctx: str = "8K", cp: int = 1) -> dict:
-    """FSDP + EP 64 per GPU with each sequence split over cp GPUs (CP ranks
-    fold into FSDP, so the shards stay 1/512); same rules as zero_parts."""
+def fsdp_ep_parts(ctx: str = "8K", cp: int = 1, tp: int = 1) -> dict:
+    """FSDP + EP 64 per GPU with each sequence split over cp x tp GPUs; same
+    rules as zero_parts. CP ranks fold into FSDP; TP (with sequence
+    parallelism) also splits the dense weights and the vocab-parallel LM head
+    tp ways, while the routed experts fold TP into EP. The shards stay 1/512."""
     d = _data()
     P = d["persistent"]["model"]
     tot = lambda k: sum(P[k].values())
     S = d["symbols"]
     T = d["contexts"][ctx]["seq_len"]
+    split = cp * tp
     full = d["contexts"][ctx]["quant"]["full"]["off"]["total"]
-    dm = d["cp_sweep"][ctx][str(cp)]["nopp_f4"]
-    acts = full / cp + dm["saved"] + dm["output"] + dm["scratch"]
+    dm = d["cp_sweep"][ctx][str(split)]["nopp_f4"]
+    tl = T / split
+    meta = MOE_LAYERS * routing_metadata(64, NUM_EXPERTS / 64, tl)
+    acts = full / split + recompute_working_set(ctx, tl) + dm["saved"] + dm["output"] + dm["scratch"] + meta
     blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
-    q_blk = d["mxfp8_linear_params"]["kda_block"]
+    q_blk = dense_quantized_params()
     routed = blk["routed"] / 64
     dense = sum(blk.values()) - blk["routed"]
-    layer_w = MXFP8_WEIGHT_BYTES * (q_blk + routed) + 2 * (dense - q_blk)
-    layer_g = 4 * (dense + routed)
-    shards = (tot("grads") + tot("weights") + tot("state")) / 512
-    lm, tl = S["V"] * S["D"], T / cp
-    chunk_loop = 6 * lm + tl / d["chunked_loss"] * (442e3 + 4 * S["V"]) + 4 * tl * S["D"]
+    layer_w = MXFP8_WEIGHT_BYTES * (q_blk / tp + routed) + 2 * (dense - q_blk) / tp
+    layer_g = 4 * (dense / tp + routed)
+    shards = sum(padded_shards(d, 512, expert_padding(NUM_EXPERTS / 64, 8)))
+    lm = S["V"] * S["D"]
+    chunk_loop = 6 * lm / tp + tl / d["chunked_loss"] * (442e3 + 4 * S["V"] / tp) + 4 * tl * S["D"]
     buffers = 2 * (layer_w + layer_g)
     seqs = d["global_tokens"] / T
-    return {"cp": cp, "tokens": tl, "microbatches": seqs * cp / 512, "acts": acts, "shards": shards,
+    return {"cp": cp, "tp": tp, "tokens": tl, "microbatches": seqs * split / 512, "acts": acts, "meta": meta,
+            "shards": shards,
             "buffers": max(buffers, chunk_loop), "loop": chunk_loop > buffers,
             "total": shards + acts + max(buffers, chunk_loop)}
 
@@ -550,8 +597,8 @@ def fsdp_ep_parts(ctx: str = "8K", cp: int = 1) -> dict:
 def cp_table(ctx: str = "8K") -> str:
     """FSDP + EP 64 at CP 1 / 2 / 4 / 8, shaded against the row above."""
     rows = [fsdp_ep_parts(ctx, cp) for cp in (1, 2, 4)]
-    head = ["FSDP + EP 64", "Tokens per GPU (per microbatch)", "Microbatches per GPU", "Activations",
-            "Shards (master, optimizer, gradients)", "Layers in flight", "Total", "x GPU"]
+    head = ["FSDP + EP 64", "Tokens / GPU", "Microbatches", "Activations", "Shards", "Largest temporary",
+            "Total", "x GPU"]
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     prev = None
     for r in rows:
@@ -559,13 +606,33 @@ def cp_table(ctx: str = "8K") -> str:
                         ' style="background: rgba(0, 131, 0, 0.12)"' if r[k] < prev[k]
                         else ' style="background: rgba(227, 73, 72, 0.15)"')
         fits = r["total"] <= GB200_BYTES
-        buf = _dec(r["buffers"]) + ('<span class="sub">chunked-loss loop</span>' if r["loop"] else "")
+        buf = _dec(r["buffers"]) + f'<span class="sub">{"chunked-loss loop" if r["loop"] else "2 layers in flight"}</span>'
         out.append(f'<tr><td>CP {r["cp"]}</td><td>{r["tokens"]:,.0f}</td><td>{r["microbatches"]:g}</td>'
                    f'<td{sh("acts")}>{_dec(r["acts"])}<span class="sub">incl. {_dec(r["meta"])} DistMoE indices</span></td>'
                    f'<td>{_dec(r["shards"])}</td><td{sh("buffers")}>{buf}</td>'
                    f'<td{sh("total")}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 192 GB"}</span></td>'
                    f'<td>{r["total"] / GB200_BYTES:.2f}</td></tr>')
         prev = r
+    out.append("</table>")
+    return "".join(out)
+
+
+def tp_table(ctx: str = "8K") -> str:
+    """TP next to CP of the same degree; each TP row shaded against its CP row."""
+    pairs = [(fsdp_ep_parts(ctx, cp=k), fsdp_ep_parts(ctx, tp=k)) for k in (2, 4)]
+    head = ["FSDP + EP 64", "Tokens / GPU", "Activations", "Largest temporary", "Total", "x GPU"]
+    out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
+    for c, t in pairs:
+        for r, ref in ((c, None), (t, c)):
+            sh = lambda k: ("" if ref is None or abs(r[k] - ref[k]) <= 1e-3 * max(r[k], 1) else
+                            ' style="background: rgba(0, 131, 0, 0.12)"' if r[k] < ref[k]
+                            else ' style="background: rgba(227, 73, 72, 0.15)"')
+            name = f"CP {r['cp']}" if r["tp"] == 1 else f"TP {r['tp']}"
+            delta = "" if ref is None else f'<span class="sub">{_dec(ref["total"] - r["total"])} less than CP {ref["cp"]}</span>'
+            buf = _dec(r["buffers"]) + f'<span class="sub">{"chunked-loss loop" if r["loop"] else "2 layers in flight"}</span>'
+            out.append(f'<tr><td>{name}</td><td>{r["tokens"]:,.0f}</td><td{sh("acts")}>{_dec(r["acts"])}</td>'
+                       f'<td{sh("buffers")}>{buf}</td><td{sh("total")}><b>{_dec(r["total"])}</b>{delta}</td>'
+                       f'<td>{r["total"] / GB200_BYTES:.2f}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -579,7 +646,24 @@ def split_steps(ctx: str = "8K") -> str:
                      f"FSDP + EP 64 per-GPU memory with CP or TP at {ctx}, log2 axis")
 
 
-def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 1) -> dict:
+def rank0_chunk_layers(P: int, v: int) -> float:
+    """Mean layers in rank 0's chunks: 93 layers split over P x v virtual stages,
+    the first 93 % (P v) one layer longer; rank 0 runs stages 0, P, 2P, ..."""
+    base, extra = divmod(93, P * v)
+    sizes = [base + (1 if r * P < extra else 0) for r in range(v)]
+    return sum(sizes) / v
+
+
+def pp_inflight(P: int, v: int, M: int) -> int:
+    """Chunk-microbatches rank 0 holds at its peak: P with 1F1B (v = 1); with
+    Interleaved 1F1B (PyTorch's _get_warmup_ops), (v - 1) x P + 2 (P - 1)
+    warmup forward chunks plus the steady state's next forward."""
+    if v == 1:
+        return P
+    return min((v - 1) * P + 2 * (P - 1) + 1, M * v)
+
+
+def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 1, v: int = 1) -> dict:
     """Per GPU on the first PP stage (the worst one under 1F1B), as on the
     memory page but with MXFP8 compute weights and two layers in flight.
     Each stage holds ceil(93 / P) layers on 512 / P GPUs, with FSDP and EP
@@ -591,7 +675,7 @@ def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 
     lay = {r["key"]: r["numel"] for r in d["layers"][0]["scope"]["stored"]}
     layer_n, routed_n = sum(lay.values()), lay["routed"]
     dense_n = layer_n - routed_n
-    q_blk = d["mxfp8_linear_params"]["kda_block"]  # quantized dense params per layer
+    q_blk = dense_quantized_params()
     g = 512 // P
     ls = -(-93 // P)
     act = d["contexts"][ctx]["quant"]["full"]["off"]
@@ -600,7 +684,14 @@ def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 
     seqs = d["global_tokens"] / act["seq_len"]
     m = seqs * P * split / 512
     dm = d["cp_sweep"][ctx][str(split)][f"pp{P}_f4"]
-    acts = P * ls * (act["total"] - head) / 93 / split + dm["saved"] + dm["output"] + dm["scratch"]
+    tl = act["seq_len"] / split
+    # layer-microbatches in flight on rank 0: P microbatches x the stage's
+    # layers with 1F1B; with interleaving, more chunks of fewer layers
+    held = round(pp_inflight(P, v, int(m)) * rank0_chunk_layers(P, v))
+    meta = held * routing_metadata(g, NUM_EXPERTS / g, tl)
+    dm_scale = held / (P * ls)  # DistMoE's saved inputs / outputs are per layer-microbatch too
+    acts = (held * (act["total"] - head) / 93 / split + recompute_working_set(ctx, tl)
+            + (dm["saved"] + dm["output"]) * dm_scale + dm["scratch"] + meta)
     mo = 8 * ls * layer_n / g
     block_w = MXFP8_WEIGHT_BYTES * (q_blk / tp + routed_n / g) + 2 * (dense_n - q_blk) / tp
     block_g = 4 * (dense_n / tp + routed_n / g)
@@ -609,13 +700,19 @@ def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 
     else:
         w, gr, temp = 0.0, 4 * ls * layer_n / g, 2 * (block_w + block_g)
     total = mo + gr + acts + w + temp
-    return {"P": P, "zero": zero, "cp": cp, "tp": tp, "layers": ls, "gpus": g, "experts": 896 // g,
-            "microbatches": m, "mo": mo, "grads": gr, "acts": acts, "weights": w, "temp": temp, "total": total,
+    return {"P": P,
+        "v": v,
+        "held": held, "v": v, "held": held, "zero": zero, "cp": cp, "tp": tp, "layers": ls, "gpus": g, "experts": 896 // g,
+            "microbatches": m, "mo": mo, "grads": gr, "acts": acts, "meta": meta, "weights": w, "temp": temp,
+            "total": total,
             "valid": m >= P}
 
 
 BF16_PEAK, MXFP8_PEAK = 2.5e15, 5e15
 BF16_EFF, MXFP8_EFF = 0.70, 0.60
+DENSE_SHAPES = "dense" if DENSE_MXFP8 else "dense_bf16"  # section of bench/shapes_GB300.json
+DENSE_PEAK, DENSE_EFF = (MXFP8_PEAK, MXFP8_EFF) if DENSE_MXFP8 else (BF16_PEAK, BF16_EFF)
+DENSE_PREC = "MXFP8" if DENSE_MXFP8 else "bf16"
 KDA_US_PER_TOKEN = 0.45  # forward + remat forward + backward, per token per KDA layer (measured model)
 
 
@@ -636,7 +733,7 @@ def roofline_ops(ctx: str = "8K") -> list:
     expert_n = S["k"] * kda["routed"] / S["E"] * (n_kda + n_mla - 1)
     f8, b16 = MXFP8_EFF * MXFP8_PEAK, BF16_EFF * BF16_PEAK
     ops = [
-        ("Dense linears", 8 * tg * dense_n, "MXFP8", 8 * tg * dense_n / f8),
+        ("Dense linears", 8 * tg * dense_n, DENSE_PREC, 8 * tg * dense_n / (DENSE_EFF * DENSE_PEAK)),
         ("Routed experts", 8 * tg * expert_n, "MXFP8", 8 * tg * expert_n / f8),
         ("LM head", 6 * tg * S["V"] * S["D"], "bf16", 6 * tg * S["V"] * S["D"] / b16),
     ]
@@ -743,8 +840,8 @@ def ideal_gap_table(ctx: str = "8K") -> str:
         return f"<td{style}>{x:.2f}x</td>"
 
     for cp, tp in SPLITS:
-        dn = sh["dense"]["data"][f"m{T // cp}_tp{tp}"]
-        dense = (69 * MXFP8_EFF / dn["kda_layer"]["eff"] + 24 * MXFP8_EFF / dn["mla_layer"]["eff"]) / 93
+        dn = sh[DENSE_SHAPES]["data"][f"m{T // cp}_tp{tp}"]
+        dense = (69 * DENSE_EFF / dn["kda_layer"]["eff"] + 24 * DENSE_EFF / dn["mla_layer"]["eff"]) / 93
         ex = MXFP8_EFF / distmoe_eff(T // (cp * tp), 64)
         mla = BF16_EFF / (fa[str(96 // (cp * tp))]["fwd_bwd_tflops"] * 1e12 / BF16_PEAK)
         cpf = 1.0
@@ -758,8 +855,8 @@ def ideal_gap_table(ctx: str = "8K") -> str:
 
 
 def dense_shapes_table(ctx: str = "8K") -> str:
-    """Measured MXFP8 dense GEMM efficiency at each split's shapes."""
-    d = _bench("shapes_GB300.json")["dense"]["data"]
+    """Measured dense GEMM efficiency at each split's shapes."""
+    d = _bench("shapes_GB300.json")[DENSE_SHAPES]["data"]
     T = 8192 if ctx == "8K" else 32768
     head = ["Split", "<code>M</code> (tokens)", "<code>N</code> (column-parallel) or <code>K</code> (row-parallel)",
             "KDA + MoE layer", "MLA + MoE layer"]
@@ -767,7 +864,7 @@ def dense_shapes_table(ctx: str = "8K") -> str:
     for cp, tp in SPLITS:
         r = d[f"m{T // cp}_tp{tp}"]
         out.append(f"<tr><td>CP {cp}, TP {tp}</td><td>{T // cp:,}</td><td>{'1/' + str(tp) if tp > 1 else 'whole'}</td>"
-                   + _eff_cell(r["kda_layer"]["eff"], MXFP8_EFF) + _eff_cell(r["mla_layer"]["eff"], MXFP8_EFF) + "</tr>")
+                   + _eff_cell(r["kda_layer"]["eff"], DENSE_EFF) + _eff_cell(r["mla_layer"]["eff"], DENSE_EFF) + "</tr>")
     out.append("</table>")
     return "\n".join(out)
 
@@ -873,11 +970,12 @@ def nonmatmul_bytes(ctx: str = "8K", cp: int = 1, tp: int = 1, ep: int = 64, P: 
     # both MXFP8 orientations alive, quantizing the stage's 93 / P layers once
     # per step (summed over all layers that is 2 / P per layer).
     w_quant = 3 * mb if P == 1 else 2 / P
-    experts_local = 896 // ep * k_routed * expert_mxfp8
-    out["MXFP8 quantize"] = 69 * lin_q(_KDA_LIN) + 24 * lin_q(_MLA_LIN) + MX_BYTES * experts_local * 92 * w_quant
+    experts_local = 896 // ep * k_routed
+    dense_q = (69 * lin_q(_KDA_LIN) + 24 * lin_q(_MLA_LIN)) * DENSE_MXFP8
+    out["MXFP8 quantize"] = dense_q + MX_BYTES * experts_local * 92 * w_quant * expert_mxfp8
     if split_weights:
-        out["MXFP8 quantize (weights)"] = (69 * lin_q(_KDA_LIN, True) + 24 * lin_q(_MLA_LIN, True)
-                                           + MX_BYTES * experts_local * 92 * w_quant)
+        out["MXFP8 quantize (weights)"] = ((69 * lin_q(_KDA_LIN, True) + 24 * lin_q(_MLA_LIN, True)) * DENSE_MXFP8
+                                           + MX_BYTES * experts_local * 92 * w_quant * expert_mxfp8)
     d = {r["key"]: r["numel"] for r in _data()["scopes"]["kda_layer"]["stored"]}
     dm = {r["key"]: r["numel"] for r in _data()["scopes"]["mla_layer"]["stored"]}
     dense = (69 * (d["attention"] + d["shared"] + d["others"]) + 24 * (dm["attention"] + dm["shared"] + dm["others"])) / 93
@@ -954,10 +1052,10 @@ def step_compute(ctx: str = "8K", P: int = 1, cp: int = 1, tp: int = 1, *, shape
         return out
     # dense GEMMs: measured time per layer per microbatch at (T / CP rows, TP split);
     # forward runs twice (remat)
-    dense = _bench("shapes_GB300.json")["dense"]["data"][f"m{T // cp}_tp{tp}"]
+    dense = _bench("shapes_GB300.json")[DENSE_SHAPES]["data"][f"m{T // cp}_tp{tp}"]
     per_layer = {sc: sum(2 * g["fwd"] + g["dgrad"] + g["wgrad"] for g in dense[sc]["gemms"]) * 1e-3
                  for sc in ("kda_layer", "mla_layer")}
-    layer0_ffn = 8 * tok * 3 * S["D"] * S["F"] / (dense["kda_layer"]["eff"] * MXFP8_PEAK)
+    layer0_ffn = 8 * tok * 3 * S["D"] * S["F"] / (dense["kda_layer"]["eff"] * DENSE_PEAK)
     out["Dense linears"] = (69 * per_layer["kda_layer"] + 24 * per_layer["mla_layer"]) * mb + layer0_ffn
     # routed experts: DistMoE's kernels at the config's local tokens
     out["Routed experts"] = ops["Routed experts"][1] / (distmoe_eff(T // (cp * tp), ep) * MXFP8_PEAK)
@@ -1065,14 +1163,16 @@ def overlap_formulas(compute_sd: float = 1.3, comm_sd: float = 1.6) -> str:
 
 def hop_formulas() -> str:
     """A PP hop across InfiniBand as formulas: always exposed, plus the compute
-    slowdown on both GPUs while it runs."""
-    th = _v("t", "hop")
+    slowdown on both GPUs while it runs (the overlap formulas at 1.1x)."""
+    import kimi_k3_step_time as st
+
+    th, tp, to = _v("t", "hop"), _v("t", "compute"), _v("T", "overlap")
+    nic, eff = st.IB_GBPS, st.IB_P2P_EFF
     rows = [
-        ("def", th, "bytes / (0.9 &times; 50 GB/s) = bytes / 45 GB/s",
+        ("def", th, f"bytes / ({eff:g} &times; {nic:.0f} GB/s) = bytes / {eff * nic:.0f} GB/s",
          "a hop's time: one GB200 NIC at 90% of its line rate, as measured"),
-        ("pen", "Exposed", th, "on the critical path, never hidden"),
-        ("pen", "Compute penalty", f"{th} &times; 0.10 (GEMMs), {th} &times; 0.01 (memory-bound)",
-         "on the sending and the receiving GPU alike"),
+        ("def", to, f"min({th}, 1.1 &times; {tp})", "the hop's time, whenever the GPU has compute to run"),
+        ("pen", "Compute penalty", f"{to} &minus; {to} / 1.1", "on the sending and the receiving GPU alike"),
     ]
     out = ['<div class="formulas">']
     for kind, lhs, rhs, note in rows:
@@ -1085,12 +1185,18 @@ def hop_formulas() -> str:
 def fsdp_ib_formula() -> str:
     """Time of an FSDP collective across NVLink domains: a ring per channel, one
     NIC per ring at each domain boundary, plus the ring's sequential steps."""
+    import kimi_k3_step_time as st
+
     tc, n, k = _v("t", "comm"), "<i>n</i>", "<i>k</i>"
     rows = [
-        ("def", k, "the group's GPUs in each domain", "so the NICs it has there"),
-        ("def", _v("t", "setup"), f"({n} &minus; 1) &times; 4 &micro;s",
-         "setup cost: the ring's n &minus; 1 sequential steps, a few microseconds each"),
-        ("pen", tc, f"bytes &times; ({n} &minus; 1) / {n} / min(NVLink, {k} &times; 50 GB/s &times; 0.9) "
+        ("def", n, "number of GPUs in the FSDP group", "512 / TP for dense weights, 8 for an expert shard"),
+        ("def", k, "number of GPUs of the FSDP group in each NVL domain", "so the NICs it has there: 64 / TP for dense weights, 1 for an expert shard"),
+        ("def", "<i>eff</i>", f"{st.IB_COLL_EFF:g} for <i>k</i> &gt; 1, {st.IB_COLL_EFF_ONE_NIC:g} for <i>k</i> = 1",
+         "the fraction of a NIC's line rate the ring reaches, as measured"),
+        ("def", _v("t", "setup"), f"({n} &minus; 1) &times; {st.RING_STEP_S * 1e6:.0f} &micro;s",
+         "setup cost: the ring's n &minus; 1 sequential steps; we measured 2.2 &micro;s per step over NVLink "
+         "and 6.5 &micro;s across InfiniBand, and a ring over 8 NVL domains is mostly NVLink steps"),
+        ("pen", tc, f"bytes &times; ({n} &minus; 1) / {n} / min(NVLink, {k} &times; {st.IB_GBPS:.0f} GB/s &times; <i>eff</i>) "
                     f"+ {_v('t', 'setup')}", "the transfer, plus the setup cost"),
     ]
     out = ['<div class="formulas">']
@@ -1105,16 +1211,15 @@ def ib_rule_formula() -> str:
     """The NIC rule: bandwidth of a ring across NVLink domains."""
     return ('<div class="formulas"><div class="f-row f-pen"><span class="f-lhs">Bandwidth</span>'
             '<span class="f-eq">=</span><span class="f-rhs">min(NVLink, <i>k</i> &times; one NIC)</span>'
-            '<span class="f-note"><i>k</i>: the group\'s GPUs in each domain</span></div></div>')
+            '<span class="f-note"><i>k</i>: number of GPUs of the FSDP group in each NVL domain</span></div></div>')
 
 
 def _pp_schedule(P: int, M: int, F: float, B: float, h: float, v: int = 1):
     """Simulate 1F1B (v = 1) or interleaved 1F1B (v chunks per rank) on P
     ranks, in PyTorch's op order: virtual stage q runs on rank q % P; rank r
     runs (v - 1) P + 2 (P - 1 - r) warmup forwards when interleaved (P - 1 - r
-    otherwise), then alternates forward / backward. Interleaved 1F1B posts its
-    receives early, so a hop moves as soon as it is sent; plain 1F1B posts a
-    forward receive only when the rank is ready for it. Returns
+    otherwise), then alternates forward / backward. Receives are posted early,
+    so a hop moves as soon as it is sent. Returns
     ops (rank, kind, microbatch, chunk, start, end, wait) and hops (src rank,
     dst rank, kind, microbatch, chunk of the receiver, sent, arrived, used)."""
     Q = P * v
@@ -1151,14 +1256,7 @@ def _pp_schedule(P: int, M: int, F: float, B: float, h: float, v: int = 1):
             if dep is not None and dep not in end:
                 continue
             remote = dep is not None and dep[2] % P != r
-            if dep is None:
-                ready = 0.0
-            elif kind == "F" and v == 1 and remote:
-                # plain 1F1B posts a forward receive only when the rank is ready
-                # for it, and the transfer starts then
-                ready = max(free[r], end[dep]) + h
-            else:
-                ready = end[dep] + (h if remote else 0.0)
+            ready = 0.0 if dep is None else end[dep] + (h if remote else 0.0)
             start = max(free[r], ready)
             dur = (F if kind == "F" else B) / v
             end[(kind, mb, q)] = start + dur
@@ -1198,6 +1296,9 @@ def pp_hop_timeline(v: int = 1) -> str:
     for i, c in enumerate(colors):
         out.append(f'<marker id="pph-arr-{v}-{i}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
                    f'markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="{c}"/></marker>')
+        out.append(f'<pattern id="pph-wait-{v}-{i}" width="5" height="5" patternUnits="userSpaceOnUse" '
+                   f'patternTransform="rotate(45)"><rect width="5" height="5" fill="#ffffff"/>'
+                   f'<rect width="2.2" height="5" fill="{c}"/></pattern>')
         out.append(f'<pattern id="pph-wait-{v}-{i}" width="5" height="5" patternUnits="userSpaceOnUse" '
                    f'patternTransform="rotate(45)"><rect width="5" height="5" fill="#ffffff"/>'
                    f'<rect width="2.2" height="5" fill="{c}"/></pattern>')
@@ -1330,20 +1431,23 @@ def transport_matrix() -> str:
     return "\n".join(out)
 
 
-def transport_diagram() -> str:
-    """Chain, cache and direct on four stages that each finish one
-    attention-residual block (stage 0 also holds the embedding E): what every
-    forward hop carries, and for direct the blocks sent straight to later
-    stages."""
+def transport_diagram(names: tuple = ("chain", "direct", "cache")) -> str:
+    """Hop transports (chain, direct, cache, or a subset) on four stages that
+    each finish one attention-residual block (stage 0 also holds the embedding
+    E): what every forward hop carries, and for direct the blocks sent straight
+    to later stages."""
     col = {"h": INK, "E": "#898781", "A": "#2a78d6", "B": "#eb6834", "C": "#1baf7a"}
     lab, sw, gap, top, rowh = 120, 96, 120, 20, 112
-    cache_extra = 62  # room under the cache row for what each rank keeps
+    cache_h = 236  # the cache row: two rows of stages, one column per rank
     w = lab + 4 * sw + 3 * gap + 10
     xs = [lab + i * (sw + gap) for i in range(4)]
     extra = 92  # room for the direct row's arcs
-    out = [f'<svg viewBox="0 0 {w} {top + 3 * rowh + extra + cache_extra}" width="100%" role="img" '
-           'aria-label="chain, cache and direct transports">',
-           '<defs><marker id="trd-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
+    arr = "trd-arr-" + "-".join(names)  # one marker per variant: two diagrams can share a page
+    height = (top + 22 + sum(cache_h if n == "cache" else rowh for n in names)
+              + (extra - 12 if "direct" in names else 0) - 20)
+    out = [f'<svg viewBox="0 0 {w} {height}" width="100%" role="img" '
+           f'aria-label="{", ".join(names)} transports">',
+           f'<defs><marker id="{arr}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
            'orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker></defs>']
 
     def chips(cx, cy, items):
@@ -1365,11 +1469,55 @@ def transport_diagram() -> str:
         ("cache", "interleaved", ["rank 0", "rank 1", "rank 0", "rank 1"],
          [["h", "E", "A"], ["h", "B"], ["h", "C"]], False),
     ]
+    rows = [r for r in rows if r[0] in names]
     made = [["E", "A"], ["B"], ["C"], ["D"]]
-    for ri, (name, sched, ranks, hops, arcs) in enumerate(rows):
-        # the direct row (second) needs room above for its arcs, so the rows
+    y_next = top + 22
+    def stage_box(x, y, i):
+        out.append(f'<rect x="{x}" y="{y}" width="{sw}" height="40" rx="6" fill="{SURFACE}" '
+                   f'stroke="#52514e" stroke-width="1.2"/>')
+        out.append(_text(x + sw / 2, y + 16, f"stage {i}", 11, INK2, "middle", 600))
+        if i < 3:
+            out.append(_text(x + sw / 2, y + 32, "finishes " + " ".join(made[i]), 10, MUTED, "middle"))
+
+    for name, sched, ranks, hops, arcs in rows:
+        if name == "cache":
+            # two ranks, two chunks each: stages 0 and 2 on rank 0 (left
+            # column), 1 and 3 on rank 1 (right column)
+            y = y_next + 16
+            y_next += cache_h
+            out.append(_text(10, y + 20, name, 15, INK, "start", 700))
+            out.append(_text(10, y + 38, sched, 11, MUTED, "start"))
+            y2 = y + 128
+            for r in range(2):
+                out.append(_text(xs[r] + sw / 2, y - 8, f"rank {r}", 11, INK2, "middle", 700))
+            for i, (x, yy) in enumerate(((xs[0], y), (xs[1], y), (xs[0], y2), (xs[1], y2))):
+                stage_box(x, yy, i)
+            # hops: 0 -> 1 across, 1 -> 2 back down to rank 0, 2 -> 3 across
+            for (xa, ya, xb, yb), items in (((xs[0] + sw + 4, y + 20, xs[1] - 4, y + 20), hops[0]),
+                                            ((xs[1] - 4, y + 36, xs[0] + sw + 4, y2 + 4), hops[1]),
+                                            ((xs[0] + sw + 4, y2 + 20, xs[1] - 4, y2 + 20), hops[2])):
+                out.append(f'<line x1="{xa}" y1="{ya}" x2="{xb}" y2="{yb}" stroke="#52514e" '
+                           f'stroke-width="1.5" marker-end="url(#{arr})"/>')
+                cy = (ya + yb) / 2 - (14 if ya == yb else 0)
+                chips((xa + xb) / 2 + (0 if ya == yb else 32), cy, items)
+            # what each rank keeps from its first chunk, reused by its second
+            for r, keep in ((0, ["E", "A"]), (1, ["E", "A", "B"])):
+                cx = xs[r] + sw / 2
+                bw = sw - 8
+                by = y + 58
+                out.append(f'<line x1="{cx}" y1="{y + 40}" x2="{cx}" y2="{by}" stroke="#52514e" '
+                           f'stroke-width="1.3" stroke-dasharray="4 3"/>')
+                out.append(f'<rect x="{cx - bw / 2}" y="{by}" width="{bw}" height="40" rx="5" fill="#ffffff" '
+                           f'stroke="#52514e" stroke-width="1.1" stroke-dasharray="4 3"/>')
+                out.append(_text(cx, by + 13, "keeps", 10, INK2, "middle", 600))
+                chips(cx, by + 27, keep)
+                out.append(f'<line x1="{cx}" y1="{by + 40}" x2="{cx}" y2="{y2 - 3}" stroke="#52514e" '
+                           f'stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#{arr})"/>')
+            continue
+        # the direct row needs room above for its arcs, so it and the rows
         # below it shift down by that much
-        y = top + ri * rowh + 22 + (extra - 12 if ri >= 1 else 0)
+        y_next += extra - 12 if arcs else 0
+        y, y_next = y_next, y_next + rowh
         out.append(_text(10, y + 20, name, 15, INK, "start", 700))
         out.append(_text(10, y + 38, sched, 11, MUTED, "start"))
         for i, x in enumerate(xs):
@@ -1381,26 +1529,10 @@ def transport_diagram() -> str:
                 out.append(_text(x + sw / 2, y + 32, "finishes " + " ".join(blk), 10, MUTED, "middle"))
             if ranks[i]:
                 out.append(_text(x + sw / 2, y + 54, ranks[i], 10, MUTED, "middle"))
-        if name == "cache":
-            # what each rank keeps from its first chunk, reused by its second
-            for i, keep in ((0, ["E", "A"]), (1, ["E", "A", "B"])):
-                bx, by = xs[i] + 4, y + 62
-                out.append(f'<rect x="{bx}" y="{by}" width="{sw - 8}" height="40" rx="5" fill="#ffffff" '
-                           f'stroke="#52514e" stroke-width="1.1" stroke-dasharray="4 3"/>')
-                out.append(_text(bx + (sw - 8) / 2, by + 13, f"rank {i} keeps", 10, INK2, "middle", 600))
-                chips(bx + (sw - 8) / 2, by + 27, keep)
-                # down out of the box, along underneath, up to the same rank's
-                # next chunk (rank 0's path runs lower, so the two do not cross)
-                xa, xb = bx + (sw - 8) / 2, xs[i + 2] + sw / 2
-                low = by + 40 + (34 if i == 0 else 16)
-                out.append(f'<path d="M{xa:.1f},{by + 40} L{xa:.1f},{low} L{xb:.1f},{low} L{xb:.1f},{y + 60}" '
-                           f'fill="none" stroke="#52514e" stroke-width="1.3" stroke-dasharray="4 3" '
-                           f'marker-end="url(#trd-arr)"/>')
-                out.append(_text(xb - 6, low - 4, f"reused by rank {i}", 10, MUTED, "end"))
         for i, items in enumerate(hops):
             x0, x1 = xs[i] + sw, xs[i + 1]
             out.append(f'<line x1="{x0 + 4}" y1="{y + 20}" x2="{x1 - 4}" y2="{y + 20}" stroke="#52514e" '
-                       f'stroke-width="1.5" marker-end="url(#trd-arr)"/>')
+                       f'stroke-width="1.5" marker-end="url(#{arr})"/>')
             chips((x0 + x1) / 2, y + 6, items)
         if arcs:
             # one arc per pair of stages, carrying the blocks the later one uses
@@ -1410,13 +1542,15 @@ def transport_diagram() -> str:
                 hgt = 22 + 26 * (dst - src) - (6 if src == 1 else 0)
                 c = col[blks[-1]]
                 out.append(f'<path d="M{xa:.1f},{y} C{xa:.1f},{y - hgt * 1.33:.1f} {xb:.1f},{y - hgt * 1.33:.1f} '
-                           f'{xb:.1f},{y}" fill="none" stroke="{c}" stroke-width="1.6" marker-end="url(#trd-arr)"/>')
+                           f'{xb:.1f},{y}" fill="none" stroke="{c}" stroke-width="1.6" marker-end="url(#{arr})"/>')
                 chips((xa + xb) / 2, y - hgt, blks)
     out.append("</svg>")
     note = ('<p class="sub" style="color: var(--muted); font-size: 13px; margin: 4px 0 0">Above each '
             'forward hop: what it carries; <b>h</b> is the hidden state, colored squares are attention-residual blocks '
-            '(E: the embedding). For direct, the arcs above carry each block straight to every later stage. '
-            'The backward mirrors each, with gradients.</p>')
+            '(E: the embedding). '
+            + ('For direct, the arcs above carry each block straight to every later stage. ' if "direct" in names
+               else "")
+            + 'The backward mirrors each, with gradients.</p>')
     return "".join(out) + note
 
 
@@ -1617,9 +1751,9 @@ def ib_rule_table() -> str:
     if d8:
         pts.append((8, 8, "every GPU of 2", [r["busbw_GBps"] for r in d8["rows"]
                                              if r["bytes"] == 1 << 30 and r["op"] in ("allgather", "reducescatter")]))
-    head = ["NVL domain size", "Group: GPUs of NVL domains", "<i>k</i> (the group's GPUs per NVL domain)",
+    head = ["NVL domain size", "FSDP group: GPUs of NVL domains", "<i>k</i> (number of GPUs of the FSDP group per NVL domain)",
             "Measured bandwidth", "NICs' worth"]
-    out = ['<table class="dtable"><caption>All-gather and reduce-scatter at 1 GB, every group at once; one NIC is '
+    out = ['<table class="dtable"><caption>All-gather and reduce-scatter at 1 GB, every FSDP group at once; one NIC is '
            '100 GB/s here</caption><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     for size, k, which, xs in pts:
         out.append(f"<tr><td>{size}</td><td>{which}</td><td><b>{k}</b></td><td>{min(xs):.0f}-{max(xs):.0f} GB/s</td>"
@@ -1629,13 +1763,18 @@ def ib_rule_table() -> str:
 
 
 def gb200_ib_table() -> str:
-    """What the NIC rule means for GB200's 64-GPU domains (50 GB/s NICs)."""
+    """What the NIC rule means for GB200's 64-GPU domains."""
+    import kimi_k3_step_time as st
+
+    nvl = 640  # NVLink all-gather bandwidth at 64 GPUs
+    one = st.IB_GBPS * st.IB_COLL_EFF_ONE_NIC
     rows = [
-        ("FSDP 512: dense weights", "64 / TP", "NVLink, about 640 GB/s", "InfiniBand is not the limit"),
-        ("FSDP 512: an expert shard's 8 replicas, one per domain", "1", "one NIC, about 40 GB/s",
-         "15x slower than the dense weights"),
-        ("PP: a hop between two stages", "1 (a pair of GPUs)", "one NIC, about 45 GB/s", "on the critical path"),
-        ("PP: FSDP inside a stage", "-", "NVLink", "never leaves the domain"),
+        ("FSDP 512: dense weights", "64 / TP", f"NVLink, about {nvl} GB/s", "InfiniBand is not the limit"),
+        ("FSDP 512: an expert shard's 8 replicas, one per NVL domain", "1", f"one NIC, about {one:.0f} GB/s",
+         f"{nvl / one:.0f}x slower than the dense weights"),
+        ("PP: a hop between two stages", "1 (a pair of GPUs)",
+         f"one NIC, about {st.IB_GBPS * st.IB_P2P_EFF:.0f} GB/s", "on the critical path"),
+        ("PP: FSDP inside a stage", "-", "NVLink", "never leaves the NVL domain"),
     ]
     head = ["Traffic", "<i>k</i>", "Bandwidth", ""]
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
@@ -1697,7 +1836,7 @@ def one_way_table() -> str:
     return "\n".join(out)
 
 
-def _ranked(ctx: str, transports: str = "all") -> list:
+def _ranked(ctx: str, transports: str = "all", overlap_tp_cp: bool = False) -> list:
     """Every config that fits in memory, ranked by step time. PP hop transports:
     chain (TorchTitan's 1F1B), cache (TorchTitan's interleaved) and direct (each
     block straight to its consumers, either schedule); chain under interleaving
@@ -1705,7 +1844,7 @@ def _ranked(ctx: str, transports: str = "all") -> list:
     transports="titan" leaves out direct."""
     import kimi_k3_step_time as st
 
-    m = st.StepModel()
+    m = st.StepModel(overlap_tp_cp=overlap_tp_cp)
     rows = []
     for P in (1, 8, 16):
         scheds = [(1, None)] if P == 1 else [(v, tr) for v in (1, 2, 4)
@@ -1737,7 +1876,8 @@ _RANK_GROUPS = [
     ]),
     ("Communication", "#a33c12", [
         ("exposed_fsdp", "FSDP, exposed", "#eb6834", "solid"),
-        ("penalty_fsdp", "FSDP, overlap penalty", "#eb6834", "hatch"),
+        ("penalty_fsdp", "FSDP, compute slowdown", "#eb6834", "hatch"),
+        ("penalty_fsdp_comm", "FSDP, collective slowdown", "#eb6834", "cross"),
         ("exposed_tp", "TP, exposed", "#6250d6", "solid"),
         ("exposed_cp", "CP, exposed", "#eda100", "solid"),
         ("exposed_ep", "EP, exposed", "#e87ba4", "solid"),
@@ -1745,7 +1885,7 @@ _RANK_GROUPS = [
     ("Pipeline", "#006300", [
         ("bubble", "Bubble (fill and drain)", "#b5b3ab", "solid"),
         ("hops", "Hops, exposed", "#008300", "solid"),
-        ("penalty_hop", "Hops, overlap penalty", "#008300", "hatch"),
+        ("penalty_hop", "Hops, compute slowdown", "#008300", "hatch"),
         ("zero1", "ZeRO-1 gather + reduce-scatter", "#1baf7a", "solid"),
     ]),
     ("Optimizer", "#a3302f", [
@@ -1760,6 +1900,9 @@ def _rank_fill(color: str, style: str) -> str:
     """CSS background of a segment: solid, or hatched at 45 degrees."""
     if style == "solid":
         return color
+    if style == "cross":
+        return (f"repeating-linear-gradient(45deg, {color} 0 1.5px, transparent 1.5px 5px), "
+                f"repeating-linear-gradient(135deg, {color} 0 1.5px, {color}40 1.5px 5px)")
     return (f"repeating-linear-gradient(135deg, {color} 0 2.5px, {color}55 2.5px 5px)")
 
 
@@ -1845,6 +1988,28 @@ def ranking_chart(ctx: str = "8K") -> str:
                              for k, _, _, _ in _RANK_SEGS) + "</tr>")
     tbl.append("</table></details>")
     return '<div class="rk-chart">' + "".join(out) + "".join(tbl) + "</div>"
+
+
+def overlap_tp_cp_table() -> str:
+    """What-if: TP and CP collectives overlapped (with the NVLink overlap
+    penalties) instead of exposed, for the configs at the top of each context."""
+    rows = []
+    for ctx in ("8K", "32K"):
+        base = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan"), 1)}
+        over = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan", overlap_tp_cp=True), 1)}
+        names = {n for n, (i, _) in base.items() if i <= 3} | {n for n, (i, _) in over.items() if i <= 3}
+        best_fsdp = min((r for _, r in base.values() if r["P"] == 1), key=lambda r: r["step"])["name"]
+        for n in sorted(names | {best_fsdp}, key=lambda n: over[n][0]):
+            rows.append((ctx, n, base[n], over[n]))
+    head = ["Context", "Config", "TP / CP exposed (today)", "TP / CP overlapped"]
+    out = ['<table class="dtable"><caption>Step time, and in brackets the rank among TorchTitan configs'
+           '</caption><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
+    short = lambda n: n.replace(", EP 64", "").replace(", EP 32", "").replace(" (cache)", "").replace(" (chain)", "")
+    for ctx, n, (ib, rb), (io, ro) in rows:
+        out.append(f"<tr><td>{ctx}</td><td>{short(n)}</td><td>{rb['step']:.1f} s ({ib})</td>"
+                   f"<td><b>{ro['step']:.1f} s</b> ({io})</td></tr>")
+    out.append("</table>")
+    return "\n".join(out)
 
 
 def fsdp_postmortem_table() -> str:
@@ -1961,7 +2126,7 @@ def held_split(ep: int, tp: int, layers: int) -> tuple[float, float]:
     lay = {r["key"]: r["numel"] for r in d["layers"][0]["scope"]["stored"]}
     routed_n = lay["routed"]
     dense_n = sum(lay.values()) - routed_n
-    q_blk = d["mxfp8_linear_params"]["kda_block"]
+    q_blk = dense_quantized_params()
     routed = layers * (MXFP8_WEIGHT_BYTES + 4) * routed_n / ep
     dense = layers * (MXFP8_WEIGHT_BYTES * q_blk + 2 * (dense_n - q_blk) + 4 * dense_n) / tp
     return routed, dense
@@ -1992,7 +2157,7 @@ def tp_dense_table() -> str:
     return "\n".join(out)
 
 
-def pp_table(ctx: str = "8K") -> str:
+def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
     """PP 8 / 16 under ZeRO-1 (FSDP's default with PP), with each sequence
     split by CP or TP. Cells are shaded against the same PP degree without a
     split; the total is green if it fits in one GPU, red if not."""
@@ -2001,7 +2166,7 @@ def pp_table(ctx: str = "8K") -> str:
             "Compute weights (stage, MXFP8)", "Total", "x GPU"]
     green, red = ' style="background: rgba(0, 131, 0, 0.12)"', ' style="background: rgba(227, 73, 72, 0.15)"'
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
-    for P in (8, 16):
+    for P in degrees:
         base = pp_parts(ctx, P, 1)
         for cp, tp in splits:
             r = pp_parts(ctx, P, 1, cp, tp)
@@ -2092,4 +2257,46 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),
-                "cp-table": by_context(cp_table)})
+                "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
+                "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
+                "pp8-table": by_context(lambda c: pp_table(c, (8,))),
+                "pp16-table": by_context(lambda c: pp_table(c, (16,))),
+        "tp-dense-table": tp_dense_table,
+        "roofline-table": by_context(roofline_table),
+        "dense-shapes": by_context(dense_shapes_table),
+        "expert-shapes": by_context(expert_shapes_table),
+        "mla-shapes": by_context(mla_table),
+        "ideal-gap-table": by_context(ideal_gap_table),
+        "nonmatmul-table": nonmatmul_table,
+        "overlap-table": overlap_table,
+        "sweep-table": sweep_table,
+        "pp-vpp-table": by_context(pp_vpp_table),
+        "one-way-table": one_way_table,
+        "ib-bw-table": ib_bw_table,
+        "xhost-overlap-table": xhost_overlap_table,
+        "ranking-table": by_context(ranking_table),
+        "ranking-chart": by_context(ranking_chart),
+        "fsdp-postmortem-table": fsdp_postmortem_table,
+        "pp16-vs-pp8-table": pp16_vs_pp8_table,
+        "transport-compare-table": transport_compare_table,
+        "overlap-formulas": overlap_formulas,
+        "overlap-formulas-ib": lambda: overlap_formulas(1.3, 1.7),
+        "hop-formulas": hop_formulas,
+        "transport-diagram": transport_diagram,
+        "overlap-tp-cp-table": overlap_tp_cp_table,
+        "transport-diagram-titan": lambda: transport_diagram(("chain", "cache")),
+        "transport-matrix": transport_matrix,
+        "bubble-formulas": bubble_formulas,
+        "pp-hop-timeline": pp_hop_timeline,
+        "pp-hop-timeline-interleaved": lambda: pp_hop_timeline(2),
+        "ib-rule-formula": ib_rule_formula,
+        "fsdp-ib-formula": fsdp_ib_formula,
+        "fsdp-ib-table": fsdp_ib_table,
+        "ib-rule-table": ib_rule_table,
+        "gb200-ib-table": gb200_ib_table,
+        "expert-ib-table": expert_ib_table,
+        "pp-ib-table": pp_ib_table,
+        "overlap-examples": overlap_examples,
+        "compute-table-fsdp": by_context(lambda c: compute_table(c, 1)),
+        "compute-table-pp8": by_context(lambda c: compute_table(c, 8)),
+        "compute-table-pp16": by_context(lambda c: compute_table(c, 16)), "fit-map": by_context(fit_map)})

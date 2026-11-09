@@ -47,11 +47,32 @@ def bench_inputs(bench_dir: Path) -> dict | None:
             if len(parts) > 8 and parts[0].isdigit() and parts[2] == "bfloat16":
                 rows.append([int(parts[0]), float(parts[5]), float(parts[7])])
         nvlink[op] = rows
+    dist_moe = bench_dir / "dist_moe_GB300_ep4.json"
+    mla_fa4 = bench_dir / "mla_fa4_GB300.json"
+    fake_pg = bench_dir / "fake_pg_GB300.json"
+    dist_moe = bench_dir / "dist_moe_GB300_ep4.json"
+    mla_fa4 = bench_dir / "mla_fa4_GB300.json"
+    fake_pg = bench_dir / "fake_pg_GB300.json"
     shapes = bench_dir / "attention_shapes_GB300.json"
     return {
         "kernels": json.loads(kernels.read_text()),
         "nvlink": nvlink,
         "attention_shapes": json.loads(shapes.read_text()) if shapes.exists() else None,
+        "dist_moe": json.loads(dist_moe.read_text()) if dist_moe.exists() else None,
+        "mla_fa4": json.loads(mla_fa4.read_text())["mla_fa4"]["data"]
+        if mla_fa4.exists()
+        else None,
+        "fake_pg": json.loads(fake_pg.read_text()) if fake_pg.exists() else None,
+        "dist_moe": json.loads(dist_moe.read_text()) if dist_moe.exists() else None,
+        "mla_fa4": json.loads(mla_fa4.read_text())["mla_fa4"]["data"]
+        if mla_fa4.exists()
+        else None,
+        "fake_pg": json.loads(fake_pg.read_text()) if fake_pg.exists() else None,
+        "kda_cp": {
+            cp: json.loads(path.read_text())["results"]
+            for cp in (2, 4)
+            if (path := bench_dir / f"kda_cp_GB300_cp{cp}.json").exists()
+        },
     }
 
 
@@ -78,14 +99,14 @@ def main() -> int:
         return 1
     data = {
         "model": json.loads(args.model_data.read_text()),
+        data["tp_vs_cp"] = step_model.tp_vs_cp(data["model"], data["bench"])
         "bench": bench_inputs(args.bench_dir),
     }
     configs = HERE / "kimi_k3_configs.json"
     if data["bench"] and configs.exists():
         data["links"] = step_model.link_table(data["bench"])
-        data["ranking"] = step_model.rank_configs(
-            data["model"], data["bench"], json.loads(configs.read_text())["configs"]
-        )
+        data["ranking"] = step_model.rank_configs(data["model"], data["bench"],
+                                                  json.loads(configs.read_text())["configs"])
         data["tp_vs_cp"] = step_model.tp_vs_cp(data["model"], data["bench"])
     args.out.write_text(render(HTML_TEMPLATE, data))
     print(f"Wrote {args.out}")
@@ -100,7 +121,13 @@ HTML_TEMPLATE = r"""<!doctype html>
 <title>Kimi K3 -- step-time roofline</title>
 <style>
 /*__CSS__*/
-        data["tp_vs_cp"] = step_model.tp_vs_cp(data["model"], data["bench"])
+.formula { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px 18px; margin: 12px 0 8px; font-size: 14px; line-height: 2.0; }
+.formula .eq { font-family: "Cambria Math", "STIX Two Math", Georgia, serif; font-size: 16px; }
+.formula .lbl { display: inline-block; min-width: 250px; color: var(--text-secondary);
+                font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; }
+.formula .where { margin-top: 6px; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+.formula i { font-style: italic; }
 </style>
 </head>
 <body>
@@ -117,19 +144,98 @@ HTML_TEMPLATE = r"""<!doctype html>
     </div>
   </div>
 
-  <h2>1. Roofline inputs (provisional)</h2>
+  <h2>1. Compute time: roofline estimate</h2>
+  <p class="sub" id="rfSub"></p>
+  <p class="sub" id="rfSymbols"></p>
+
+  <h3 class="subhead">1.1 Dense linears</h3>
+  <div class="formula"><div class="eq">
+    <i>t</i><sub>dense</sub> = 8 &middot; (<i>T</i>/<i>cp</i>) &middot; (<i>N</i><sub>dense</sub>/<i>tp</i>)
+    &nbsp;/&nbsp; ( &eta; &middot; <i>R</i><sub>peak</sub> )</div></div>
+  <p class="sub" id="rfDense"></p>
+
+  <h3 class="subhead">1.2 Routed experts</h3>
+  <div class="formula">
+    <div class="where" style="margin: 0 0 4px"><b>Roofline terms</b></div>
+    <div class="eq"><span class="lbl">w13 (gate + up, L &rarr; 2&middot;F<sub>e</sub>)</span>
+      <i>t</i><sub>w13</sub> = 8 &middot; (<i>T</i>/(<i>cp</i>&middot;<i>tp</i>)) &middot; (<i>k</i> &middot; <i>N</i><sub>w13</sub>)
+      &nbsp;/&nbsp; ( &eta; &middot; <i>R</i><sub>peak</sub> )</div>
+    <div class="eq"><span class="lbl">w2 (down, F<sub>e</sub> &rarr; L)</span>
+      <i>t</i><sub>w2</sub> = 8 &middot; (<i>T</i>/(<i>cp</i>&middot;<i>tp</i>)) &middot; (<i>k</i> &middot; <i>N</i><sub>w2</sub>)
+      &nbsp;/&nbsp; ( &eta; &middot; <i>R</i><sub>peak</sub> )</div>
+    <div class="eq"><span class="lbl">Routed experts</span>
+      <i>t</i><sub>experts</sub> = <i>t</i><sub>w13</sub> + <i>t</i><sub>w2</sub></div>
+  </div>
+  <div class="formula" style="background: transparent">
+    <div class="where" style="margin: 0 0 4px"><b>Why ep does not appear: one expert, then one GPU</b> (exposition, not
+    used directly)</div>
+    <div class="eq"><span class="lbl">Tokens per expert</span>
+      <i>n</i><sub>e</sub> = (<i>T</i>/(<i>cp</i>&middot;<i>tp</i>)) &middot; <i>ep</i> &middot; <i>k</i> / <i>E</i></div>
+    <div class="eq"><span class="lbl">FLOPs per expert</span>
+      <i>F</i><sub>expert</sub> = 8 &middot; <i>n</i><sub>e</sub> &middot; (<i>N</i><sub>w13</sub> + <i>N</i><sub>w2</sub>)</div>
+    <div class="eq"><span class="lbl">FLOPs per GPU (<i>E</i>/<i>ep</i> experts)</span>
+      (<i>E</i>/<i>ep</i>) &middot; <i>F</i><sub>expert</sub> = 8 &middot; (<i>T</i>/(<i>cp</i>&middot;<i>tp</i>)) &middot; <i>k</i>
+      &middot; (<i>N</i><sub>w13</sub> + <i>N</i><sub>w2</sub>) &nbsp; &larr; <i>ep</i> cancels</div>
+  </div>
+  <p class="sub" id="rfExperts"></p>
+
+  <h3 class="subhead">1.3 MLA attention</h3>
+  <div class="formula">
+    <div class="eq"><span class="lbl">Forward FLOPs per GPU</span>
+      <i>F</i> = <i>T</i><sup>2</sup> &middot; (<i>H</i>/(<i>tp</i>&middot;<i>cp</i>)) &middot; (<i>d</i><sub>qk</sub> + <i>d</i><sub>v</sub>)</div>
+    <div class="eq"><span class="lbl">MLA attention (roofline term)</span>
+      <i>t</i><sub>MLA</sub> = 4.5 &middot; <i>F</i> / ( &eta; &middot; <i>R</i><sub>peak</sub> )</div>
+  </div>
+  <p class="sub" id="rfMla"></p>
+
+  <h3 class="subhead">1.4 KDA attention (measured model, not a roofline)</h3>
+  <div class="formula"><div class="eq">
+    <i>t</i><sub>KDA</sub> = (<i>T</i>/<i>cp</i>) &middot; ( 0.40 / <i>s</i>(<i>T</i>, <i>tp</i>) + 0.05 ) &micro;s</div></div>
+  <p class="sub" id="rfKda"></p>
+
+  <h3 class="subhead">1.5 Putting it together</h3>
+  <div class="formula"><div class="eq">
+    <i>t</i><sub>layer</sub> = <i>t</i><sub>dense</sub> + <i>t</i><sub>experts</sub> + ( <i>t</i><sub>MLA</sub> or <i>t</i><sub>KDA</sub> )</div></div>
+
+  <h3 class="subhead">1.6 Per-step compute time per GPU</h3>
+  <div class="formula">
+    <div class="eq"><span class="lbl">Per step, one GPU</span>
+      <i>t</i><sub>step</sub> = <i>n</i><sub>mb</sub> &middot; &Sigma;<sub>stage layers</sub> <i>t</i><sub>layer</sub>
+      + <i>t</i><sub>layer 0</sub> + <i>t</i><sub>LM head</sub>,
+      &nbsp; <i>n</i><sub>mb</sub> = (tokens per step / <i>T</i>) &middot; <i>pp</i> &middot; <i>cp</i> &middot; <i>tp</i> / 512</div>
+    <div class="eq"><span class="lbl">Layer 0 (KDA + dense FFN)</span>
+      dense FFN: 8 &middot; <i>D</i><sub>tok</sub> &middot; 3&middot;<i>D</i>&middot;<i>F</i> / ( &eta; &middot; <i>R</i><sub>peak</sub> ), no routed experts</div>
+    <div class="eq"><span class="lbl">LM head + chunked loss</span>
+      <i>t</i><sub>LM head</sub> = 6 &middot; <i>D</i><sub>tok</sub> &middot; <i>V</i>&middot;<i>D</i> / ( &eta; &middot; <i>R</i><sub>peak</sub> ) &nbsp; (outside the remat blocks: no replay)</div>
+  </div>
+  <p class="sub" id="rfStepSub"></p>
+  <div class="panel"><table id="rfStep"></table></div>
+
+  <h2>2. Measurements: does the roofline hold? (provisional)</h2>
   <p class="sub" id="riSub"></p>
-  <h3 class="subhead">1.1 Compute: dense GEMMs</h3>
+  <div class="callout note" id="riFormulaGap"></div>
+
+  <h3 class="subhead">2.1 Dense GEMMs</h3>
   <p class="sub" id="riLinSub"></p>
   <div class="panel"><table id="riLinears"></table></div>
-  <h3 class="subhead">1.2 Compute: routed-expert GEMMs and attention</h3>
+  <h3 class="subhead">2.2 Routed-expert GEMMs</h3>
   <p class="sub" id="riExSub"></p>
   <div class="panel"><table id="riExperts"></table></div>
-  <div class="panel" style="margin-top: 16px"><table id="riAttn"></table></div>
-  <div class="panel" style="margin-top: 16px"><table id="riKda"></table></div>
-  <h3 class="subhead">1.3 Communication: NVLink</h3>
+  <h3 class="subhead">2.3 Attention</h3>
+  <p class="sub" id="riAttnSub"></p>
+  <div class="panel"><table id="riAttn"></table></div>
+  <p class="sub" id="riKdaSub" style="margin-top: 16px"></p>
+  <div class="panel"><table id="riKda"></table></div>
+  <div class="panel" style="margin-top: 16px"><table id="riKdaCp"></table></div>
+  <h3 class="subhead">2.4 Communication: NVLink</h3>
   <div class="panel"><table id="riNvlink"></table></div>
   <div class="callout note" id="riNote"></div>
+
+  <h3 class="subhead">2.5 Whole step: fake-process-group run</h3>
+  <p class="sub" id="fpSub"></p>
+  <div class="panel"><table id="fpTable"></table></div>
+  <div class="panel" id="fpPies" style="margin-top: 16px"></div>
+  <div class="sub" id="fpWhy" style="margin-top: 12px"></div>
 
   <h2>3. Communication: links and bandwidth</h2>
   <p class="sub" id="cmSub"></p>
@@ -186,22 +292,17 @@ function ruleEff(rule, dtype, n) {
   return { eff: rule[dtype][i], tier: rule.tiers[i] };
 }
 
-// Roofline efficiency rule: fractions of DATASHEET peak, from the measured
-// tables rounded down to 5%. Each tier holds from its token count up to the
-// next; a count between tiers takes the lower tier, so small GEMMs are
-// penalized and the exact measurements stop mattering.
-const ROOFLINE_RULE = {
-  // dense linears, by local seq length (GEMM M)
-  dense: { tiers: [1024, 2048], bf16: [0.60, 0.65], mxfp8: [0.50, 0.60] },
-  // routed-expert GEMMs, by tokens per expert per microbatch
-  experts: { tiers: [512, 1024, 2048, 4096], bf16: [0.35, 0.45, 0.55, 0.65], mxfp8: [0.20, 0.30, 0.45, 0.60] },
-  // MLA attention (cuDNN / varlen), of bf16 peak, by sequence length (keys): forward
-  // + backward, and the forward full remat replays. TP and Ulysses CP only cut
-  // heads, which barely changes efficiency; KV all-gather CP needs Flex
-  // (~5-10% of peak here), so the roofline models CP as Ulysses + varlen.
-  mla: { tiers: [4096, 8192, 16384], fwd_bwd: [0.40, 0.45, 0.50], fwd: [0.55, 0.65, 0.70] },
+// The roofline's single assumed efficiency for matmul-like kernels (dense,
+// experts, MLA), a fraction of DATASHEET peak. bf16: what large GEMMs on this
+// GPU reach (dense forward / dgrad 68-73%, DistMoE GEMM kernels 60-73%).
+const ROOFLINE_EFF = { bf16: 0.70, mxfp8: 0.60 };
+
+// KDA's measured model (section 1.4), the one kernel the roofline costs from
+// measurements rather than FLOPs.
+const KDA_MODEL = {
   // KDA, us per token per layer with all 96 heads: forward + backward, and
-  // the remat forward. TP t speeds it up by the measured factor rounded down,
+  // the remat forward (kept flat under TP: the forward barely speeds up with
+  // fewer heads). TP t speeds up forward + backward by the measured factor rounded down,
   // by sequence length (TP 1 / 2 / 4 / 8): KDA scales well at 32K but stops
   // improving past TP 2 at 8K, where the kernel no longer fills the GPU (the
   // contended 8K run measured TP 4 / 8 slightly slower than TP 2; held at TP 2's
@@ -213,19 +314,49 @@ const ROOFLINE_RULE = {
 // A table of measured values with each cell's % of its row's datasheet peak
 // (when the row has one); cells under 60% of the row's best are shaded,
 // marking where efficiency falls off.
-function riTable(table, corner, columns, rows, fmtCell) {
+// Diverging shading by distance from the roofline: measured efficiency over
+// the assumed one, minus 1. Red (palette #e34948) deepens as measured falls
+// short, darkest at -60% or worse; blue (#2a78d6) where it beats the roofline,
+// fullest at +20%; neutral within 2%.
+function rooflineShade(frac, assumed) {
+  const gap = frac / assumed - 1;
+  if (gap < -0.02) return `background: rgba(227, 73, 72, ${(0.08 + 0.42 * Math.min(1, -gap / 0.6)).toFixed(3)})`;
+  if (gap > 0.02) return `background: rgba(42, 120, 214, ${(0.06 + 0.22 * Math.min(1, gap / 0.2)).toFixed(3)})`;
+  return "";
+}
+const assumedFor = peak => peak === DATASHEET.bf16 ? ROOFLINE_EFF.bf16 : ROOFLINE_EFF.mxfp8;
+
+// Shading within one table, anchored at 90% of the roofline (white): below it
+// red (#e34948), darkest at the table's lowest % of peak; above it green
+// (#008300), fullest at the table's highest.
+const WHITE_OF_ROOFLINE = 0.9;
+function rangeShade(frac, white, lo, hi) {
+  if (frac < white - 0.005 && white > lo)
+    return `background: rgba(227, 73, 72, ${(0.08 + 0.42 * Math.min(1, (white - frac) / (white - lo))).toFixed(3)})`;
+  if (frac > white + 0.005 && hi > white)
+    return `background: rgba(0, 131, 0, ${(0.06 + 0.26 * Math.min(1, (frac - white) / (hi - white))).toFixed(3)})`;
+  return "";
+}
+
+function riTable(table, corner, columns, rows, fmtCell, { graded = false } = {}) {
+  // graded: shade every cell by its % of peak relative to the table's range
+  const fracs = graded ? rows.flatMap(([, values, , peak]) => peak ? values.filter(v => v != null).map(v => v / peak) : []) : [];
+  const lo = Math.min(...fracs), hi = Math.max(...fracs);
   table.replaceChildren();
   const head = el("tr");
   head.append(el("th", {}, corner));
   for (const c of columns) head.append(el("th", { class: "r" }, c));
   table.append(head);
-  for (const [label, values, shadeLow, peak] of rows) {
+  // a row's fifth entry, when true, shades every cell red (a path to avoid)
+  for (const [label, values, shadeLow, peak, allRed] of rows) {
     const tr = el("tr");
     tr.append(el("td", {}, label));
     const best = Math.max(...values.filter(v => v != null));
     for (const v of values) {
-      const low = shadeLow && v != null && v < 0.6 * best;
-      const td = el("td", { class: `r ${low ? "up" : ""}` }, v == null ? "--" : fmtCell(v));
+      const low = !graded && (allRed || (shadeLow && v < 0.6 * best)) && v != null;
+      const shade = graded && v != null && peak
+        ? rangeShade(v / peak, WHITE_OF_ROOFLINE * assumedFor(peak), lo, hi) : "";
+      const td = el("td", { class: `r ${low ? "up" : ""}`, style: shade }, v == null ? "--" : fmtCell(v));
       if (v != null && peak)
         td.append(el("span", { class: "change", style: "color: var(--text-secondary)" },
                      `${(100 * v / peak).toFixed(0)}% of peak`));
@@ -235,162 +366,491 @@ function riTable(table, corner, columns, rows, fmtCell) {
   }
 }
 
+// Fraction -> whole percent (the shared pct() takes a value already in percent).
+const pctOf = v => `${(100 * v).toFixed(0)}%`;
+
+function renderRooflineIntro() {
+  const b = t => el("b", {}, t);
+  document.getElementById("rfSub").replaceChildren(
+    "Compute time from FLOPs and one assumed efficiency, ", b(`${pctOf(ROOFLINE_EFF.bf16)} of peak in bf16 and `),
+    b(`${pctOf(ROOFLINE_EFF.mxfp8)} in MXFP8`), ", for every matmul-like kernel, per layer, microbatch and GPU. ",
+    "Section 2 checks it against measurements.");
+}
+
+function renderFormulaWhere() {
+  // b() takes text or nodes, so formulas with subscripts can be bold
+  const S = DATA.model.symbols, i = t => el("i", {}, t);
+  const b = (...parts) => { const e = el("b"); e.append(...parts); return e; };
+  const sub = (base, x) => { const e = el("i", {}, base); e.append(el("sub", {}, x)); return e; };
+  document.getElementById("rfSymbols").replaceChildren(
+    "Each term is FLOPs divided by achieved throughput, \u03b7 x ", sub("R", "peak"), ", for one transformer ",
+    "layer, one microbatch (one sequence of T tokens) and one GPU. ", i("cp"), " and ", i("tp"), " are the CP and ",
+    "TP degrees. ", b("\u03b7 x ", sub("R", "peak")), " is the throughput a GPU is assumed to achieve: ",
+    sub("R", "peak"), ` is the datasheet's dense peak rate (${DATASHEET.bf16 / 1000} PFLOPS bf16, `,
+    `${DATASHEET.fp8 / 1000} PFLOPS FP8/MXFP8) and \u03b7 the fraction real kernels reach, so \u03b7 x `,
+    sub("R", "peak"), " = ",
+    b(`${exact(ROOFLINE_EFF.bf16 * DATASHEET.bf16)} TFLOPS in bf16`), " and ",
+    b(`${exact(ROOFLINE_EFF.mxfp8 * DATASHEET.fp8)} TFLOPS in MXFP8`), ".");
+  document.getElementById("rfDense").replaceChildren(
+    "This is the familiar ", b("6 N D"), " (2 FLOPs per parameter per token forward, 4 backward) with ",
+    b("N = ", sub("N", "dense"), " / tp"), " and ", b("D = T / cp"), ", and ", b("8"), " instead of 6 ",
+    "because full remat replays the forward once more. ", b("T / cp"), " is the tokens one GPU runs through the dense linears: CP splits the sequence across cp GPUs, ",
+    "and TP gathers it back before the linears (sequence parallelism). ", b(sub("N", "dense"), " / tp"),
+    " is the trainable parameters one GPU holds of the layer's dense linears. TP splits the attention projections ",
+    "and shared experts; the router and routed down/up projections keep full weights and instead run on the ",
+    "routed tokens TP splits (T / (cp x tp)), like the experts -- the same FLOPs, a different GEMM shape. A linear does ", b("2 FLOPs per parameter "),
+    b("per token"), " (a multiply and an add) per GEMM, and each runs ", b("4 GEMMs"), ": the forward, the forward ",
+    "again when full remat replays the block in backward, and the two backward GEMMs (input gradient and weight ",
+    "gradient). Hence ", b("8 = 2 x 4"), ".");
+  const L = S.L, Fe = S.Fe, nW13 = 2 * L * Fe, nW2 = Fe * L, M = n => `${(n / 1e6).toFixed(1)}M`;
+  document.getElementById("rfExperts").replaceChildren(
+    "Each is again ", b("N D"), " times FLOPs per parameter per token, with ", b("D = T / (cp x tp)"), " -- the ",
+    "tokens one GPU sends into the routed experts (TorchTitan folds TP into EP: the TP ranks split the routed ",
+    "tokens and join the expert-parallel pool, so expert weights are never split by TP) -- and ", b("N = k x"),
+    " the GEMM's parameters per expert, since each token visits ", b(`k = ${S.k} experts`), ". ",
+    b("ep cancels per GPU"), ": the second box counts one expert's tokens (the EP group's ep GPUs send ",
+    "ep x T / (cp x tp) x k visits, spread over E experts), its FLOPs, and the E / ep experts a GPU hosts. So ",
+    "a GPU's total expert work does not depend on ep; ep only sets the tokens per expert, and with it the ",
+    "GEMM size that decides whether \u03b7 holds. Per expert, ", b("w13"),
+    ` fuses the gate and up projections (L = ${exact(L)} -> 2 x Fe = ${exact(2 * Fe)}, `, sub("N", "w13"),
+    ` = ${M(nW13)}) and `, b("w2"), ` projects back down (Fe -> L, `, sub("N", "w2"), ` = ${M(nW2)}). `,
+    "Full remat does not replay DistMoE, but DistMoE saves only its inputs and in backward re-dispatches them ",
+    "and recomputes ", b("both"), " forwards: w13 to rebuild the activation, and w2 because the router-score ",
+    "gradient is the output gradient dotted with each expert's output. So ", b("both cost 8"), " (forward, ",
+    "recompute, two backward GEMMs), and the routed experts are another 8 N D with N = k x ", sub("N", "e"),
+    ".");
+  document.getElementById("rfMla").replaceChildren(
+    b("F"), " is causal attention's forward FLOPs on one GPU: Q K", el("sup", {}, "T"), " and P V each cost 2 x T x T ",
+    "x heads x head dim, halved because each query attends only to earlier keys, giving T", el("sup", {}, "2"),
+    ` x heads x (d_qk + d_v) with d_qk = 192, d_v = 128. Per GPU, TP and Ulysses CP split the ${96} heads, `,
+    "leaving ", b("H / (tp x cp)"), " heads on all T keys; KV all-gather CP instead keeps all heads on T / cp ",
+    "queries against all keys -- the same FLOPs, written here in the head-split form. ", b("4.5"), " = 1 forward + 2.5 for backward (it recomputes ",
+    "the scores and runs four matmuls, the usual FlashAttention count) + 1 forward replayed by full remat.");
+  document.getElementById("rfKda").replaceChildren(
+    b("KDA is hard to roofline"), ": it is a chunked recurrence of small matmuls, triangular solves and state ",
+    "updates, roughly 7x slower than its FLOPs at matmul peak. For now it uses a model fitted to measurements: ",
+    b("0.40 us per token per layer"), " for forward + backward with all heads, divided by the measured TP speedup ",
+    b("s"), " (TP leaves each GPU fewer heads), plus ", b("0.05 us"), " for the remat forward; a GPU runs ",
+    b("T / cp"), " tokens. We know this is not a roofline; a FLOP-and-byte model of the chunk kernel is a TODO.");
+}
+
+// 1.6: per-step compute time per GPU from the roofline. Every GPU processes
+// global tokens / 512 tokens per step whatever the parallelism, so the FLOP
+// terms are the same for every config; only attention (T^2) and KDA's TP
+// speedup depend on the config.
+// Per-step roofline compute terms (seconds per GPU) at one context and dtype.
+function stepTerms(ctx, dt) {
+  const M = DATA.model, S = M.symbols, T = M.contexts[ctx].seq_len, tok = M.global_tokens / 512;
+  const dense = sc => M.scopes[sc].stored.filter(r => r.key !== "routed").reduce((a, r) => a + r.numel, 0);
+  const nKda = M.layers[0].count, nMla = M.layers[1].count;
+  const nExpert = M.scopes.kda_layer.stored.find(r => r.key === "routed").numel / S.E;
+  const kdaAttn = M.scopes.kda_layer.stored.find(r => r.key === "attention").numel;
+  const rate = d => ROOFLINE_EFF[d] * (d === "bf16" ? DATASHEET.bf16 : DATASHEET.fp8) * 1e12;
+  return {
+    dense: 8 * tok * (nKda * dense("kda_layer") + nMla * dense("mla_layer")) / rate(dt),
+    experts: 8 * tok * 92 * S.k * nExpert / rate(dt),
+    layer0: 8 * tok * (kdaAttn + 3 * S.D * S.F) / rate(dt),
+    lmhead: 6 * tok * S.V * S.D / rate(dt),
+    mla: 24 * 4.5 * tok * T * S.H * (S.Dn + S.Dr + S.Dv) / rate("bf16"),
+    kda: 69 * tok * (KDA_MODEL.kda.fwd_bwd + KDA_MODEL.kda.fwd) * 1e-6,
+  };
+}
+
+// 2.5: the fake-PG step against the roofline, by op class, with the reasons.
+const FP_CLASS = {
+  gemm: "GEMMs (dense; non-DistMoE expert GEMMs too)", distmoe: "Routed experts: DistMoE kernels",
+  mla: "Attention: MLA (SDPA / flash)", kda: "Attention: KDA",
+  fsdp: "FSDP buffer copies (chunk_cat / split copy-out)", copies: "Copies, casts, cat, memset",
+  norms: "Norms, softmax (RMSNorm, AttnRes depth mixing)", tokens: "MoE token movement (index / sort / scatter)",
+  elem: "Elementwise and other fused Triton", opt: "Optimizer (Muon / AdamW updates)", other: "other",
+};
+const fpClass = (r, k) => r.breakdown.by_class_s[FP_CLASS[k]] ?? 0;
+const fpIdle = r => r.clean_step_s - r.breakdown.gpu_busy_s;
+const fpOutside = r => ["fsdp", "copies", "norms", "tokens", "elem", "opt", "other"].reduce((a, k) => a + fpClass(r, k), 0);
+
+// Pie slices: the categorical order of the memory page; idle in neutral gray.
+const FP_SLICES = [
+  ["Routed experts (DistMoE)", "#2a78d6", r => fpClass(r, "distmoe")],
+  ["Dense GEMMs", "#1baf7a", r => fpClass(r, "gemm")],
+  ["MLA attention", "#eb6834", r => fpClass(r, "mla")],
+  ["KDA attention", "#eda100", r => fpClass(r, "kda")],
+  ["FSDP staging copies", "#4a3aa7", r => fpClass(r, "fsdp")],
+  ["Other memory-bound ops (copies, casts, norms, elementwise, optimizer)", "#e87ba4",
+   r => fpOutside(r) - fpClass(r, "fsdp")],
+  ["GPU idle", "#c3c2b7", r => fpIdle(r)],
+];
+
+function renderFpPies(runs) {
+  const host = document.getElementById("fpPies");
+  host.replaceChildren();
+  const row = el("div", { style: "display: flex; flex-wrap: wrap; gap: 24px 56px; align-items: flex-start" });
+  const R0 = 92, R1 = 54, W = 2 * R0 + 150;
+  for (const [title, r] of runs) {
+    const total = r.clean_step_s, box = el("div");
+    box.append(el("div", { style: "font-weight: 600; font-size: 14px; margin-bottom: 2px" }, title),
+               el("div", { style: "color: var(--text-secondary); font-size: 13px" }, `${total.toFixed(1)} s per step`));
+    const svg = sel("svg", { width: W, height: 2 * R0 + 24, role: "img", "aria-label": `${title}: time per step by op class` });
+    const cx = W / 2, cy = R0 + 12;
+    let ang = -Math.PI / 2;
+    for (const [label, color, f] of FP_SLICES) {
+      const v = f(r), da = 2 * Math.PI * v / total;
+      if (v <= 0) continue;
+      const a0 = ang, a1 = ang + da, large = da > Math.PI ? 1 : 0;
+      const pt = (rad, t) => `${(cx + rad * Math.cos(t)).toFixed(2)} ${(cy + rad * Math.sin(t)).toFixed(2)}`;
+      const g = sel("g", { class: "bar", tabindex: 0 });
+      g.append(sel("path", {
+        d: `M ${pt(R0, a0)} A ${R0} ${R0} 0 ${large} 1 ${pt(R0, a1)} L ${pt(R1, a1)} A ${R1} ${R1} 0 ${large} 0 ${pt(R1, a0)} Z`,
+        fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }));
+      attachTip(g, () => [{ text: label, color }, { text: `${v.toFixed(2)} s`, cls: "v" },
+                          { text: `${(100 * v / total).toFixed(0)}% of the step`, cls: "k" }]);
+      svg.append(g);
+      // direct label for slices of at least 6%, outside the ring
+      if (v / total >= 0.06) {
+        const mid = (a0 + a1) / 2, lx = cx + (R0 + 8) * Math.cos(mid), ly = cy + (R0 + 8) * Math.sin(mid);
+        svg.append(sel("text", { x: lx.toFixed(1), y: (ly + 4).toFixed(1), class: "vallabel",
+                                 "text-anchor": Math.cos(mid) >= 0 ? "start" : "end" }, `${(100 * v / total).toFixed(0)}%`));
+      }
+      ang = a1;
+    }
+    svg.append(sel("text", { x: cx, y: cy + 5, class: "rowlabel", "text-anchor": "middle" }, `${total.toFixed(1)} s`));
+    box.append(svg);
+    row.append(box);
+  }
+  const legend = el("div", { class: "legend" });
+  for (const [label, color] of FP_SLICES) {
+    const item = el("span", { style: "display: inline-flex; align-items: center; gap: 6px" });
+    item.append(el("span", { style: `width: 10px; height: 10px; border-radius: 2px; background: ${color}; display: inline-block` }), label);
+    legend.append(item);
+  }
+  host.append(legend, row);
+}
+
+function renderFakePg() {
+  const F = DATA.bench.fake_pg, b = t => el("b", {}, t);
+  if (!F) return;
+  const sum = o => Object.values(o).reduce((a, x) => a + x, 0);
+  const rf8 = stepTerms("8K", "bf16"), rf32 = stepTerms("32K", "bf16");
+  const l8 = F.distmoe_longdocs_8k, l32 = F.distmoe_longdocs_32k_cp2;
+  const gemms = rf => rf.dense + rf.experts + rf.layer0 + rf.lmhead;
+  // [label, roofline 8K, measured fn, roofline 32K]
+  const rows = [
+    ["Dense GEMMs (incl. layer 0 and LM head)", gemms(rf8) - rf8.experts, r => fpClass(r, "gemm"), gemms(rf32) - rf32.experts],
+    ["Routed-expert GEMMs (DistMoE)", rf8.experts, r => fpClass(r, "distmoe"), rf32.experts],
+    ["MLA attention", rf8.mla, r => fpClass(r, "mla"), rf32.mla],
+    ["KDA attention", rf8.kda, r => fpClass(r, "kda"), rf32.kda],
+    ["Work outside the roofline", 0, fpOutside, 0],
+    ["  FSDP staging copies (all-gather / reduce-scatter)", 0, r => fpClass(r, "fsdp"), 0],
+    ["  other copies, casts, cat, memset", 0, r => fpClass(r, "copies"), 0],
+    ["  norms and softmax (RMSNorm, AttnRes depth mixing)", 0, r => fpClass(r, "norms"), 0],
+    ["  elementwise, optimizer, MoE token movement, other", 0,
+     r => fpClass(r, "elem") + fpClass(r, "opt") + fpClass(r, "tokens") + fpClass(r, "other"), 0],
+    ["GPU idle (step minus GPU busy time)", 0, fpIdle, 0],
+  ];
+  const table = document.getElementById("fpTable");
+  table.replaceChildren();
+  const head = el("tr");
+  for (const [h, r] of [["Seconds per step, FSDP + EP 64, bf16", 0], ["8K roofline (1.6)", 1], ["8K, measured", 1], ["32K roofline (1.6)", 1], ["32K CP 2, measured", 1]])
+    head.append(el("th", r ? { class: "r" } : {}, h));
+  table.append(head);
+  const cell = v => el("td", { class: "r", style: "white-space: nowrap" }, v == null ? "--" : v === 0 ? "-" : `${v.toFixed(2)} s`);
+  for (const [label, r8, f, r32] of rows) {
+    const tr = el("tr");
+    tr.append(el("td", {}, label), cell(r8), cell(f(l8)), cell(r32), cell(f(l32)));
+    table.append(tr);
+  }
+  const tr = el("tr"), lab = el("td");
+  lab.append(b("Step"));
+  tr.append(lab);
+  for (const v of [sum(rf8), l8.clean_step_s, sum(rf32), l32.clean_step_s]) {
+    const td = el("td", { class: "r" }); td.append(b(`${v.toFixed(1)} s`)); tr.append(td);
+  }
+  table.append(tr);
+
+  renderFpPies([["8K", l8], ["32K, CP 2", l32]]);
+
+  document.getElementById("fpSub").replaceChildren(
+    b(`Roofline: ${sum(rf8).toFixed(1)} s per step at 8K, ${sum(rf32).toFixed(1)} s at 32K`), b(" (1.6, bf16)."),
+    el("br"), b(`Measured: ${l8.clean_step_s.toFixed(1)} s at 8K and ${l32.clean_step_s.toFixed(1)} s at 32K CP 2.`), el("br"),
+    "TorchTitan's real training step for one GPU, run in fake-process-group mode: one GB300 stands in for ",
+    "logical rank 0 of 512 with FSDP + EP 64 (16M tokens per step, full remat, fp32 master weights with bf16 ",
+    "compute, DistMuon), executing its real kernels while collectives move no data. 8K runs 4 microbatches per ",
+    "step; 32K runs Ulysses CP 2 (MLA) and KDA's CP path, 2 microbatches. Routing is round-robin balanced, as the ",
+    "roofline assumes. DistMoE runs a stand-in model: SwiGLU, since DistMoE does not yet support SiTU-GLU, and ",
+    "1,024 routed experts (16 per GPU; same expert FLOPs per token). The data is synthetic documents longer ",
+    "than the window, so attention covers the full context as the roofline assumes. ",
+    "Step times are steady-state steps; the split by op class comes from profiling one more step.");
+  const ul = el("ul", { style: "margin: 6px 0 0 18px; padding: 0" });
+  const li = (...parts) => { const e = el("li", { style: "margin-bottom: 4px" }); e.append(...parts); ul.append(e); };
+  const kdaCp = fpClass(l32, "kda"), kda8 = fpClass(l8, "kda");
+  li(b("The kernels the roofline models are close to it. "),
+     `GEMMs take ${(fpClass(l8, "gemm") + fpClass(l8, "distmoe")).toFixed(1)} s at 8K and `,
+     `${(fpClass(l32, "gemm") + fpClass(l32, "distmoe")).toFixed(1)} s at 32K against the roofline's `,
+     `${gemms(rf8).toFixed(1)} s. The split differs: dense GEMMs run slower than the roofline `,
+     `(${fpClass(l8, "gemm").toFixed(1)} s against ${(rf8.dense + rf8.layer0 + rf8.lmhead).toFixed(1)} s; wgrad and the small `,
+     "projections sit below 70%, and the class also holds GEMV kernels outside the roofline's FLOPs), while DistMoE's ",
+     `GEMM kernels run faster (${fpClass(l8, "distmoe").toFixed(1)} s against ${rf8.experts.toFixed(1)} s, 73% of peak). `,
+     "That is a fake-PG effect: with one real rank, DistMoE's dispatch reads no peer memory over NVLink and its ",
+     "inputs are 64 aliased copies of the same 128 tokens, which stay in cache; at real EP 4 the same GEMM kernels ",
+     "reach 60-64% (2.2). MLA (cuDNN SDPA in these runs) is within about 10% of its roofline term at 32K: ",
+     `${fpClass(l32, "mla").toFixed(1)} s against ${rf32.mla.toFixed(1)} s.`);
+  li(b(`KDA under CP is far over its roofline term: ${kdaCp.toFixed(1)} s against ${rf32.kda.toFixed(1)} s at 32K CP 2. `),
+     `Without CP it takes ${kda8.toFixed(1)} s at 8K, close to the model. Under CP, KDA runs a different kernel `,
+     "set (chunked kernels plus a cross-rank summary pass); the CP benchmark in 2.3 measures that at 1.7x the ",
+     "time of the same tokens without CP at 32K CP 2, which accounts for about 1.7 s; the remaining ~0.7 s is ",
+     "not yet explained (likely the multi-document kernel variants the single-document benchmark does not run).");
+  li(b(`About ${fpOutside(l8).toFixed(1)} s (8K) and ${fpOutside(l32).toFixed(1)} s (32K) of GPU work is outside the roofline. `),
+     "FSDP's all-gather and reduce-scatter staging copies, dtype casts and concatenations, RMSNorm and AttnRes ",
+     "depth-mixing softmax, elementwise ops and the optimizer -- memory-bound work that FLOPs do not count. FSDP's ",
+     `staging copies are per microbatch, so they halve at 32K (${fpClass(l8, "fsdp").toFixed(1)} s -> `,
+     `${fpClass(l32, "fsdp").toFixed(1)} s, 4 -> 2 microbatches).`);
+  li(b(`The GPU sits idle for ${fpIdle(l8).toFixed(1)} s (8K) and ${fpIdle(l32).toFixed(1)} s (32K) of each step. `),
+     `The step launches about ${Math.round(l8.breakdown.kernels / 1000)}K kernels at 8K and `,
+     `${Math.round(l32.breakdown.kernels / 1000)}K at 32K in eager mode with CUDA graphs off, so the host cannot keep `,
+     "the GPU fed; this is likely the largest single fixable item (CUDA graphs or compilation).");
+  li(b("Caveats. "), "Collectives move no data, so communication time is absent (FSDP's staging copies are ",
+     "real); the DistMoE run is a stand-in model; MLA ran on cuDNN's SDPA flash kernel rather than FA4; one GPU, ",
+     "one parallelism layout per context.");
+  document.getElementById("fpWhy").replaceChildren(b("Why the measured step is slower than the roofline:"), ul);
+}
+function renderStepCompute() {
+  const M = DATA.model, S = M.symbols, b = t => el("b", {}, t);
+  const tok = M.global_tokens / 512;  // tokens per GPU per step
+  const dense = sc => M.scopes[sc].stored.filter(r => r.key !== "routed").reduce((a, r) => a + r.numel, 0);
+  const nKda = M.layers[0].count, nMla = M.layers[1].count;  // MoE layers by attention type
+  const nExpert = M.scopes.kda_layer.stored.find(r => r.key === "routed").numel / S.E;
+  const kdaAttn = M.scopes.kda_layer.stored.find(r => r.key === "attention").numel;
+  const layer0 = kdaAttn + 3 * S.D * S.F;  // KDA attention + dense FFN, no MoE
+  const rate = dt => ROOFLINE_EFF[dt] * (dt === "bf16" ? DATASHEET.bf16 : DATASHEET.fp8) * 1e12;
+  const rows = [], cols = [];
+  for (const ctx of Object.keys(M.contexts)) for (const dt of ["bf16", "mxfp8"]) cols.push([ctx, dt]);
+  const terms = [
+    ["Dense linears (68 KDA + 24 MLA layers)", (T, dt) => 8 * tok * (nKda * dense("kda_layer") + nMla * dense("mla_layer")) / rate(dt)],
+    ["Routed experts (92 MoE layers)", (T, dt) => 8 * tok * 92 * S.k * nExpert / rate(dt)],
+    ["Layer 0 (KDA attention + dense FFN linears)", (T, dt) => 8 * tok * layer0 / rate(dt)],
+    ["LM head + chunked loss", (T, dt) => 6 * tok * S.V * S.D / rate(dt)],
+    ["MLA attention (24 layers, bf16)", (T, dt) => 24 * 4.5 * tok * T * S.H * (S.Dn + S.Dr + S.Dv) / rate("bf16")],
+    ["KDA attention (69 layers, measured model, TP 1)", (T, dt) => 69 * tok * (KDA_MODEL.kda.fwd_bwd + KDA_MODEL.kda.fwd) * 1e-6],
+  ];
+  const vals = terms.map(([label, f]) => [label, cols.map(([ctx, dt]) => f(M.contexts[ctx].seq_len, dt))]);
+  const total = cols.map((_, j) => vals.reduce((a, [, v]) => a + v[j], 0));
+  const table = document.getElementById("rfStep");
+  table.replaceChildren();
+  const head = el("tr");
+  head.append(el("th", {}, "Seconds per step per GPU"));
+  for (const [ctx, dt] of cols) head.append(el("th", { class: "r" }, `${ctx}, ${dt === "bf16" ? "bf16" : "MXFP8"}`));
+  table.append(head);
+  const sec = v => v.toFixed(2);
+  for (const [label, v] of vals) {
+    const tr = el("tr");
+    tr.append(el("td", {}, label));
+    v.forEach((x, j) => tr.append(el("td", { class: "r" }, `${sec(x)} s`, )));
+    table.append(tr);
+  }
+  const tr = el("tr");
+  const totalLabel = el("td");
+  totalLabel.append(b("Total compute"));
+  tr.append(totalLabel);
+  total.forEach(x => { const td = el("td", { class: "r" }); td.append(b(`${sec(x)} s`)); tr.append(td); });
+  table.append(tr);
+  const kdaTp = t => `${(KDA_MODEL.kda.fwd_bwd * (t / KDA_MODEL.kda.tp_speedup.by_tier[1][KDA_MODEL.kda.tp.indexOf(t)]) / KDA_MODEL.kda.fwd_bwd).toFixed(2)}x`;
+  document.getElementById("rfStepSub").replaceChildren(
+    b("The same for every config."), ` Each GPU processes ${exact(tok)} tokens per step (${exact(M.global_tokens)} `,
+    "over 512 GPUs) whatever the parallelism: PP splits the layers but multiplies the microbatches by the same ",
+    "factor, and CP and TP split tokens or weights without adding FLOPs. So the FLOP terms depend only on the ",
+    "context length (MLA's T^2) and the dtype; configs differ through communication, the PP bubble and the ",
+    "efficiencies of section 2. One exception: KDA's TP speedup is below linear, so TP multiplies the KDA term ",
+    `by tp / s (${kdaTp(2)} / ${kdaTp(4)} / ${kdaTp(8)} at TP 2 / 4 / 8 at 32K). MXFP8 speeds up only the dense, `,
+    `expert and LM-head GEMMs (${exact(ROOFLINE_EFF.mxfp8 * DATASHEET.fp8)} vs ${exact(ROOFLINE_EFF.bf16 * DATASHEET.bf16)} TFLOPS); attention stays bf16. Non-matmul `,
+    "ops (norms, activations, AttnRes depth mixing) and the optimizer step are not included.");
+}
+
+// How far the roofline (one assumed efficiency) is from each measured point:
+// roofline time / measured time - 1 = measured efficiency / assumed - 1
+// (negative = roofline optimistic).
+function renderFormulaGap() {
+  const K = DATA.bench.kernels, A = DATA.bench.attention_shapes?.attention_shapes?.data;
+  const peak = dt => dt === "bf16" ? DATASHEET.bf16 : DATASHEET.fp8, E = ROOFLINE_EFF;
+  const gap = (tflops, dt) => tflops / peak(dt) / E[dt] - 1;
+  const g = { denseBig: [], denseSmall: [], expBig: [], expSmall: [], mla: [] };
+  for (const dt of ["bf16", "mxfp8"]) {
+    for (const byM of Object.values(K.linears[dt]))
+      for (const [m, v] of Object.entries(byM)) (+m >= 2048 ? g.denseBig : g.denseSmall).push(gap(v, dt));
+    for (const r of DATA.bench.dist_moe?.results ?? [])
+      if (r.dtype === dt && r.fwd_bwd_gemm_tflops) (r.local_tokens >= 4096 ? g.expBig : g.expSmall).push(gap(r.fwd_bwd_gemm_tflops, dt));
+  }
+  for (const t of [8192, 32768]) {
+    const F4 = DATA.bench.mla_fa4;
+    if (F4) for (const h of [96, 48, 24, 12]) g.mla.push(gap(F4.heads[t][h].fwd_bwd_tflops, "bf16"));
+  }
+  const range = v => {
+    const f = x => `${x >= 0 ? "+" : "\u2212"}${Math.abs(100 * x).toFixed(0)}%`;
+    return `${f(Math.min(...v))} to ${f(Math.max(...v))}`;
+  };
+  const b = t => el("b", {}, t);
+  document.getElementById("riFormulaGap").replaceChildren(
+    el("span", { class: "note-label" }, "How far from the roofline:"),
+    " measured kernel time against the roofline's, as roofline / measured - 1 (negative = roofline too ",
+    "optimistic). Dense GEMMs: ", b(range(g.denseBig)), " at 2K+ rows, ", b(range(g.denseSmall)), " at 1K. ",
+    "Routed experts (DistMoE GEMM kernels, BF16 and MXFP8): ", b(range(g.expBig)), " at 4K+ local tokens, ", b(range(g.expSmall)),
+    " below. ",
+    "MLA with FA4 (8K and 32K, 12-96 heads): ", b(range(g.mla)), ". The roofline holds for big GEMMs, is ",
+    "optimistic for small ones and for attention. How to reconcile the difference is left for later.");
+}
+
+// Bold "Roofline: ..." lead for each section-2 subsection.
+function rooflineLead(dtypes) {
+  const parts = dtypes.map(dt => `${exact(ROOFLINE_EFF[dt] * (dt === "bf16" ? DATASHEET.bf16 : DATASHEET.fp8))} TFLOPS in ` +
+    `${dt === "bf16" ? "bf16" : "MXFP8"} (${(100 * ROOFLINE_EFF[dt]).toFixed(0)}% of peak)`);
+  return el("b", { style: "display: block" }, `Roofline: ${parts.join(", ")}.`);
+}
+
+// Bold "Where it breaks: ..." lead after the roofline number.
+// Both leads render as their own lines; the explanation follows as a new paragraph.
+const breaksLead = text => el("b", { style: "display: block; margin-bottom: 8px" }, `Where it breaks: ${text}`);
+
 function renderRooflineInputs() {
+  renderFakePg();
+  renderRooflineIntro();
+  renderStepCompute();
+  renderFormulaWhere();
+  renderFormulaGap();
   const R = DATA.bench, sub = document.getElementById("riSub");
   if (!R) { sub.textContent = "No bench results were found when this page was generated."; return; }
   const K = R.kernels, b = t => el("b", {}, t);
   sub.replaceChildren(
-    `Measured on one ${K.gpu.replace("NVIDIA ", "")} of a shared devserver, with GEMMs timed as CUDA-graph `,
-    "replays (kernel time, as compiled training sees it). The kernel run had the GPU to itself; the ",
-    "NVLink sweep may have shared it, so ", b("NVLink will be re-measured"), ". The roofline turns ",
-    "FLOPs by kernel class, at the token counts each configuration produces, into compute time, and ",
-    "bytes per link into communication time. Values are TFLOPS for forward + backward unless noted; ",
-    "under each value is its % of the per-GPU dense peak in NVIDIA's Blackwell datasheet (GB200: ",
-    `${DATASHEET.bf16 / 1000} PFLOPS bf16, ${DATASHEET.fp8 / 1000} PFLOPS FP8/MXFP8, ${DATASHEET.nvlink} GB/s `,
-    "NVLink per direction; the measurements are on GB300, so treat it as approximate). Shaded cells are ",
-    "under 60% of their row's best. Expert GEMMs are timed as dense per-expert GEMMs ",
-    "(grouped GEMMs do not run on SM103 yet), and MXFP8 is GEMM-only, without quantization kernels.");
+    `Kernel benchmarks on one ${K.gpu.replace("NVIDIA ", "")} of a shared devserver, checking the roofline's `,
+    `assumption. Compute cells are white at 90% of the roofline (${(90 * ROOFLINE_EFF.bf16).toFixed(1)}% of peak in bf16, ${(90 * ROOFLINE_EFF.mxfp8).toFixed(0)}% in MXFP8), red `,
+    "below it (darkest at the table's lowest value) and green above it (fullest at the table's highest). ",
+    "KDA and NVLink are unshaded. Percentages are of the GB200 datasheet's dense peak (2.5 PFLOPS bf16, 5 PFLOPS ",
+    "FP8/MXFP8, 900 GB/s NVLink per direction). GEMMs are timed as CUDA-graph replays; runs that shared the ",
+    "GPU will be re-measured."
+  );
 
   const tok = n => n >= 1024 ? `${n / 1024}K` : String(n);
   const tf = v => v.toFixed(0);
-  // 1.1 and 1.2: the roofline rule, with the measured values beside it
   const pct = v => `${(100 * v).toFixed(0)}%`;
-  const ruleTable = (table, corner, rule, measured, peakOf) => {
-    table.replaceChildren();
-    const head = el("tr");
-    head.append(el("th", {}, corner));
-    rule.tiers.forEach((t, i) => head.append(el("th", { class: "r" },
-      i === rule.tiers.length - 1 ? `>= ${tok(t)}` : i === 0 && rule.tiers.length > 2 ? `<= ${tok(t)}` : tok(t))));
-    table.append(head);
-    for (const [dt, label] of [["bf16", "bf16"], ["mxfp8", "MXFP8"]]) {
-      const tr = el("tr");
-      tr.append(el("td", {}, label));
-      rule[dt].forEach((eff, i) => {
-        const td = el("td", { class: "r" });
-        td.append(b(pct(eff)), el("span", { class: "change", style: "color: var(--text-secondary)" },
-          `${tf(eff * peakOf(dt))} TFLOPS; measured ${measured(dt, i)}`));
-        tr.append(td);
-      });
-      table.append(tr);
-    }
-  };
   const peakOf = dt => dt === "bf16" ? DATASHEET.bf16 : DATASHEET.fp8;
-  const scopes = ["kda_layer", "mla_layer", "lm_head"];
-  const span = vals => {
-    const lo = Math.min(...vals), hi = Math.max(...vals);
-    return lo === hi ? pct(lo) : `${pct(lo)}-${pct(hi)}`;
-  };
-  const R_D = ROOFLINE_RULE.dense, R_E = ROOFLINE_RULE.experts;
-  // measured efficiencies falling in tier i (token count from tier i up to tier i + 1)
-  const inTier = (rule, i) => m => m >= rule.tiers[i] && (i === rule.tiers.length - 1 || m < rule.tiers[i + 1]);
   document.getElementById("riLinSub").replaceChildren(
-    "The roofline uses a tiered rule, not the exact measurements: each tier is the measured efficiency ",
-    "(forward, input-gradient and weight-gradient GEMMs of the KDA-layer, MLA-layer and LM-head linears) ",
-    "rounded down to 5%, and a token count between tiers takes the lower tier. That keeps precise numbers ",
-    "from mattering while still ", b("penalizing configs whose local seq length shrinks"), ". 2K already runs ",
-    "at full efficiency; only 1K needs a penalty. ", b("MXFP8 does not need M > 2K"), ": an earlier drop at ",
-    "1K-2K came from about 75 us of CPU dispatch per eager torchao MXTensor call, which compiled training ",
-    "does not pay (GEMMs are now timed as CUDA-graph replays). It still dips at 1K, where a big projection ",
-    "finishes in about 60 us and fixed per-kernel costs -- filling the pipeline, the last partial wave of ",
-    "tiles -- weigh twice as much as in bf16.");
-  ruleTable(document.getElementById("riLinears"), "Dense linears, % of peak / local seq length", R_D,
-    (dt, i) => span(scopes.flatMap(sc => Object.entries(K.linears[dt][sc])
-      .filter(([m]) => inTier(R_D, i)(Number(m))).map(([, v]) => v / peakOf(dt)))), peakOf);
+    rooflineLead(["bf16", "mxfp8"]),
+    breaksLead("slightly everywhere in bf16 (64-69% of peak at 2K+ GEMM rows, T / cp: wgrad and the small " +
+               "projections sit below 70%), more below 2K (58-64% at 1K; MXFP8 45-58%); TP narrowing the attention " +
+               "and shared-expert weights to N / tp is not measured yet."),
+    "Measured by the GEMM's rows M = T / CP, covering the forward and both backward GEMMs of the KDA-layer, ",
+    "MLA-layer and LM-head linears. MXFP8 dips at 1K, where a big projection finishes in about 60 us and fixed ",
+    "per-kernel costs weigh twice as much as in bf16. TP does not shrink M (sequence parallelism ",
+    "gathers the tokens first); it narrows the attention and shared-expert weights to N / TP, an effect not ",
+    "measured yet.");
+  const lin = Object.keys(K.linears.bf16.kda_layer).map(Number).sort((x, y) => x - y);
+  const scopes = [["kda_layer", "KDA + MoE layer"], ["mla_layer", "MLA + MoE layer"], ["lm_head", "LM head"]];
+  riTable(document.getElementById("riLinears"), "Dense linears, TFLOPS / GEMM rows M = seq len / CP", lin.map(tok),
+    ["bf16", "mxfp8"].flatMap(dt => scopes.map(([k, label]) =>
+      [`${label}, ${dt === "bf16" ? "bf16" : "MXFP8"}`, lin.map(m => K.linears[dt][k][m]), false, peakOf(dt)])),
+    tf, { graded: true });
 
-  // one table: efficiency by local seq length, per EP degree and dtype, with
-  // tokens per expert = local x EP x top-k / E in brackets
-  const S = DATA.model.symbols, perExpert = (local, ep) => local * ep * S.k / S.E;
-  const locals = [1024, 2048, 4096, 8192];  // full efficiency by 8K at EP 32
-  const measuredAt = (dt, tier) => K.experts[dt][tier] / peakOf(dt);
-  const et = document.getElementById("riExperts");
-  et.replaceChildren();
-  const eh = el("tr");
-  eh.append(el("th", {}, "Expert GEMMs (w13 + w2), % of peak / local seq length"));
-  for (const l of locals) eh.append(el("th", { class: "r" }, l === locals[locals.length - 1] ? `>= ${tok(l)}` : tok(l)));
-  et.append(eh);
-  for (const [ep, used] of [[64, "FSDP + EP 64, PP 8"], [32, "PP 16"]]) {
-    for (const [dt, label] of [["bf16", "bf16"], ["mxfp8", "MXFP8"]]) {
-      const tr = el("tr");
-      tr.append(el("td", {}, `EP ${ep} (${used}), ${label}`));
-      for (const l of locals) {
-        const n = perExpert(l, ep), r = ruleEff(R_E, dt, n);
-        const td = el("td", { class: `r ${r.eff < R_E[dt][R_E[dt].length - 1] ? "up" : ""}` });
-        td.append(b(pct(r.eff)), el("span", { class: "change", style: "color: var(--text-secondary)" },
-          `(${exact(Math.round(n))} tokens/expert; measured ${pct(measuredAt(dt, r.tier))})`));
-        tr.append(td);
-      }
-      et.append(tr);
-    }
-  }
-
+  // routed experts: DistMoE (the kernel the model uses)
+  const S = DATA.model.symbols, DM = R.dist_moe?.results;
+  const locals = [1024, 2048, 4096, 8192];
   document.getElementById("riExSub").replaceChildren(
-    "Expert GEMMs are smaller than the dense projections, so they need more tokens. Each expert receives ",
-    "tokens from every GPU in its EP group, so under balanced routing tokens per expert = local seq length ",
-    `x EP x top-k / experts = local x EP x ${DATA.model.symbols.k} / ${DATA.model.symbols.E}: each token goes to `,
-    `${DATA.model.symbols.k} experts, spread evenly over all ${DATA.model.symbols.E}. That is about 1.14x the `,
-    "local seq length at EP 64 and 0.57x at EP 32. The rule tiers tokens per expert like the dense rule ",
-    `(${R_E.tiers.map(tok).join(" / ")}: bf16 ${R_E.bf16.map(pct).join(" / ")}, MXFP8 `,
-    `${R_E.mxfp8.map(pct).join(" / ")}, a count between tiers taking the lower one); the table applies it `,
-    "by local seq length, with tokens per expert and the measured efficiency at that tier in brackets, and ",
-    "shades cells below the top tier -- the axis on which high CP, high TP and smaller EP pay. Attention is timed ",
-    "eagerly (each call takes milliseconds, so CPU dispatch does not matter). ",
-    b("MLA"), " uses the same tiered rule, by sequence length T -- the keys a rank's attention covers, ",
-    "which stays the full context length under TP and Ulysses CP (only the heads shrink): ",
-    `${ROOFLINE_RULE.mla.tiers.map(tok).join(" / ")} -> forward + backward ${ROOFLINE_RULE.mla.fwd_bwd.map(pct).join(" / ")}`,
-    `, remat forward ${ROOFLINE_RULE.mla.fwd.map(pct).join(" / ")} of bf16 peak. TP and Ulysses CP (TorchTitan's `,
-    "CP mode that works with varlen) leave each rank the full sequence on fewer heads, which barely costs ",
-    "efficiency, so the roofline models CP as Ulysses + varlen. KV all-gather CP, TorchTitan's other mode, ",
-    "requires FlexAttention, which runs MLA's 192 / 128 head dims at only 5-10% of peak here, CP or not. ",
-    b("KDA"), " is not a big matmul, so it gets no TFLOPS or % of peak: it works in 64-token chunks, each a ",
-    "handful of small matmuls (64 x 64 and 64 x 128 blocks per head), a triangular solve for the delta-rule ",
-    "correction, a 128 x 128 state update and gating exponentials -- too small to keep the tensor cores busy, ",
-    "partly memory- and latency-bound, and chained chunk to chunk by the recurrent state. A rough count puts ",
-    "its forward near 7-10% of bf16 peak, but the FLOP count depends on the chunk algorithm, so the rule uses ",
-    "measured time per token per layer for the rank's heads: a rank runs T / CP tokens on 96 / TP ",
-    `heads (TP gathers the sequence before attention), at ${ROOFLINE_RULE.kda.fwd_bwd} us forward + backward `,
-    `plus ${ROOFLINE_RULE.kda.fwd} us for the remat forward per token with all heads, sped up under TP by the `,
-    "measured factor rounded down (1.8x / 3x / 5x at 32K for TP 2 / 4 / 8, but only 1.7x at any TP at 8K, where ",
-    "the kernel no longer fills the GPU). KDA under ",
-    "CP adds state passing between ranks (communication). The shape ",
-    "measurements shared the GPU with another process and will be re-measured.");
+    rooflineLead(["bf16", "mxfp8"]),
+    breaksLead("everywhere in MXFP8 (GEMM kernels at most 43% of peak); in bf16 the GEMM kernels reach 60-67% " +
+               "at 2K+ local tokens (T / (cp x tp)), 44-56% at 1K."),
+    "The routed experts run on ", b("DistMoE"), ": fused dispatch + grouped GEMMs + combine, in its default ",
+    "saved-inputs mode, so forward + backward includes the recompute (FLOPs counted as 4x forward). Measured at ",
+    "EP 4 over this host's NVLink with Kimi K3's own local expert counts, 14 (EP 64) and 28 (EP 32), balanced ",
+    "routing and 25% scratch headroom (tokens x top-k / experts does not divide evenly, and DistMoE faults rather ",
+    "than raising an error when an expert overflows its scratch capacity). The table counts ", b("only the fused GEMM "),
+    b("kernels' time"), " (dispatch reads and combine writes included), since the roofline counts only GEMM FLOPs. ",
+    "DistMoE's helper kernels -- routing metadata, SwiGLU, scale-and-sum, adds, memsets -- are a roughly fixed ",
+    "cost per call, shown in the last row: about 2 ms at 4K+ local tokens (10-15% of the call) but 3-7 ms at 1K-2K, ",
+    "where they take most of the call; in the whole-step breakdown (2.5) they count as work outside the roofline. ",
+    "Kernel times are the minimum over repeats, since other jobs share the GPU.");
+  if (DM) {
+    const at = (layout, dt, n) => DM.find(r => r.layout === layout && r.dtype === dt && r.local_tokens === n);
+    const cell = (layout, dt) => locals.map(n => at(layout, dt, n)?.fwd_bwd_gemm_tflops ?? null);
+    riTable(document.getElementById("riExperts"), "DistMoE GEMM kernels, forward + backward, TFLOPS / local seq length", locals.map(tok), [
+      ["BF16, 14 local experts (EP 64)", cell("ep64", "bf16"), false, DATASHEET.bf16],
+      ["BF16, 28 local experts (EP 32)", cell("ep32", "bf16"), false, DATASHEET.bf16],
+      ["MXFP8, 14 local experts (EP 64)", cell("ep64", "mxfp8"), false, DATASHEET.fp8],
+      ["MXFP8, 28 local experts (EP 32)", cell("ep32", "mxfp8"), false, DATASHEET.fp8],
+    ], tf, { graded: true });
+    const helper = document.createElement("tr"), ms = n => at("ep64", "bf16", n)?.fwd_bwd_helper_ms;
+    helper.append(el("td", {}, "Helper kernels, ms per call (BF16, 14 local experts; not in the TFLOPS above)"),
+                  ...locals.map(n => el("td", { class: "r" }, ms(n) == null ? "--" : `${ms(n).toFixed(1)} ms`)));
+    document.getElementById("riExperts").append(helper);
+  }
+  document.getElementById("riAttnSub").replaceChildren(
+    rooflineLead(["bf16"]),
+    breaksLead("everywhere for forward + backward (36-52% of peak); worst with few heads at short sequences " +
+               "(12 heads: 25% at 8K) and for KV all-gather CP at short sequences (CP 8: 24% at 8K)."),
+    b("MLA"), " runs through TorchTitan's varlen path, FlashAttention 4. Forward + backward reaches 36-52% of ",
+    "peak, rising with sequence length T; the forward alone 56-66%. The two CP modes give a rank different ",
+    "shapes: ", b("Ulysses CP"), " (and TP) leaves the full sequence on 96 / (tp x cp) heads, which holds up at ",
+    "16K+ but falls off with few heads at 8K; ", b("KV all-gather CP"), " leaves all heads on the rank's T / cp ",
+    "load-balanced queries against all keys, measured here with FA4 (TorchTitan's KV all-gather CP currently ",
+    "runs FlexAttention, whose performance on MLA's head dims was very poor). At 32K both modes stay within ",
+    "about 10% of each other; at 8K, high CP costs either mode."
+  );
+  document.getElementById("riKdaSub").replaceChildren(
+    el("b", { style: "display: block; margin-bottom: 8px" }, "Roofline: none -- KDA is costed from its measured model (1.4)."),
+    b("KDA"), " is a chunked recurrence of small matmuls, not a big GEMM, so it is costed in time per token ",
+    `per layer: ${KDA_MODEL.kda.fwd_bwd} us forward + backward with all 96 heads, divided by the measured `,
+    "TP speedup rounded down (1.8x / 3x / 5x at 32K for TP 2 / 4 / 8, 1.7x at 8K), plus ",
+    `${KDA_MODEL.kda.fwd} us flat for the remat forward. 8K at TP 4 / 8 keeps TP 2's speedup until a clean `,
+    "re-run. ", b("Under CP"), " each rank keeps all heads on its T / cp tokens but runs a different kernel set: ",
+    "chunked kernels plus a summary pass whose state is exchanged across ranks. The second table measures it ",
+    "(Attention Gym's context_parallel_kda, one T-token document split across cp GPUs, GPU kernel time ",
+    "including NCCL) against the same T / cp tokens without CP: the forward costs 2.6-3.7x, forward + backward ",
+    "1.3-2x, so CP's KDA speedup is well short of cp."
+  );
 
   // MLA: rule and measured, % of bf16 peak (cells show TFLOPS and % of peak)
   // attention_shapes JSON: {attention_shapes: {contended_by, data}}
   const A = R.attention_shapes?.attention_shapes?.data, seq = [4096, 8192, 16384, 32768];
-  const ruleAt = (key, t) => ruleEff({ tiers: ROOFLINE_RULE.mla.tiers, x: ROOFLINE_RULE.mla[key] }, "x", t).eff;
   const at = (obj, t) => obj && obj[t] ? obj[t] : null;
-  const mlaRows = [
-    ["Roofline uses, forward + backward", seq.map(t => ruleAt("fwd_bwd", t) * DATASHEET.bf16), false, DATASHEET.bf16],
-    ["Roofline uses, remat forward", seq.map(t => ruleAt("fwd", t) * DATASHEET.bf16), false, DATASHEET.bf16],
-    ["cuDNN, 96 heads, forward + backward", seq.map(t => K.mla_attention[t]?.fwd_bwd_tflops ?? null), false, DATASHEET.bf16],
-    ["cuDNN, 96 heads, forward", seq.map(t => K.mla_attention[t]?.fwd_tflops ?? null), false, DATASHEET.bf16],
-  ];
-  if (A) {
+  const F4 = R.mla_fa4, mlaRows = [];
+  if (F4) {
+    mlaRows.push(["96 heads, forward + backward", seq.map(t => F4.heads[t]?.[96]?.fwd_bwd_tflops ?? null), false, DATASHEET.bf16]);
+    mlaRows.push(["96 heads, forward", seq.map(t => F4.heads[t]?.[96]?.fwd_tflops ?? null), false, DATASHEET.bf16]);
     for (const d of [2, 4, 8])
-      mlaRows.push([`cuDNN, ${96 / d} heads (TP ${d} or Ulysses CP ${d}), fwd + bwd`,
-                    seq.map(t => at(A.mla_tp_cudnn[t], d)?.fwd_bwd_tflops ?? null), false, DATASHEET.bf16]);
-    mlaRows.push(["Flex, 96 heads, no CP, fwd + bwd", seq.map(t => A.mla_flex[t]?.fwd_bwd_tflops ?? null), true, DATASHEET.bf16]);
+      mlaRows.push([`${96 / d} heads (TP ${d} or Ulysses CP ${d}), fwd + bwd`,
+                    seq.map(t => F4.heads[t]?.[96 / d]?.fwd_bwd_tflops ?? null), false, DATASHEET.bf16]);
     for (const c of [2, 4, 8])
-      mlaRows.push([`Flex, KV all-gather CP ${c}, fwd + bwd`,
-                    seq.map(t => at(A.mla_cp_flex[t], c)?.fwd_bwd_tflops ?? null), true, DATASHEET.bf16]);
+      mlaRows.push([`KV all-gather CP ${c} (96 heads, T / ${c} queries), fwd + bwd`,
+                    seq.map(t => F4.kv_allgather_cp[t]?.[c]?.fwd_bwd_tflops ?? null), false, DATASHEET.bf16]);
   }
-  riTable(document.getElementById("riAttn"), "MLA attention, TFLOPS / sequence length T (all keys; TP and Ulysses CP keep it)", seq.map(tok), mlaRows, tf);
+  riTable(document.getElementById("riAttn"), "MLA attention (FA4), TFLOPS / sequence length T", seq.map(tok), mlaRows, tf,
+          { graded: true });
 
   // KDA: us per local token per layer, by TP
   if (A) {
     const tps = [1, 2, 4, 8], us = (t, tp, key) => A.kda_tp[t]?.[tp] ? 1e3 * A.kda_tp[t][tp][key] / t : null;
-    const KR = ROOFLINE_RULE.kda, kRule = (t, tp) => {
+    const KR = KDA_MODEL.kda, kRule = (t, tp) => {
       const tier = KR.tp_speedup.tiers.filter(x => t >= x).length - 1;
       return KR.fwd_bwd / KR.tp_speedup.by_tier[Math.max(0, tier)][KR.tp.indexOf(tp)];
     };
     riTable(document.getElementById("riKda"), "KDA, us per sequence token per layer (96 / TP heads) / TP degree", tps.map(tp => `TP ${tp}`), [
-      ["Roofline uses, forward + backward, 8K", tps.map(tp => kRule(8192, tp)), false],
+      ["KDA model, forward + backward, 8K", tps.map(tp => kRule(8192, tp)), false],
       ["Measured, forward + backward, 8K", tps.map(tp => us(8192, tp, "fwd_bwd_ms")), false],
-      ["Roofline uses, forward + backward, 32K", tps.map(tp => kRule(32768, tp)), false],
+      ["KDA model, forward + backward, 32K", tps.map(tp => kRule(32768, tp)), false],
       ["Measured, forward + backward, 32K", tps.map(tp => us(32768, tp, "fwd_bwd_ms")), false],
+      ["KDA model, remat forward, 8K and 32K", tps.map(() => KR.fwd), false],
       ["Measured, forward (remat replay), 8K", tps.map(tp => us(8192, tp, "fwd_ms")), false],
       ["Measured, forward (remat replay), 32K", tps.map(tp => us(32768, tp, "fwd_ms")), false],
     ], v => v.toFixed(3));
+  }
+
+  // KDA under CP: time relative to the same local tokens as a standalone document
+  if (Object.keys(R.kda_cp ?? {}).length) {
+    const seqs = [8192, 16384, 32768], kRows = [];
+    for (const cp of [2, 4]) {
+      const at = t => R.kda_cp[cp]?.find(r => r.seq_len === t);
+      kRows.push([`CP ${cp}, forward + backward`, seqs.map(t => at(t) ? at(t).cp_fwd_bwd_ms / at(t).local_fwd_bwd_ms : null), false]);
+      kRows.push([`CP ${cp}, forward (remat replay)`, seqs.map(t => at(t) ? at(t).cp_fwd_ms / at(t).local_fwd_ms : null), false]);
+      kRows.push([`CP ${cp}, forward + backward + remat forward`, seqs.map(t => at(t) ?
+        (at(t).cp_fwd_bwd_ms + at(t).cp_fwd_ms) / (at(t).local_fwd_bwd_ms + at(t).local_fwd_ms) : null), false]);
+    }
+    riTable(document.getElementById("riKdaCp"), "KDA under CP, time / same local tokens without CP, by sequence length T",
+            seqs.map(tok), kRows, v => `${v.toFixed(2)}x`);
   }
 
   const sizes = [2 ** 16, 2 ** 20, 2 ** 24, 2 ** 27, 2 ** 30, 2 ** 32];  // ** not <<: 1 << 32 wraps
@@ -398,17 +858,17 @@ function renderRooflineInputs() {
   const ops = [["allgather", "All-gather"], ["reducescatter", "Reduce-scatter"], ["alltoall", "All-to-all"], ["sendrecv", "Send/recv"]];
   riTable(document.getElementById("riNvlink"), "4 GPUs, busbw GB/s / message size", sizes.map(sizeLabel),
     ops.filter(([k]) => R.nvlink[k]).map(([k, label]) =>
-      [label, sizes.map(n => R.nvlink[k].find(r => r[0] === n)?.[2] ?? null), true, DATASHEET.nvlink]), tf);
+      [label, sizes.map(n => R.nvlink[k].find(r => r[0] === n)?.[2] ?? null), false, DATASHEET.nvlink]), tf);
 
   const lat = Math.min(...ops.filter(([k]) => R.nvlink[k]).map(([k]) => R.nvlink[k][0][1]));
   document.getElementById("riNote").replaceChildren(
     el("span", { class: "note-label" }, "Note:"),
-    "NVLink reaches about 600 GB/s busbw for large collectives (about two thirds of the datasheet's 900 GB/s), with a latency floor near ",
-    b(`${lat.toFixed(0)} us`), " per call; send/recv stalls near 170 GB/s for 16-128 MiB messages, which ",
-    "needs a clean re-run because PP sends sit in that range. IB was not measured (one host): this host ",
-    "has 2 x 400 Gb/s RoCE NICs per GPU, 100 GB/s per GPU; the target GB200 cluster's per-GPU NIC rate ",
-    "still needs confirming. Dense GEMMs run at about two thirds of peak in bf16 and 62% in MXFP8; expert ",
-    "GEMMs fall off below 4K tokens per expert, which high CP or TP produces.");
+    el("b", { style: "display: block; margin-bottom: 6px" }, "Roofline: none yet (communication comes later)."),
+    "NVLink reaches about 600 GB/s busbw for large collectives (two thirds of 900 GB/s) with a ",
+    b(`${lat.toFixed(0)} us`), " latency floor; send/recv stalls near 170 GB/s at 16-128 MiB, where PP sends ",
+    "sit, so it needs a clean re-run. IB was not measured (one host); this host has 100 GB/s per GPU, and the ",
+    "target cluster's NIC rate still needs confirming."
+  );
 }
 
 // ---------- section 3: communication links ----------

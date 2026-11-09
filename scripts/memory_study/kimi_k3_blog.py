@@ -65,6 +65,12 @@ EXTRA_CSS = """
 .rule { background: #eef4fc; border-left: 4px solid #2a78d6; border-radius: 6px; padding: 10px 16px;
         margin: 16px 0; }
 .rule p { margin: 4px 0; }
+.insights li { margin-bottom: 10px; }
+.note { background: var(--wash); border-left: 4px solid var(--axis); border-radius: 6px; padding: 10px 16px;
+        margin: 16px 0; font-size: 15px; color: var(--text-secondary); }
+.note p { margin: 4px 0; color: var(--text-secondary); }
+.note-label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase;
+              letter-spacing: 0.06em; }
 .caveat { background: rgba(227, 73, 72, 0.07); border-left: 4px solid #e34948; border-radius: 6px;
           padding: 10px 16px; margin: 16px 0; font-size: 15px; }
 .caveat p { margin: 4px 0; }
@@ -139,7 +145,8 @@ EXTRA_CSS = """
 .dtable td:not(:first-child), .dtable th:not(:first-child) { text-align: center; }
 .dtable .sub { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
 .dtable td { white-space: nowrap; }
-.dtable th { white-space: normal; vertical-align: bottom; }
+.dtable th { white-space: normal; vertical-align: bottom; text-align: center !important; }
+.dtable th:first-child { text-align: left !important; }
 .dtable td, .dtable th { padding: 6px 8px; }
 .placeholder { border: 1px dashed var(--axis); border-radius: 10px; padding: 18px; margin: 14px 0;
                color: var(--muted); text-align: center; font-size: 14px; }
@@ -258,9 +265,10 @@ def number_headings(body: str, key: str, label: str) -> tuple[str, str]:
     return "\n".join(out), title
 
 
-def resolve_refs(body: str, labels: dict[str, str]) -> str:
+def resolve_refs(body: str, labels: dict[str, str], as_html: bool = False) -> str:
     """[[memory]] -> a link 'Section 3'; [[memory.2]] -> 'Section 3.2';
-    [[memory.2.1]] -> 'Section 3.2.1'."""
+    [[memory.2.1]] -> 'Section 3.2.1'. as_html: emit <a> tags (inside figures,
+    which markdown does not touch) instead of markdown links."""
 
     def ref(m):
         key, sub = m.group(1), m.group(2)
@@ -269,28 +277,40 @@ def resolve_refs(body: str, labels: dict[str, str]) -> str:
         lab = labels[key]
         word = lab if lab.startswith("Appendix") else f"Section {lab}"
         if sub:
-            word += f".{sub}" if not lab.startswith("Appendix") else f" {sub}"
-        return f"[{word}](#sec-{key}{'-' + sub.replace('.', '-') if sub else ''})"
+            word += f".{sub}"
+        href = f"#sec-{key}{'-' + sub.replace('.', '-') if sub else ''}"
+        return f'<a href="{href}">{word}</a>' if as_html else f"[{word}]({href})"
 
     return REF.sub(ref, body)
 
 
 RULE_LABEL = "Insight"
+BOXES = {"> RULE:": "rule", "> INSIGHT:": "rule", "> NOTE:": "note", "> CAVEAT:": "caveat"}
+BOX_LABELS = {"rule": RULE_LABEL, "note": "Side note", "caveat": "Caveat"}
 
 
-def rule_boxes(body: str) -> str:
-    """A blockquote starting with '> RULE:' becomes a highlighted rule-of-thumb box."""
-    lines, out, i = body.split("\n"), [], 0
+def rule_boxes(body: str, key: str, insights: list[tuple[str, str, str]]) -> str:
+    """A blockquote starting with '> INSIGHT:' (or '> RULE:') becomes a highlighted
+    insight box, also collected for the insights appendix; '> NOTE:' becomes a
+    side note; '> CAVEAT:' becomes a red caveat box."""
+    lines, out, i, n = body.split("\n"), [], 0, 0
     while i < len(lines):
-        if lines[i].startswith(("> RULE:", "> INSIGHT:")):
+        kind = next((v for k, v in BOXES.items() if lines[i].startswith(k)), None)
+        if kind:
             block = [lines[i].split(":", 1)[1].strip()]
             i += 1
             while i < len(lines) and lines[i].startswith(">"):
                 block.append(lines[i][1:].strip())
                 i += 1
             inner = markdown.markdown(" ".join(block))
+            attr = ""
+            if kind == "rule":
+                n += 1
+                anchor = f"insight-{key}-{n}"
+                attr = f' id="{anchor}"'
+                insights.append((key, anchor, inner))
             out.append(
-                f'\n<div class="rule"><div class="rule-label">{RULE_LABEL}</div>{inner}</div>\n'
+                f'\n<div class="{kind}"{attr}><div class="{kind}-label">{BOX_LABELS[kind]}</div>{inner}</div>\n'
             )
         else:
             out.append(lines[i])
@@ -298,15 +318,32 @@ def rule_boxes(body: str) -> str:
     return "\n".join(out)
 
 
-def render_section(text: str, key: str, labels: dict[str, str]) -> tuple[str, str]:
+INSIGHTS_MARK = "<!-- insights list -->"
+
+
+def insights_list(insights: list[tuple[str, str, str]], labels: dict[str, str]) -> str:
+    """Every insight box in reading order, each linked back to where it appears."""
+    items = []
+    for key, anchor, inner in insights:
+        lab = labels[key]
+        where = lab if lab.startswith("Appendix") else f"Section {lab}"
+        text = inner.removeprefix("<p>").removesuffix("</p>")
+        items.append(f'<li>{text} <a href="#{anchor}">({where})</a></li>')
+    return f'<ol class="insights">{"".join(items)}</ol>'
+
+
+def render_section(
+    text: str, key: str, labels: dict[str, str], insights: list[tuple[str, str, str]]
+) -> tuple[str, str]:
     body, _, notes = text.partition("\n## Notes")
     body = re.sub(r"<!--.*?-->\s*", "", body, flags=re.S)  # authoring comments stay out of the page
     body, title = number_headings(body, key, labels[key])
     body = resolve_refs(body, labels)
-    body = rule_boxes(body)
+    body = rule_boxes(body, key, insights)
+    body = re.sub(r"^:::\s*insights\s*$", INSIGHTS_MARK, body, flags=re.M)
     # figures are raw HTML blocks, so markdown leaves them alone
     body = FIGURE.sub(
-        lambda m: f'\n<div class="figure">{blog_figures.FIGURES[m.group(1)]()}</div>\n'
+        lambda m: f'\n<div class="figure">{resolve_refs(blog_figures.FIGURES[m.group(1)](), labels, as_html=True)}</div>\n'
         if m.group(1) in blog_figures.FIGURES
         else f'<div class="placeholder">figure: {m.group(1)} (unknown)</div>',
         body,
@@ -332,13 +369,15 @@ def build() -> None:
     importlib.reload(blog_figures)  # pick up figure edits in --watch mode
     files = sorted(p for p in BLOG.glob("*.md") if p.name != "README.md")
     labels = section_numbers(files)
+    insights: list[tuple[str, str, str]] = []
     rendered = [
         (
             SECTION_KEY.sub("", p.stem),
-            *render_section(p.read_text(), SECTION_KEY.sub("", p.stem), labels),
+            *render_section(p.read_text(), SECTION_KEY.sub("", p.stem), labels, insights),
         )
         for p in files
     ]
+    rendered = [(k, h.replace(INSIGHTS_MARK, insights_list(insights, labels)), t) for k, h, t in rendered]
     toc = "".join(
         f'<li><a href="#sec-{k}">{html.escape(labels[k] + (": " if labels[k].startswith("Appendix") else ". ") + t)}</a></li>'
         for k, _, t in rendered[1:]

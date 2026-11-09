@@ -69,7 +69,8 @@ def build_compute():
     return out
 
 
-def build_comm(size_mb: int, world: int, rank: int):
+def build_comm(size_mb: int, world: int, rank: int, group=None):
+    """Collectives over `group` (default: every GPU) of `world` ranks."""
     dev, bf = "cuda", torch.bfloat16
     n = size_mb * 1024 * 1024 // 2
     shard = torch.randn(n // world, device=dev, dtype=bf)
@@ -86,8 +87,8 @@ def build_comm(size_mb: int, world: int, rank: int):
             r.wait()
 
     return {
-        "all_gather": lambda: dist.all_gather_into_tensor(full, shard),
-        "reduce_scatter": lambda: dist.reduce_scatter_tensor(out_rs, big),
+        "all_gather": lambda: dist.all_gather_into_tensor(full, shard, group=group),
+        "reduce_scatter": lambda: dist.reduce_scatter_tensor(out_rs, big, group=group),
         "all_to_all": lambda: dist.all_to_all_single(a2a_out, a2a_in),
         "send_recv": sendrecv,
     }
@@ -127,7 +128,20 @@ def nccl_blocks(fn) -> int | None:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--smoke", action="store_true", help="one small size, few iterations")
+    p.add_argument("--one-way", action="store_true",
+                   help="first half of the ranks only send to the second half, which only receives")
+    p.add_argument("--sizes-mb", type=int, nargs="+", default=None)
+    p.add_argument("--rail", action="store_true",
+                   help="collectives in groups of one GPU per host (all groups at once)")
+    p.add_argument("--collectives", nargs="+", default=None,
+                   help="only these collectives (default: all of the mode's)")
     args = p.parse_args()
+    global SIZES_MB
+    if args.sizes_mb:
+        SIZES_MB = tuple(args.sizes_mb)
+    if args.smoke:
+        SIZES_MB = (16,)
     dist.init_process_group("nccl")
     rank, world = dist.get_rank(), dist.get_world_size()
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -135,6 +149,11 @@ def main() -> int:
         print(f"torch {torch.__version__} nccl {torch.cuda.nccl.version()} world {world} "
               f"MNNVL={os.environ.get('NCCL_MNNVL_ENABLE', 'default')}", flush=True)
     sms = torch.cuda.get_device_properties(0).multi_processor_count
+    rail_group, n_local = None, int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
+    n_hosts = world // n_local
+    if args.rail:  # every rank creates every group, in the same order
+        groups = [dist.new_group([h * n_local + j for h in range(n_hosts)]) for j in range(n_local)]
+        rail_group = groups[rank % n_local]
     main_s, comm_s = torch.cuda.current_stream(), torch.cuda.Stream()
     compute = build_compute()
     results = {"gpu": torch.cuda.get_device_name(), "sms": sms, "world": world,
@@ -158,26 +177,43 @@ def main() -> int:
         c_ms = alone(cfn, main_s, 20)
         c_iters = max(20, int(200 / c_ms))  # about 200 ms of compute
         for size in SIZES_MB:
-            comm = build_one_way(size, rank, world) if args.one_way else build_comm(size, world, rank)
+            if args.one_way:
+                comm = build_one_way(size, rank, world)
+            elif args.rail:
+                comm = build_comm(size, n_hosts, rank // n_local, rail_group)
+            else:
+                comm = build_comm(size, world, rank)
+            if args.collectives:
+                comm = {k: v for k, v in comm.items() if k in args.collectives}
             for kname, kfn in comm.items():
+                if rank == 0:
+                    print(f"  [{cname} / {kname} / {size} MB] timing alone", flush=True)
                 k_ms = alone(kfn, comm_s, 10)
                 blocks = nccl_blocks(kfn)
-                k_iters = int(1.3 * c_iters * c_ms / k_ms) + 2  # outlast the compute
+                k_iters = min(int(1.3 * c_iters * c_ms / k_ms) + 2, 2000)  # outlast the compute
+                if k_iters * k_ms < 1.1 * c_iters * c_ms:  # too many tiny ops: shorten the compute instead
+                    c_run = max(5, int(k_iters * k_ms / (1.3 * c_ms)))
+                else:
+                    c_run = c_iters
                 torch.cuda.synchronize()
                 dist.barrier()
                 ks, ke = timed(comm_s, kfn, k_iters)
-                cs, ce = timed(main_s, cfn, c_iters)
+                cs, ce = timed(main_s, cfn, c_run)
                 torch.cuda.synchronize()
-                c_ov = cs.elapsed_time(ce) / c_iters
-                # the collective's rate while the compute ran: its total time
-                # minus the part after the compute finished, at the solo rate
+                c_span = cs.elapsed_time(ce)
+                c_ov = c_span / c_run
+                # The collectives start with the compute and outlast it; after
+                # the compute ends they run alone at the solo rate. So the ops
+                # done during the overlap are the total minus those that fit in
+                # the tail, and their rate gives the collective's slowdown.
                 k_total = ks.elapsed_time(ke)
-                k_ov_done = (k_total - max(0.0, k_total - cs.elapsed_time(ce))) / k_ms  # ops' worth of time
+                tail_ops = max(0.0, k_total - c_span) / k_ms
+                ops_overlapped = max(k_iters - tail_ops, 1e-9)
                 row = {"compute": cname, "collective": kname, "size_mb": size, "nccl_blocks": blocks,
                        "compute_alone_ms": c_ms, "compute_overlapped_ms": c_ov,
                        "compute_slowdown": c_ov / c_ms, "comm_alone_ms": k_ms,
                        "comm_total_ms": k_total, "comm_iters": k_iters,
-                       "comm_slowdown": k_total / (k_iters * k_ms)}
+                       "comm_slowdown": min(c_span, k_total) / (ops_overlapped * k_ms)}
                 row["rank"] = rank
                 results["rows"].append(row)
                 if rank == 0 or args.one_way:
