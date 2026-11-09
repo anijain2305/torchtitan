@@ -1,12 +1,20 @@
-[devgpu071][[64884,1],0][btl_openib_component.c:1704:init_one_device] error obtaining device attributes for mlx5_0 errno says No space left on device
---------------------------------------------------------------------------
-WARNING: There was an error initializing an OpenFabrics device.
-
-  Local host:   devgpu071
-  Local device: mlx5_0
---------------------------------------------------------------------------
-# nThread 1 nGpus 4 minBytes 65536 maxBytes 4294967296 step: 2(factor) warmup iters: 10 iters: 50 agg iters: 1 validation: 1 graph: 0
-#
-# Using devices
-devgpu071: Test CUDA failure fbcode/param_bench/train/comms/cpp/nccl-tests/src/common.cu:1106 'no CUDA-capable device is detected'
- .. devgpu071 pid 1810418: Test failure fbcode/param_bench/train/comms/cpp/nccl-tests/src/common.cu:1012
+# Recovered from the 2026-10-19 session transcript: nccl-tests -g 4 -b 64K -e 4G -f 2 -n 50 -w 10 -d bfloat16 on devgpu014 (4 GB300).
+# Only size, time (us), algbw, busbw (GB/s) survived; count/redop/root/#wrong columns are placeholders.
+#       size         count      type   redop    root     time   algbw   busbw #wrong
+       65536        32768  bfloat16     sum      -1    65.58    1.00    0.75      0
+      131072        65536  bfloat16     sum      -1    20.94    6.26    4.70      0
+      262144       131072  bfloat16     sum      -1    79.47    3.30    2.47      0
+      524288       262144  bfloat16     sum      -1    21.12   24.83   18.62      0
+     1048576       524288  bfloat16     sum      -1    22.40   46.82   35.12      0
+     2097152      1048576  bfloat16     sum      -1    24.37   86.06   64.54      0
+     4194304      2097152  bfloat16     sum      -1    25.28  165.90  124.42      0
+     8388608      4194304  bfloat16     sum      -1    32.97  254.42  190.81      0
+    16777216      8388608  bfloat16     sum      -1    49.09  341.77  256.33      0
+    33554432     16777216  bfloat16     sum      -1    79.86  420.15  315.11      0
+    67108864     33554432  bfloat16     sum      -1    127.9  524.89  393.67      0
+   134217728     67108864  bfloat16     sum      -1    234.7  571.82  428.87      0
+   268435456    134217728  bfloat16     sum      -1    444.6  603.74  452.80      0
+   536870912    268435456  bfloat16     sum      -1    972.8  551.90  413.93      0
+  1073741824    536870912  bfloat16     sum      -1   1594.7  673.33  504.99      0
+  2147483648   1073741824  bfloat16     sum      -1   2852.1  752.94  564.70      0
+  4294967296   2147483648  bfloat16     sum      -1   5312.8  808.42  606.31      0
