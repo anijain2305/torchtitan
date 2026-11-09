@@ -21,6 +21,7 @@ Run (writes bench/dist_moe_<gpu>_ep<world>.json):
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import torch
@@ -28,7 +29,8 @@ import torch.distributed as dist
 
 HIDDEN, INTERMEDIATE, TOP_K = 3584, 3072, 16  # Kimi K3: L, Fe, routed top-k
 LOCAL_TOKENS = (1024, 2048, 4096, 8192)
-LOCAL_EXPERTS = {"ep64": 14, "ep32": 28}  # 896 / EP
+# Kimi K3 has 896 / EP = 14 (EP 64) or 28 (EP 32) local experts.
+LOCAL_EXPERTS = {"ep64": 14, "ep32": 28}
 
 
 def time_ms(fn, iters: int = 10, warmup: int = 3) -> float:
@@ -45,6 +47,40 @@ def time_ms(fn, iters: int = 10, warmup: int = 3) -> float:
     end.record()
     torch.cuda.synchronize()
     return start.elapsed_time(end) / iters
+
+
+GEMM_KERNEL = re.compile(r"dist_moe|grouped_gemm|GroupedGemm")
+
+
+def kernel_split_ms(
+    fn, iters: int = 10, warmup: int = 3, repeats: int = 5
+) -> tuple[float, float]:
+    """GPU kernel time per call, split into DistMoE's fused GEMM kernels and its
+    helper kernels (activation, scale-and-sum, adds, memsets). The roofline counts
+    only GEMM FLOPs, so the GEMM kernel time is what compares to it. Minimum over
+    repeats: other jobs sharing the GPU slow identical calls by up to 2.4x."""
+    for _ in range(warmup):
+        fn()
+    best = (float("inf"), float("inf"))
+    for _ in range(repeats):
+        torch.cuda.synchronize()
+        dist.barrier()
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CUDA]
+        ) as prof:
+            for _ in range(iters):
+                fn()
+            torch.cuda.synchronize()
+        gemm = other = 0.0
+        for e in prof.events():
+            if e.device_type == torch.autograd.DeviceType.CUDA:
+                if GEMM_KERNEL.search(e.name):
+                    gemm += e.device_time
+                else:
+                    other += e.device_time
+        if gemm + other < sum(best):
+            best = (gemm / 1e3 / iters, other / 1e3 / iters)
+    return best
 
 
 def run_case(
@@ -85,7 +121,8 @@ def run_case(
         top_k=TOP_K,
         num_experts=num_experts,
         max_moe_layers_per_activation_slot=1,
-        device_scratch_capacity_factor=1.0,  # balanced routing
+        # balanced routing, but tokens x top-k / experts need not divide evenly
+        device_scratch_capacity_factor=1.25,
         activation_slot_capacity_factor=None,  # default: save inputs, recompute
         num_activation_slots=1,
         block_scaled=dist_moe.BlockScaledConfig(
@@ -109,6 +146,7 @@ def run_case(
             ).float().sum().backward()
 
         f_ms, fb_ms = time_ms(fwd), time_ms(fwd_bwd)
+        fb_gemm_ms, fb_helper_ms = kernel_split_ms(fwd_bwd)
     finally:
         context.close()
     n_e = local_tokens * TOP_K / local_experts
@@ -124,6 +162,9 @@ def run_case(
         "fwd_tflops": fwd_flops / f_ms / 1e9,
         # forward + recompute of both forwards + two backward GEMMs = 4x forward FLOPs
         "fwd_bwd_tflops": 4 * fwd_flops / fb_ms / 1e9,
+        "fwd_bwd_gemm_ms": fb_gemm_ms,
+        "fwd_bwd_helper_ms": fb_helper_ms,
+        "fwd_bwd_gemm_tflops": 4 * fwd_flops / fb_gemm_ms / 1e9,
     }
 
 

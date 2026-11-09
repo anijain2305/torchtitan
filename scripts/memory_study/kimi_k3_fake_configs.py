@@ -83,6 +83,9 @@ GLOBAL_TOKENS = 16 * 1024 * 1024  # tokens per optimizer step
 # MXFP8 for the routed experts only (DistMoE); dense linears stay bf16, as in
 # Kimi K3's pre-training. KIMI_K3_DENSE_MXFP8=1 restores MXFP8 dense linears.
 DENSE_MXFP8 = os.environ.get("KIMI_K3_DENSE_MXFP8", "0") == "1"
+# DistMoE's routed-expert precision; KIMI_K3_EXPERT_PRECISION=bf16 measures the
+# bf16 grouped GEMMs (to model runs with bf16 experts).
+EXPERT_PRECISION = os.environ.get("KIMI_K3_EXPERT_PRECISION", "mxfp8")
 
 
 def _balanced_routing(model_config) -> None:
@@ -101,6 +104,29 @@ def _balanced_routing(model_config) -> None:
             layer.moe.router = RoundRobinTokenChoiceTopKRouter.Config(
                 **{n: getattr(old, n) for n in names if hasattr(old, n)}
             )
+
+
+def _adamw_stand_in():
+    from torchtitan.components.optim.optimizer import AdamW, OptimizersContainer
+
+    return OptimizersContainer.Config(optimizers=[AdamW.Config(pattern=".*")])
+
+
+def _triton_attention_residual(model_config):
+    """Use the fused Triton attention residual (torchtitan_recipes override,
+    what --override ...kimi_attention_residual.triton_attention_residual does)."""
+    from torchtitan_recipes.overrides.kimi_attention_residual import (
+        TritonAttentionResidual,
+    )
+
+    triton_cfg = TritonAttentionResidual.Config()
+    return replace(
+        model_config,
+        attention_residual=triton_cfg,
+        layers=[
+            replace(lc, attention_residual=triton_cfg) for lc in model_config.layers
+        ],
+    )
 
 
 def _kimi_k3(
@@ -122,6 +148,7 @@ def _kimi_k3(
     )
     if model_transforms:
         model_config = transform_model_config_(model_config, list(model_transforms))
+    model_config = _triton_attention_residual(model_config)
     _balanced_routing(model_config)
     tokens_per_microbatch = seq_len  # one sequence per microbatch
     return _KimiK3TrainerConfig(
@@ -133,8 +160,13 @@ def _kimi_k3(
         hf_assets_path="./tests/assets/tokenizer",
         model=model_config,
         optim=Optim.Config(
-            optimizer=_dist_muon_optimizer(
-                model_config, muon_lr=8e-4, adamw_lr=8e-4, parallelism=parallelism
+            # DistMuon rejects TP; TP runs (forward + backward studies only) use AdamW
+            optimizer=(
+                _dist_muon_optimizer(
+                    model_config, muon_lr=8e-4, adamw_lr=8e-4, parallelism=parallelism
+                )
+                if parallelism.tensor_parallel_degree <= 1
+                else _adamw_stand_in()
             ),
             lr_scheduler=LRSchedulersContainer.Config(
                 warmup_steps=2, decay_ratio=0.8, decay_type="linear", min_lr_factor=0.0
@@ -454,7 +486,9 @@ def _memory_study(
     config.dist_moe_runtime = DistMoeRuntime.Config(
         activation_slot_capacity_factor=None, scratch_capacity_factor=4.0
     )
-    config = apply_transforms(config, [DistMoeTransform(expert_precision="mxfp8")])
+    config = apply_transforms(
+        config, [DistMoeTransform(expert_precision=EXPERT_PRECISION)]
+    )
     config.profiler = Profiler.Config(
         enable_memory_snapshot=True,
         memory_snapshot_freq=3,
@@ -528,4 +562,221 @@ def mem_pp4_8k() -> Trainer.Config:
     # The first step JIT-compiles DistMoE's and the attention residual's kernels;
     # stage 0 can take longer than NCCL's default 300 s while the others wait.
     config.comm = CommConfig(init_timeout_seconds=1800, train_timeout_seconds=1800)
+    return config
+
+
+def _register_kda_metadata_pytree() -> None:
+    """KDA's attention metadata (LinearAttentionMetadata, and under CP its
+    subclass with attn-gym's ContextParallelRouting) are plain dataclasses
+    holding tensors, so TorchTitan's CUDA-graph wrapper sees them as non-tensor
+    inputs and compares them by value, which fails on tensors. Register them as
+    pytree nodes with every field a child: tensors are flattened, ints are
+    compared as constants."""
+    import dataclasses
+
+    import torch.utils._pytree as pytree
+    from torchtitan.models.common.attention.linear_attention import (
+        LinearAttentionMetadata,
+    )
+
+    classes = [LinearAttentionMetadata]
+    try:
+        from attn_gym.linear.context_parallel import ContextParallelRouting
+        from torchtitan.models.common.attention.cp_linear_attention import (
+            ContextParallelLinearAttentionMetadata,
+        )
+
+        classes += [ContextParallelLinearAttentionMetadata, ContextParallelRouting]
+    except ImportError:
+        pass
+
+    def flatten(obj):
+        names = tuple(f.name for f in dataclasses.fields(obj))
+        return [getattr(obj, n) for n in names], names
+
+    for cls in classes:
+        if cls in pytree.SUPPORTED_NODES:
+            continue
+        pytree.register_pytree_node(
+            cls,
+            flatten,
+            lambda children, names, cls=cls: cls(**dict(zip(names, children))),
+        )
+
+
+def _perf(
+    name: str, seq_len: int, parallelism: ParallelismConfig, *, cp: bool = False
+) -> Trainer.Config:
+    """The memory-study config with CUDA graphs on (no CPU launch gaps) and the
+    last of 4 steps profiled into outputs/profiling/perf_<name>, for the
+    whole-step comparison with the roofline."""
+    from torchtitan.observability.profiler import Profiler
+
+    _register_kda_metadata_pytree()
+    config = _memory_study(name, seq_len, parallelism, cp=cp)
+    config.training.steps = 4
+    config.training.disable_cuda_graphs = False
+    config.profiler = Profiler.Config(
+        enable_profiling=True,
+        save_traces_folder=f"profiling/perf_{name}",
+        profile_freq=4,
+        profiler_warmup=2,
+        profiler_active=1,
+        enable_memory_snapshot=True,
+        memory_snapshot_freq=4,
+        save_memory_snapshot_folder=f"memory_snapshot/perf_{name}",
+    )
+    return config
+
+
+def perf_fsdp_ep64_8k() -> Trainer.Config:
+    """FSDP 512, EP 64 at 8K with CUDA graphs, last step profiled."""
+    return _perf(
+        "fsdp_ep64_8k",
+        8192,
+        ParallelismConfig(data_parallel_shard_degree=-1, expert_parallel_degree=64),
+    )
+
+
+def perf_fsdp_ep64_32k_cp2() -> Trainer.Config:
+    """FSDP 512, EP 64, CP 2 at 32K with CUDA graphs, last step profiled."""
+    return _perf(
+        "fsdp_ep64_32k_cp2",
+        32768,
+        ParallelismConfig(
+            data_parallel_shard_degree=-1,
+            expert_parallel_degree=64,
+            context_parallel_degree=2,
+        ),
+        cp=True,
+    )
+
+
+def perf_fsdp_ep64_32k_cp2_eager() -> Trainer.Config:
+    """FSDP 512, EP 64, CP 2 at 32K, eager (CP's KDA routing tensors change
+    shape between microbatches, so CUDA graphs cannot capture it), last step
+    profiled: per-class kernel time is still comparable with the model."""
+    config = perf_fsdp_ep64_32k_cp2()
+    config.training.disable_cuda_graphs = True
+    config.profiler.save_traces_folder = "profiling/perf_fsdp_ep64_32k_cp2_eager"
+    config.profiler.enable_memory_snapshot = (
+        False  # the eager 32K step is near the GPU's limit
+    )
+    return config
+
+
+def _sweep(seq_len: int, cp: int, tp: int) -> Trainer.Config:
+    """FSDP 512 + EP 64 with CP / TP for the practical-roofline sweep. CP runs
+    eager (CUDA graphs cannot capture KDA under CP); TP runs with AdamW in place
+    of DistMuon (which rejects TP): the sweep compares forward + backward only."""
+    ctx = f"{seq_len // 1024}k"
+    config = _perf(
+        f"sweep_{ctx}_cp{cp}_tp{tp}"
+        + ("" if EXPERT_PRECISION == "mxfp8" else f"_{EXPERT_PRECISION}"),
+        seq_len,
+        ParallelismConfig(
+            data_parallel_shard_degree=-1,
+            expert_parallel_degree=64,
+            context_parallel_degree=cp,
+            tensor_parallel_degree=tp,
+        ),
+        cp=cp > 1,
+    )
+    if cp > 1 or (tp >= 4 and seq_len == 8192):
+        # CP: CUDA graphs cannot capture KDA under CP. 8K TP 4 (16 microbatches)
+        # under graphs gives an empty profiler trace; eager kernel times compare fine.
+        config.training.disable_cuda_graphs = True
+    return config
+
+
+def sweep_8k_cp1_tp1() -> Trainer.Config:
+    return _sweep(8192, 1, 1)
+
+
+def sweep_8k_cp2_tp1() -> Trainer.Config:
+    return _sweep(8192, 2, 1)
+
+
+def sweep_8k_cp4_tp1() -> Trainer.Config:
+    return _sweep(8192, 4, 1)
+
+
+def sweep_8k_cp1_tp2() -> Trainer.Config:
+    return _sweep(8192, 1, 2)
+
+
+def sweep_8k_cp1_tp4() -> Trainer.Config:
+    return _sweep(8192, 1, 4)
+
+
+def sweep_32k_cp2_tp1() -> Trainer.Config:
+    return _sweep(32768, 2, 1)
+
+
+def sweep_32k_cp4_tp1() -> Trainer.Config:
+    return _sweep(32768, 4, 1)
+
+
+def sweep_32k_cp1_tp2() -> Trainer.Config:
+    return _sweep(32768, 1, 2)
+
+
+def sweep_32k_cp1_tp4() -> Trainer.Config:
+    return _sweep(32768, 1, 4)
+
+
+def _time_dist_muon_steps() -> None:
+    """Log each DistMuon.step's wall time (host and GPU both drained before and
+    after) and the GPU time its kernels take (CUDA events around the step)."""
+    import time
+
+    import torch
+
+    from torchtitan.distributed.flex_shard.dist_muon import DistMuon
+
+    original = DistMuon.step
+    if getattr(original, "_timed", False):
+        return
+
+    def step(self, closure=None):
+        torch.cuda.synchronize()
+        start_ev, end_ev = torch.cuda.Event(enable_timing=True), torch.cuda.Event(
+            enable_timing=True
+        )
+        t0 = time.perf_counter()
+        start_ev.record()
+        out = original(self, closure)
+        host = time.perf_counter() - t0
+        end_ev.record()
+        torch.cuda.synchronize()
+        wall = time.perf_counter() - t0
+        print(
+            f"DIST_MUON_STEP wall {wall:.3f} s host {host:.3f} s "
+            f"gpu-span {start_ev.elapsed_time(end_ev) / 1e3:.3f} s",
+            flush=True,
+        )
+        return out
+
+    step._timed = True
+    DistMuon.step = step
+
+
+def optim_timing_8k() -> Trainer.Config:
+    """FSDP 512 + EP 64 at 8K without the profiler, 8 steps, each DistMuon step
+    timed (wall, host and GPU span), to see where the optimizer's time goes."""
+    _time_dist_muon_steps()
+    config = _sweep(8192, 1, 1)
+    config.training.steps = 8
+    config.profiler.enable_profiling = False
+    config.profiler.enable_memory_snapshot = False
+    return config
+
+
+def optim_timing_pp4_8k() -> Trainer.Config:
+    """PP 4 (FSDP 128, EP 128 per stage) at 8K, 5 steps, each DistMuon step
+    timed; run with --comm-backend real_pp_fake_spmd on 4 GPUs."""
+    _time_dist_muon_steps()
+    config = mem_pp4_8k()
+    config.training.steps = 5
+    config.profiler.enable_memory_snapshot = False
     return config
