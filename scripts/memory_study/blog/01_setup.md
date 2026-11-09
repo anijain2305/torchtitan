@@ -1,4 +1,4 @@
-# Kimi K3 at a glance
+# Kimi K3 at a Glance
 
 Kimi K3 is a 93-layer decoder. Two kinds of attention alternate through it:
 
@@ -28,7 +28,7 @@ pipeline stages manageable.
 
 ::: figure attention-residuals
 
-## Almost all of it is experts
+## Almost All of It Is Experts
 
 | Component | Parameters | Share |
 |---|---|---|
@@ -36,7 +36,7 @@ pipeline stages manageable.
 | Attention | 36B | 1.3% |
 | Shared experts | 12B | 0.4% |
 | Everything else | 8B | 0.3% |
-| **Total** | **2,779B** | |
+| **Total** | **2,779B** |  |
 
 Routed experts are 98% of the model: 92 layers x 896 experts of 33M parameters
 each. Yet each token only visits 16 of the 896, so a token touches about

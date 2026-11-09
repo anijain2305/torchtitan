@@ -1,9 +1,9 @@
-# The cluster and the training run
+# The Cluster and the Training Run
 
 The intro gave the headline numbers; here are the details the rest of the post
 leans on.
 
-## The cluster
+## The Cluster
 
 - 512 GB200 GPUs, each with 192 GB of HBM, 2.5 PFLOPS of dense bf16 compute and
   5 PFLOPS in FP8.
@@ -16,7 +16,7 @@ leans on.
   Which parallelism lands on which link turns out to matter a lot
   ([[communication]]).
 
-## The training run
+## The Training Run
 
 - A global batch of 16M tokens per step: 2,048 sequences at 8K context, or 512
   at 32K.

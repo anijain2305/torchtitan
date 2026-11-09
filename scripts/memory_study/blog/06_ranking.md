@@ -7,14 +7,18 @@ EP's dispatch and combine run inside DistMoE's expert GEMMs; TP's and CP's
 collectives are exposed in full. The step is one microbatch's time, times the
 number of microbatches. With PP, the schedule simulation of [[step]] gives the
 step from each chunk's time and each hop, and ZeRO-1 adds the stage's
-all-gather and reduce-scatter once per step. The optimizer step is left out
-([[open_problems]]).
+all-gather and reduce-scatter once per step. Every config then runs the
+optimizer step ([[compute_roofline.2.3]]).
 
 The configs that fit in memory ([[sharding.7]]), ranked by step time (the toggle
 switches context). For PP, each config also names its schedule and its hop
-transport: chain, cache or direct ([[step]]). The chart splits each step into
-parts (hover a row for the numbers; the buttons filter by family, schedule and
-transport, and sort by the parts the postmortems below look at):
+transport. The chart runs TorchTitan's transports, chain for plain 1F1B and
+cache for interleaving ([[step]]); whether direct would change anything is
+[[ranking.4]]'s question. For PP, each bar shows the rank that sets the pace,
+usually the last (it also runs the LM head), so its compute is a little above
+[[compute_roofline.2.4]]'s, which averages over the stages. The chart splits
+each step into parts (hover a row for the numbers; the buttons filter by
+family and schedule, and sort by the parts the sections below look at):
 
 - **Compute**, at the practical roofline ([[compute_roofline.2]]): GEMMs and
   attention; the memory-bound kernels that scale with tokens (norms, casts, the
@@ -40,7 +44,7 @@ transport, and sort by the parts the postmortems below look at):
   instead of gathering and reduce-scattering every layer every microbatch
   (ZeRO-3, as FSDP 512 does), so this happens once per step, with nothing to
   hide behind ([[sharding.5]]).
-- **Optimizer**: DistMuon's step, at the GPU time it needs ([[ranking.5]]).
+- **Optimizer**: DistMuon's step, at the GPU time it needs ([[compute_roofline.2.3]]).
 
 The bars share one axis at both contexts; the four slowest 8K configs run past
 it (marked &raquo;).
@@ -92,12 +96,14 @@ deep interleaving. Why?
 When we raise the PP degree, we usually think of the stages getting smaller.
 But it also shrinks everything inside a stage: with 512 GPUs, PP 16 leaves 32
 GPUs per stage instead of 64, so the stage's SPMD mesh, and with it EP, halves
-(EP 32 instead of EP 64). That is **the** reason PP 16 is slower here:
+(EP 32 instead of EP 64). That is the main reason PP 16 is slower here:
 
 - **Smaller expert GEMMs.** With EP 32 each GPU holds twice the experts (28
   instead of 14) but processes the same tokens, so each expert gets half the
-  rows, and the expert kernels run less efficiently. This is most of the gap,
-  except at `v = 4`.
+  rows, and the expert kernels run less efficiently. Together with the LM
+  head, which weighs more on a 6-layer stage than on a 12-layer one, this
+  slows the slowest rank by about a second: most of the gap in the top
+  configs.
 - **Twice the hops.** A microbatch crosses twice as many stage boundaries, and
   with half as many data-parallel replicas each pipeline runs twice the
   microbatches.
@@ -105,15 +111,21 @@ GPUs per stage instead of 64, so the stage's SPMD mesh, and with it EP, halves
   of one or two layers, and the imbalance stalls the schedule: at `v = 4` this,
   not the experts, is the bigger cost.
 
-::: figure pp16-vs-pp8-table
+> INSIGHT: Raising the PP degree shrinks everything inside a stage too. With a fixed number of GPUs, more stages mean fewer GPUs per stage, so smaller EP and smaller expert GEMMs.
 
-What PP 16 has going for it is memory: each stage holds half the layers. That
-lets it run CP 4 at 32K, which PP 8 cannot fit, and there it ties the leaders.
+At 32K, though, PP 16 ties the leaders. The reason is memory, the one thing
+PP 16 has going for it: each stage holds half the layers. At 32K every config
+needs a 4-way split, and the two splits are not equally cheap. CP 4 exposes
+little communication, since only attention communicates, while TP 4 exposes
+its collectives around every dense layer. PP 8 does not fit with CP 4, so it has to take TP 4
+and pay for it; PP 16, with half the layers per stage, fits CP 4. The cheaper
+split makes up for PP 16's smaller expert GEMMs and bigger bubble. With TP 4,
+PP 16 loses to PP 8 as usual.
 
 ## Why Interleaved 1F1B Wins Over 1F1B
 
-Interleaving wins in every PP family that fits it, and almost all of the gain
-is the bubble:
+Interleaving with `v = 2` beats plain 1F1B in every PP family that fits it,
+and almost all of the gain is the bubble:
 
 | PP 8, CP 1, TP 2 at 8K | Step | Bubble | Hops | Memory |
 |---|---|---|---|---|
@@ -128,13 +140,17 @@ is the bubble:
 - **The cost is memory:** the first rank holds more chunks in flight
   ([[sharding.6]]).
 - **More is not always better.** With PP 16, `v = 4` leaves chunks of one or
-  two layers, and the bubble grows back.
+  two layers, and the bubble grows back: at 8K it is slower than plain 1F1B
+  in most splits.
+
+> INSIGHT: Interleaving shrinks the bubble by about `v` and its extra work in flight hides the hops, at the price of memory; but once chunks shrink to a layer or two, the imbalance between them brings the bubble back.
 
 ## Do Attention Residuals Hurt PP?
 
 **The problem.** Attention residuals give PP an unusual property: a stage needs
 the blocks of every stage before it, so with chain each hop carries a bigger
-stack than the last, and the latest stages, the slowest already, trade the
+stack than the last, and the latest stages, already the slowest (the last
+also runs the LM head), trade the
 most bytes, on the critical path ([[step.2]]). A natural fix is **direct**,
 which TorchTitan does not have: each rank sends every block it finishes
 straight to the later stages that use it, asynchronously, so a hop carries
@@ -142,10 +158,6 @@ only the hidden state, and the block traffic spreads over all pairs of ranks,
 off the critical path, while the stages compute.
 
 ::: figure transport-diagram
-
-With the two schedules, that makes four options to compare:
-
-::: figure transport-matrix
 
 **The numbers.** With 100 GB/s NICs, hops are cheap to begin with, so there is
 little for direct to save:
@@ -159,155 +171,51 @@ little for direct to save:
 **Verdict:** for the configs we rank, direct does not help. Where the leaders
 run, TorchTitan's cache is as good, so the attention residuals cost PP little.
 
-## The Optimizer Step
+## What If TP and CP Were Overlapped?
 
-Every config ends its step with the optimizer: DistMuon, Muon over the sharded
-parameters. Muon orthogonalizes each weight matrix with a few Newton-Schulz
-iterations, so it needs whole matrices, and how much it has to move depends on
-how they are sharded:
+The model charges TP and CP as fully exposed, the way TorchTitan runs them
+today. But nothing prevents overlapping them, like FSDP's collectives: TP's
+behind the dense GEMMs (async TP), CP's behind the rest of the layer. Would
+that change the picture? Charging them like FSDP instead, overlapped and with
+the same NVLink penalties:
 
-- **Routed experts, 98% of the parameters: nothing to move.** FSDP shards each
-  group's 14 experts along the expert dimension, so a GPU's shard of the
-  gradient, momentum and weights is two whole experts, and it orthogonalizes
-  them where they are.
-- **Dense weights: a small redistribution.** They are sharded by rows, so
-  DistMuon gathers each matrix (or each head's block) to one GPU, runs
-  Newton-Schulz there and sends the update back: about 0.2 GB each way per GPU
-  per step, a few milliseconds.
+::: figure overlap-tp-cp-table
 
-So the optimizer is almost all compute, and about the same per GPU in every
-config: each GPU holds about 1/512 of the parameters either way. We measured it
-in fake-process-group steps at 8K:
+- **TP gains the most,** since it exposed the most: under a second at 8K,
+  about two at 32K, where TP 4's collectives are larger. CP, which exposed
+  little to begin with, moves much less.
+- **The near-ties reorder.** At 8K the lead passes from CP 2 to TP 2; at 32K,
+  PP 8 with TP 4 pulls clear, and FSDP 512 with TP 4 overtakes PP 16 with CP 4.
+- **The big picture holds.** PP 8 interleaved still leads at both contexts, and
+  FSDP 512 stays well behind at 8K.
 
-| Optimizer step | GPU work (the model) | Eager, as TorchTitan runs it today |
-|---|---|---|
-| FSDP 512, EP 64 | 0.8 s | 3.1 s |
-| PP 4, first stage | 0.5 s | 0.5 s |
+Overall, overlapping helps TP far more than CP, but the CP configs sit so
+close that the picture barely changes. A rule of thumb for PP: reach for TP
+when memory is tight, since it also splits the dense weights; when everything
+fits, CP is slightly faster with TorchTitan's TP today. An overlapped TP would
+tip that balance toward TP.
 
-The model charges the GPU work, its practical roofline: 0.8 s without PP, 0.5 s
-with it. Today FSDP 512's step takes 3.1 s, because DistMuon runs eagerly: for
-all 93 layers' parameters it launches about 700,000 small kernels, and the GPU
-waits on the CPU that launches them. A PP rank holds a quarter of the layers or
-fewer, so the CPU keeps up. The step cannot be captured in a CUDA graph yet
-(among other things, its learning rate is a Python number, baked into a
-capture); once it can, FSDP 512 gets those 2.3 s back. Either way, the
-optimizer does not change the ranking.
+## How Far to Trust the Ranking
 
-## Postmortem: FSDP 512 Without PP
+We have now worked out, from first principles, which configs to run and why.
+But there is a catch: this is a model, and the leaders sit within a few
+percent of each other. Small changes to the model can flip their order:
 
-Every FSDP 512 config is far behind every PP config: 43 s at best, against 17
-s at 8K and 22.5 s at 32K. All the splits that fit:
+- **What it assumes:** NVLink bandwidth and overlap inside a 64-GPU NVL domain
+  (measured up to 32 GPUs), TP and CP fully exposed, a hop moving as soon as
+  both sides are ready, and the optimizer at its GPU time.
+- **What it leaves out:** profiles of a real 512-GPU run show DistMoE
+  slower than in our fake-process-group steps (about 1.65x the bare grouped
+  GEMM instead of about 1.25x, plus waits at its barriers), and FSDP's dense
+  collectives across all 512 GPUs slower than modelled. The first adds about
+  the same to every config; the second only makes FSDP 512 slower still.
 
-::: figure fsdp-postmortem-table
-
-**Why all of them are slow: the experts' gathers.** FSDP gathers every layer's
-weights before using them, and EP 64 leaves each expert shard with only 8
-replicas, one per NVL domain, so its all-gather and reduce-scatter run on one
-NIC per GPU ([[communication.2]]). Per layer and microbatch, that all-gather
-takes 24 ms, 20 ms of it the expert shard, while the layer's forward takes 6.5
-ms at 8K without a split: most of the gather cannot hide, 17.5 s per step even
-in the best config.
-
-**Why splitting makes it worse.** CP and TP split each microbatch's tokens
-over 2 or 4 GPUs. The tokens per step are fixed, so each GPU runs 2 or 4 times
-more microbatches (4, then 8, then 16 at 8K). But FSDP gathers every layer's
-weights again for every microbatch, however few tokens it has, while the
-compute it could hide behind shrinks with the tokens: at CP 4 a layer's
-forward takes 2 ms against the same 24 ms gather. So the exposed FSDP time
-grows with the microbatch count, from 17.5 s to 49 s with CP 2 and 111 s with
-CP 4; so does the weight prep (copies of the gathered weights, MXFP8 quantization of the
-expert weights), from 2.2 s to 9.0 s.
-
-**Why CP 4 is worse than TP 4.** Both run 16 microbatches per GPU, with about
-the same compute per microbatch. The difference is what each gathers: TP 4
-also shards the dense weights 4 ways, so each GPU gathers 0.32 GB of them per
-layer instead of 1.27 GB (the 0.92 GB expert shard is the same in both). TP 4
-saves 11.6 s of exposed FSDP, 3.6 s of weight prep and 1.7 s of penalties, and
-gives back 3.2 s of exposed TP and 0.7 s of slower compute: 137 s against 150
-s. At 32K both run 4 microbatches per GPU, like 8K without a split, and land
-there too (43-45 s); TP 4 is ahead again, by 1.8 s, for the same reason.
-
-## Why PP 16 Loses to PP 8
-
-At the same split, schedule and transport, PP 16 is slower than PP 8 every
-time, by about 1 s, and by 3 s at `v = 4`:
-
-::: figure pp16-vs-pp8-table
-
-- **Smaller expert GEMMs (compute).** PP 16 runs EP 32: each GPU holds 28
-  experts instead of 14, so each expert gets half the tokens, and the grouped
-  GEMM runs less efficiently (at TP 2, 2,304 rows per expert at 52% of peak,
-  against 4,608 at 57%).
-- **Twice the hops.** A microbatch's round trip crosses 30 hops instead of 14,
-  and with half as many data-parallel replicas, each pipeline runs twice the
-  microbatches. More hop time, and more of the compute penalty hops cost.
-- **A slightly bigger bubble**, 15 stage-steps of half the size instead of 7,
-  and a much bigger one at `v = 4`: 93 layers over 64 virtual stages leaves
-  chunks of one or two layers, and the uneven chunks stall the schedule.
-
-What PP 16 has going for it is memory: each stage holds half the layers, so it
-needs 13-27 GB less. That lets it run configs PP 8 cannot fit, such as
-interleaving with CP 4 at 32K, where it ties the leaders (22.9 s).
-
-## Transports Compared
-
-The same PP configs with each transport ([[step.2]]):
-
-::: figure transport-compare-table
-
-- **Chain is never the fastest.** It costs 0.2 s at 32K with PP 8, and up to
-  1.8 s with PP 16 at 8K, almost 3 s at `v = 4`: the longer the pipeline, the
-  bigger the stack each hop carries.
-- **With plain 1F1B, direct beats chain everywhere.** The hops sit on the
-  critical path ([[step.1]]), so taking the blocks off them pays every
-  microbatch: 0.5 s at PP 8, 1.8 s at PP 16 (8K).
-- **With interleaving, cache and direct tie at PP 8,** within 0.1 s: they move
-  the same bytes, cache spread evenly over the hops, direct piled on the first
-  rank. At PP 16, direct pulls ahead (0.3 s at `v = 2`, 0.8 s at `v = 4`): with
-  twice the stages, the blocks cache carries for a lap make hops too big to
-  hide completely.
-
-TorchTitan has chain for plain 1F1B and cache for interleaving. Of the two,
-cache is the one that matters: the leading configs interleave, and there it
-is as good as direct at PP 8.
-
-**At 8K, interleaved PP 8 leads, with what TorchTitan has today.** PP 8,
-interleaved (`v = 4`) with cache takes 17.0 s, with CP 2 or TP 2 alike: TP 2
-pays 1.1 s of exposed TP, CP 2 pays 0.5 s of exposed CP but runs its compute
-slower. Interleaving helps twice. It shrinks the bubble, from 1.7 s with plain
-1F1B to 0.7 s with `v = 2` and 0.3 s with `v = 4`. And it hides the hops
-([[step]]): they add 0.1-0.2 s, against 0.7 s with plain 1F1B and chain. So
-direct distribution matters only for plain 1F1B (18.7 s with chain, 18.1 s
-direct). With interleaving it does not help: the hops are already hidden, and
-direct moves the same bytes as cache but piles them on the first rank, which
-sends the embedding to every other rank, so its compute slows the most. Chain
-under interleaving, which TorchTitan does not run and the chart leaves out,
-only loses: 17.4 s at
-`v = 2` and 17.6 s at `v = 4`, since every lap resends the whole stack; at PP 16
-with `v = 4` its hops grow too big to hide (21.9 s, against 19.8 s with cache).
-
-**At 32K, the top configs tie.** PP 8, 1F1B with CP 4, with direct
-distribution (22.5 s) or chain (22.7 s); PP 8, interleaved (`v = 4`) with cache
-and TP 4 (22.9 s); and PP 16, interleaved (`v = 2`) with CP 4 (22.9 s) sit
-within 0.4 s, and chain and cache run on TorchTitan today. Memory forces
-every config at 32K into CP 4 or TP 4, and each pays for it differently. PP 8
-with CP 4 cannot interleave (it does not fit), so its 32-microbatch pipeline
-keeps a 3.8 s bubble; its hops cost little either way, because its stages are
-uneven: the last one, which also runs the LM head, sets the pace, and the
-others have more spare time per microbatch than a hop takes. PP 8 interleaves
-only with TP 4, which adds 2.7 s of exposed TP. PP 16 interleaves with CP 4, but not well beyond `v = 2`: 93
-layers over 64 virtual stages leaves chunks of one or two layers, and at 32K an
-MLA layer weighs much more than a KDA one, so the uneven chunks stall the
-schedule (a 4.5 s bubble at `v = 4`, 2.2 s at `v = 2`).
-
-**The margins are small.** The top configs sit within 2% of each other at both
-contexts, so the remaining assumptions matter: bandwidth and overlap inside a
-64-GPU NVL domain (measured up to 32 GPUs), TP and CP charged as fully exposed
-(a chunked, overlapped version of either would move the TP and CP configs up),
-the schedule simulation (each chunk's forward and backward from the model, a
-hop moving as soon as both sides are ready), the uneven split of 93 layers over
-the stages, and the optimizer step, which is not included. FSDP 512 could also
-keep each NVL domain's experts replicated and reduce their gradients across
-NVL domains once per step (HSDP), which we have not modelled.
+So the practical way to use the ranking is to take a few of the top configs
+and run them on the cluster. What the model gives the practitioner is a clear
+picture of what to expect and why: absolute times will be off, and the order
+of near-ties may change, but the big picture should hold. PP beats FSDP 512 at
+8K, interleaving (at least `v = 2`) beats plain 1F1B, PP 8 beats PP 16 unless memory forces the
+split, and the transport hardly matters. If a run disagrees with that, it
+points to an inaccuracy in the model.
 
 ## Notes
