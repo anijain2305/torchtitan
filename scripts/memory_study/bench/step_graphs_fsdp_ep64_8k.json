@@ -1,0 +1,18 @@
+{
+ "trace": "outputs/profiling/perf_fsdp_ep64_8k/iteration_4/rank0_trace.json.gz",
+ "fwd_bwd_span_s": 21.731657778808593,
+ "fwd_bwd_busy_s": 20.519763398925782,
+ "optimizer_span_s": 6.677252562988281,
+ "optimizer_busy_s": 0.8210332153320312,
+ "fwd_bwd_by_class_s": {
+  "Dense GEMM bf16": 7.8801487129999215,
+  "DistMoE grouped GEMM (+fused dispatch/combine)": 5.3836173409999875,
+  "Other elementwise, casts, reductions": 1.7553201250000152,
+  "FSDP buffer copies": 1.705307436000003,
+  "Attention residuals": 1.473686992999992,
+  "KDA": 1.4038893799999999,
+  "MLA": 0.6682224900000001,
+  "MXFP8 quantize": 0.32082248200000035,
+  "Norms (RMSNorm, L2)": 0.2148324139999999
+ }
+}
