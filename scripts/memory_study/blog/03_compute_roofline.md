@@ -1,20 +1,22 @@
-# The compute roofline
+# The Compute Roofline
 
-Memory told us which configs fit. Now we want to know how fast each one trains.
-We start with compute alone: how long one step takes with no communication and
-nothing else in the way.
+Memory told us which parallelism configs fit. Now we want to know how fast
+each one trains. We start with compute alone: how long one step takes with no
+communication and nothing else in the way.
 
 We build that estimate in two passes:
 
 - **The ideal roofline** ([[compute_roofline.1]]) runs every op at a fixed
   fraction of the GPU's peak: one assumed efficiency for all GEMMs, full HBM
-  bandwidth for everything else. It is quick to compute, the same for every
-  parallelism config, and shows where the time goes.
-- **The practical roofline** ([[compute_roofline.2]]) keeps the same ops but
-  times each one at the efficiency we measure for the shapes each config
-  produces. It sees what the ideal one cannot: how splitting the model shrinks
-  the GEMMs and changes the work around them. This is the model the rest of the
-  post builds on.
+  bandwidth for everything else. It is quick to compute and good for finding
+  compute bottlenecks.
+- **The practical roofline** ([[compute_roofline.2]]) assumes the compute
+  kernels are already well optimized (we do not plan to improve cuBLAS's
+  matmuls in this study) and times each one at the shapes each config produces.
+  It needs profiling on the hardware we care about, but it is more accurate,
+  which makes it the right model for ranking configs. It is **not** a tool for
+  finding compute bottlenecks: it takes every kernel's measured speed as given.
+  This is the model the rest of the post builds on.
 
 ## The Ideal Roofline
 
@@ -45,134 +47,182 @@ Per GPU per step:
   backward is 4.5 forwards). The one term that grows with context.
 - **KDA attention**: linear in tokens; its chunked kernels are not plain
   matmuls, so we use their measured time per token.
-- **Everything else** (the attention-residual mix, MXFP8 quantization, FSDP's
+- **Everything else** (the attention-residual mix, the experts' MXFP8 quantization, FSDP's
   buffer copies, norms, residual adds): memory-bandwidth bound,
   `bytes moved / B_hbm`. Without PP, FSDP re-gathers, copies out and
-  re-quantizes every layer's weights each microbatch; under PP's ZeRO-1 the
+  re-quantizes every layer's expert weights each microbatch; under PP's ZeRO-1 the
   stage stays gathered, so this happens once per step. [[methodology.4]]
   counts the bytes class by class.
 
 The matmuls run at an assumed fraction of peak: **60% of 5 PFLOPS** in MXFP8
-(linears, routed experts) and **70% of 2.5 PFLOPS** in bf16 (LM head,
+(routed experts) and **70% of 2.5 PFLOPS** in bf16 (dense linears, LM head,
 attention).
 
 ::: figure roofline-table
 
-**14.2 s per step at 8K and 14.9 s at 32K.** Two things stand out. The dense
-linears cost more than the routed experts: experts are 98% of the parameters,
-but a token touches about 54B dense parameters and only 49B expert ones. And
-every GPU does the same FLOPs per step, so **the compute part is the same for
-every config**: the ideal roofline cannot rank them.
+15.6 s per step at 8K and 16.4 s at 32K. Two things stand out:
+
+- **The dense linears cost about twice as much as the routed experts.** Experts
+  are 98% of the parameters, but a token touches about 54B dense parameters and
+  only 49B expert ones, and the dense ones run in bf16 at half the FP8 rate.
+- **The matmuls cost the same in every config.** Every GPU does the same
+  FLOPs per step; only the memory-bound term changes with the config, so the
+  ideal roofline barely separates them.
 
 ## A Practical Roofline
 
-To rank the configs, we refine the model with one practical choice: **we assume
-the compute kernels are already well optimized**, and charge each op what such
-a kernel actually takes at the config's own shapes, instead of one assumed
-efficiency for everything. This study does not change the kernels, so we can
-simply measure them. The model still leaves out communication and pipeline
-bubbles, which come later.
+Most roofline studies stop at something like the ideal roofline. It is a
+first-order model, built to show where the bottlenecks are, and it can be far
+off: for FSDP 512 + EP 64 at 8K it predicts 15.6 s, while the same step,
+run with a fake process group (real kernels, collectives that move no data),
+measures 20.6 s of GPU time ([[compute_roofline.2.5]]). We want more than
+bottlenecks: we want to use this model to choose how to run Kimi K3 on our
+cluster, so it has to be more accurate.
+
+For that, we can lean on what we know about our framework. Like many
+practitioners, we know which parts are already well optimized: in this study,
+the compute kernels. So instead of one assumed efficiency for every GEMM, we
+run each matmul at the shapes the parallelism configs actually produce and
+measure its efficiency. The model still leaves out communication and pipeline bubbles,
+which come later.
+
+> INSIGHT: A roofline model is not one-size-fits-all. What you know about your framework and what you need the model for decide how to build it: a first-order model to find bottlenecks, or measured kernels at your exact shapes to choose between configs.
 
 All measurements run on one GB300, which has the same bf16 (2.5 PFLOPS) and FP8
 (5 PFLOPS) peaks as GB200, so the percentages carry over. Kernels are timed as
 CUDA-graph replays: kernel time, no CPU launch overhead.
 
-### Compute ops at each config's shapes
+### Compute Ops at Each Config's Shapes
 
-Parallelism changes the shapes:
+The compute kernels are well optimized, so the model uses the efficiency they
+actually reach at each config's shapes. Parallelism changes those shapes. For a
+linear's forward GEMM `(M x K) @ (K x N)`, `M` is the tokens (rows), `K` the
+input width and `N` the output width:
 
-- **CP** cuts the tokens per microbatch, so the dense GEMMs get fewer rows.
-- **TP** splits the dense weights: column-parallel projections lose output
-  columns, row-parallel ones lose input columns. MLA's small low-rank
-  projections, the router and the routed experts' down and up projections stay
-  whole.
-- **EP** sets how many experts each GPU owns (14 with EP 64, 28 with EP 32).
-  With CP and TP setting the local tokens, that fixes the rows per expert.
-- **PP** changes no shape itself, only EP (EP 32 with PP 16).
+- **CP**: fewer tokens per microbatch, so smaller `M`.
+- **TP**: narrower dense weights at the same `M` (a few small ones stay
+  whole): smaller `N` for column-parallel linears, smaller `K` for row-parallel
+  ones. The MoE runs on TP-local tokens, so like CP it gives each expert a
+  smaller `M`.
+- **EP**: experts per GPU (14 at EP 64, 28 at EP 32); with the local tokens,
+  that sets each expert's `M`.
+- **PP**: no shape of its own; PP 16 means EP 32.
 
-**Dense GEMMs** in MXFP8: forward, input-gradient and weight-gradient GEMMs of
-every linear in a layer (green: at or above 60%; red: more than 5 points
-below):
+In the weight-gradient GEMM the tokens are the reduction dimension, so there
+CP shrinks `K` instead.
 
-::: figure dense-shapes
+We time each compute op at each split's shapes on one GPU and compare it with
+the ideal roofline. The dense GEMMs are bf16 GEMMs; the routed experts are
+DistMoE's own MXFP8 kernels, grouped GEMMs with the token dispatch and combine
+fused in, timed in a fake-process-group step (its collectives move no data, so
+this is the kernels alone, at the real per-GPU shapes); MLA is FlashAttention 4
+in bf16, and KDA is its chunked kernel:
 
-**Routed experts**: we time each layer's experts as one MXFP8 grouped GEMM
-(torchao's, which TorchTitan's MXFP8 experts use), w13 and w2, forward and
-backward, counting only the GEMM kernels. This isolates the GEMMs from DistMoE,
-which fuses them with token dispatch and combine. With balanced routing, each
-expert's `M` is (rounded down to a multiple of 128, the MXFP8 scale tile):
+::: figure ideal-gap-table
 
-```
-M per expert = local_tokens x top_k / local_experts
-             = local_tokens x top_k x EP / num_experts
-```
+- **Different ops miss by different amounts.** The dense GEMMs come within about
+  5% of their assumed 70%. DistMoE's experts take 1.25x the ideal time: their
+  plain GEMMs run at about 60%, but the two that fuse the combine (each token's
+  top-k outputs weighted and summed back) run at about half that. MLA takes
+  1.3-1.7x the ideal time: its softmax
+  costs time but no matmul FLOPs (the exponentials run on slower
+  special-function units, and the backward recomputes them).
+- **Different splits miss by different amounts.** At 8K, CP 4 or TP 4 leaves
+  each expert an `M` of about 2,300 rows, and DistMoE drops to 43% of peak
+  (1.38x). KDA does not split cleanly at all: under CP its recurrent state
+  passes between ranks, and TP 2 or TP 4 speeds it up only 1.7x at 8K, so TP 4
+  takes 2.35x the ideal time.
+- **Different contexts miss by different amounts.** At 32K the same splits
+  leave larger shapes, and most of the gaps shrink.
 
+One efficiency per op would charge a bad config the same as a good one. The
+per-shape measurements behind this table are in [[methodology.6]].
 
-::: figure expert-shapes
+### Memory-bound Work
 
-**MLA** on FlashAttention 4 in bf16. As for the GEMMs, the model uses the
-measured time. FA4 fuses the whole attention into one kernel, so that time
-already includes the softmax (exponentials, running max and sum) and the causal
-masking. To compare it with the ideal roofline's 70%, the table expresses the
-time as an efficiency: the two matmuls' FLOPs (what the ideal roofline counts)
-divided by the measured time. The softmax adds time but no matmul FLOPs, so it
-shows up as a lower efficiency, not as missing time. Ulysses CP and TP both
-split the heads and keep the whole sequence on each GPU:
-
-::: figure mla-shapes
-
-The dense and expert GEMMs hold 60% down to about 4,600 rows per expert; TP 4
-costs a few points, and experts drop to 52% and 42% at 2,300 and 1,150 rows (CP
-4 or TP 4 at 8K). MLA does not reach 70%: its forward gets 59-66%, but
-forward + backward only 42-52%. The softmax runs inside the kernel between the
-two matmuls, its exponentials run on slower special-function units, and the
-backward recomputes it and runs five matmuls instead of two. **KDA** runs at
-0.40 us per token per layer; under CP a local token costs 1.3-2x more (the
-recurrent state is passed between ranks), and TP 2 or TP 4 speeds it up only
-1.7x at 8K.
-
-### Memory-bound work
-
-Here our knowledge points the other way: these kernels are not tuned yet. We
-keep the bytes from [[compute_roofline.1]], but instead of the full 8 TB/s, we
-charge each class the bandwidth its kernels reach in a measured step (FSDP 512
-+ EP 64 at 8K, CUDA graphs):
+Here too we measure: we keep the estimated bytes from [[compute_roofline.1]] and
+charge each class the bandwidth its kernels reach in a measured step (FSDP 512 + EP
+64 at 8K, CUDA graphs):
 
 ::: figure nonmatmul-table
 
-- **This is where the ideal roofline is furthest off**: 3.5 s at full
-  bandwidth, 8.3 s measured, 43% of the bandwidth on average.
-- **MXFP8 quantization and norms** come close: 61-71%.
-- **The attention residuals and FSDP's copies** reach only about 43%.
-- **The attention residuals alone take 3.7 s**, almost as much as all the dense
-  MXFP8 GEMMs (3.8 s). Their region upcasts every source to fp32 and runs the
-  weighted sum as a batched matrix multiply over at most 9 sources, which lands
-  on slow GEMV kernels.
+- **This is where the ideal roofline is furthest off**: 1.5 s at full
+  bandwidth, 5.4 s measured, 28% of the bandwidth on average.
+- **MXFP8 quantization and norms** come close: 58-60%.
+- **FSDP's copies** reach 39%, and **everything else** (casts, adds, gradient
+  accumulation) only 16%.
+- **The attention residuals** take 1.6 s: about half in the fused Triton kernel, the
+  rest concatenating the block stack at each block's first layer.
 
-> CAVEAT: These memory-bound kernels likely have room to improve, and the
-> practical roofline **deliberately** takes them as they are. So it is not a
-> target for optimizing them: speed them up, and the step can run faster than
-> the practical roofline predicts. That may sound odd for a roofline, but it is
-> our choice: the goal here is not to optimize compute, but to rank the
-> parallelism configs that fit in memory. To optimize compute, the ideal
-> roofline is the better target.
+> CAVEAT: These memory-bound kernels likely have room to improve, and the practical roofline **deliberately** takes them as they are. So it is not a target for optimizing them: speed them up, and the step can run faster than the practical roofline predicts. That may sound odd for a roofline, but it is our choice: the goal here is not to optimize compute, but to rank the parallelism configs that fit in memory. To optimize compute, the ideal roofline is the better target.
+
+### The Optimizer Step
+
+Every step ends with the optimizer: DistMuon, Muon over the sharded parameters.
+Muon orthogonalizes each weight matrix with a few Newton-Schulz iterations, so
+it needs whole matrices, and how much it has to move depends on how they are
+sharded:
+
+- **Routed experts, 98% of the parameters: nothing to move.** FSDP shards each
+  group's 14 experts along the expert dimension, so a GPU's shard of the
+  gradient, momentum and weights is two whole experts, and it orthogonalizes
+  them where they are.
+- **Dense weights: a small redistribution.** They are sharded by rows, so
+  DistMuon gathers each matrix (or each head's block) to one GPU, runs
+  Newton-Schulz there and sends the update back: about 0.2 GB each way per GPU
+  per step, a few milliseconds.
+
+So the optimizer is almost all compute, and about the same per GPU in every
+config: each GPU holds about 1/512 of the parameters either way. Measured in
+fake-process-group steps at 8K:
+
+| Optimizer step | GPU work (the practical roofline) | Eager, as TorchTitan runs it today |
+|---|---|---|
+| FSDP 512, EP 64 | 0.8 s | 3.1 s |
+| PP 4, first stage | 0.5 s | 0.5 s |
+
+The FLOPs are about the same, but without PP the work comes as many more,
+smaller kernels (all 93 layers' parameters), which keep the GPU less busy.
+The model charges the GPU work, 0.8 s per step without PP and 0.5 s with it
+(PP 8 and 16 hold fewer layers per GPU; we take PP 4's time for them too), on
+top of the forward and backward below.
+
+> CAVEAT: Today FSDP 512's optimizer step takes 3.1 s, because DistMuon runs eagerly: for all 93 layers' parameters it launches about 700,000 small kernels, and the GPU waits on the CPU that launches them. A PP rank holds a quarter of the layers or fewer, so the CPU keeps up. The step cannot be captured in a CUDA graph yet (among other things, its learning rate is a Python number, baked into a capture); once it can, FSDP 512 gets those 2.3 s back. Either way, it does not change the ranking.
 
 ### Step Time per Config, Sans Communication
 
-Per GPU per step (green / red: faster / slower than the same family without a
-split; greyed out: does not fit in memory):
+Now the forward and backward per GPU, still without communication, pipeline
+bubbles or the optimizer step. Red
+cells show how much slower a config is than the same family with no split (CP 1,
+TP 1). Hatched rows do not fit in memory.
 
-::: figure compute-table
+**FSDP 512, EP 64:**
 
-- **Without PP, CP and TP are expensive.** They multiply the microbatches, and
-  FSDP re-gathers, copies and re-quantizes every layer's weights each
-  microbatch: at 8K, CP 4 grows the memory-bound work from 8.3 to 15 s.
-- **PP's ZeRO-1 removes that cost**: PP 8 at 8K needs 16.8 s against 19.0 s for
-  FSDP 512, before counting its bubble.
-- **Small shapes cost a few seconds**: PP 16 with CP 4 or TP 4 runs its experts
-  at 42%, and at 8K TP 4 more than doubles KDA's time.
+::: figure compute-table-fsdp
 
-### Checking against a measured step
+**Without PP, CP and TP are expensive.** Nearly all of the slowdown is
+memory-bound work, and most of that is FSDP's: it re-gathers, copies and
+re-quantizes every layer's expert weights each microbatch, and CP and TP multiply the
+microbatches. At 8K, CP 4 grows the memory-bound work from 5.4 to 11.7 s.
+
+**PP 8 (EP 64 per stage):**
+
+::: figure compute-table-pp8
+
+**PP's ZeRO-1 removes that cost.** The stage's weights stay gathered for the
+whole step, so the weight work happens once: with TP 2 at 8K, PP 8 needs
+18.9 s against 22.1 s for FSDP 512, and CP and TP cost far less. What they still cost is
+smaller shapes: KDA under CP and TP, and the experts at CP 4 or TP 4.
+
+**PP 16 (EP 32 per stage):**
+
+::: figure compute-table-pp16
+
+**Small shapes cost up to a second and a half.** PP 16 with CP 4 or TP 4 runs its
+experts at 41% of peak (0.5 s more than without a split), and at 8K TP 4 more
+than doubles KDA's time.
+
+### Checking Against a Measured Step
 
 A fake-process-group step measures exactly this part: its collectives do no
 work, so the GPU time is compute and memory-bound work only. One GPU holds a
@@ -181,21 +231,20 @@ ran them all (PP needs one GPU per stage, so its configs are not here):
 
 ::: figure sweep-table
 
-- **Close at the base configs**: 5% under at 8K without a split, 1% at 32K with
-  CP 2.
-- **Further off as the microbatches multiply** (CP and TP at 8K, TP 4 at 32K),
-  up to 17%, always on the optimistic side: those configs redo FSDP's weight
-  work more often, and those kernels run a little slower than calibrated.
-- **The order holds**, which is what the ranking needs, with one exception
-  within a second: at 32K the model puts TP 4 ahead of CP 4, the measurement
-  the other way round.
+- **Within 8% everywhere**: 3% over at 8K without a split, 3-6% over at 32K
+  with CP 2, CP 4 or TP 2.
+- **Optimistic where KDA splits or the microbatches multiply** (CP 4 and TP 4
+  at 8K, TP 4 at 32K), by 6-8%: those configs run KDA at its least efficient
+  and redo FSDP's weight work more often, and those kernels run a little slower
+  than calibrated.
+- **The order holds at 8K**, which is what the ranking needs. At 32K the four
+  splits sit within 2.5 s and the model swaps one: it puts TP 4 second, the
+  measurement last.
 
-> NOTE: Why build the practical roofline at all, if a fake-process-group run
-> measures the step directly? Because the step is not one number once
-> communication enters. Each collective overlaps a different part of the
-> compute: FSDP's gathers the next layer's GEMMs, DistMoE's dispatch the expert
-> GEMMs, and TP's and CP's sit between the ops that wait for them. To tell whether a collective is really hidden, and
-> which compute it slows down, we need the time of each op, not one total.
+The experts are not an independent check here: their times come from these
+same runs ([[compute_roofline.2.1]]).
+
+> NOTE: Why build the practical roofline at all, if a fake-process-group run measures the step directly? Because the step is not one number once communication enters. Each collective overlaps a different part of the compute: FSDP's gathers the next layer's GEMMs, DistMoE's dispatch the expert GEMMs, and TP's and CP's sit between the ops that wait for them. To tell whether a collective is really hidden, and which compute it slows down, we need the time of each op, not one total.
 
 **From here on, "the roofline" means this practical roofline**, not the ideal
 one from [[compute_roofline.1]].

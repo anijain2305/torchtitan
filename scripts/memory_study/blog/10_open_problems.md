@@ -1,4 +1,4 @@
-# Open problems
+# Open Problems
 
 Two directions we have not explored, both of which could move the numbers:
 

@@ -1299,9 +1299,6 @@ def pp_hop_timeline(v: int = 1) -> str:
         out.append(f'<pattern id="pph-wait-{v}-{i}" width="5" height="5" patternUnits="userSpaceOnUse" '
                    f'patternTransform="rotate(45)"><rect width="5" height="5" fill="#ffffff"/>'
                    f'<rect width="2.2" height="5" fill="{c}"/></pattern>')
-        out.append(f'<pattern id="pph-wait-{v}-{i}" width="5" height="5" patternUnits="userSpaceOnUse" '
-                   f'patternTransform="rotate(45)"><rect width="5" height="5" fill="#ffffff"/>'
-                   f'<rect width="2.2" height="5" fill="{c}"/></pattern>')
     out.append("</defs>")
     for t in range(0, int(tmax) + 1):
         out.append(f'<line x1="{xs(t):.1f}" x2="{xs(t):.1f}" y1="{top - 8}" y2="{hgt - 26}" stroke="{GRID}"/>')

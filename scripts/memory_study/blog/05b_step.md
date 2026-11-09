@@ -23,7 +23,8 @@ places: the **warmup**, while the first microbatches travel down the pipeline
 and the later stages wait for work; the **cooldown**, while the last ones
 drain and the early stages have nothing left; and the **hops** in between,
 when a stage has to wait for its input to arrive from another one. We build up
-the step time piece by piece, with `P` equal stages, `M` microbatches, `t` one
+the step time piece by piece, with `P` equal stages, `M` microbatches (not the
+GEMM rows `M` of [[compute_roofline]]), `t` one
 stage's forward and backward for one microbatch, and `h` one hop. (In the real
 pipeline both change from stage to stage: the stages are uneven, and a hop's
 bytes depend on the transport ([[step.2]]) and where it sits in the pipeline.
@@ -47,9 +48,7 @@ microbatches as keep it busy while that trip runs, if the trip were compute
 only. So the stages end up waiting for every hop: `2 (P - 1)` per microbatch,
 shared by the `P` stages that work in parallel, or `2 (P - 1) / P` hops per
 microbatch, almost two, for the whole step (plus `2 (P - 2)` more while the
-pipeline fills and drains). Four stages, eight microbatches, `t = 3` (forward
-1, backward 2) and `h = 0.5`; the striped boxes are stages waiting for a hop,
-and they keep coming:
+pipeline fills and drains).
 
 ::: figure pp-hop-timeline
 
@@ -76,7 +75,7 @@ cost every microbatch pays into one paid once.
 
 Besides the hidden state, a stage needs the attention-residual blocks that
 earlier stages finished ([[setup]]). How they get there is the hop's
-**transport**. TorchTitan has one for each schedule:
+**transport**. TorchTitan uses one for each schedule:
 
 - **chain** (plain 1F1B): every hop carries the hidden state and the whole
   block stack so far, so the hops grow along the pipeline: at PP 8 the hop
