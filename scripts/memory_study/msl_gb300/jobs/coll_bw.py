@@ -37,10 +37,7 @@ for size in sizes:
         "alltoall": (lambda: dist.all_to_all_single(a2a_out, full), (w - 1) / w),
         "sendrecv": (lambda: (dist.send(full, r + half) if r < half else dist.recv(full, r - half)), 1.0),
     }
-    only = os.environ.get("BW_OPS")  # comma-separated subset of ops
     for op, (fn, factor) in ops.items():
-        if only and op not in only.split(","):
-            continue
         iters = max(5, min(50, int(2e9 / size)))
         t = bench(fn, iters)
         if r == 0:
