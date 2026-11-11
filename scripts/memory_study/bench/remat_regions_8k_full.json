@@ -1,0 +1,1118 @@
+{
+ "num_layers": 8,
+ "measured_forwards": 8,
+ "policy": "full",
+ "recompute_regions": [],
+ "allocated_growth_over_layers": 401201664,
+ "allocated_growth_per_layer": {
+  "layers.0": 234881024,
+  "layers.1": 353416704,
+  "layers.2": 353416704,
+  "layers.3": 353416704,
+  "layers.4": 353416704,
+  "layers.5": 353416704,
+  "layers.6": 353416704,
+  "layers.7": 353416704
+ },
+ "peak_allocated": 49211647488,
+ "layers": {
+  "layers.0": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.26635199785232544,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.16283199936151505,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14905599504709244,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.874127984046936,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7857600152492523,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7680320143699646,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.2867199778556824,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7543520033359528,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7302879989147186,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 3.9553439617156982,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.0296961069107056,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.053279999643564224,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.1": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.212287999689579,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14880000054836273,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14377599954605103,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8920960128307343,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7970719933509827,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7913760244846344,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.2120000123977661,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8076159954071045,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.842991977930069,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07291200011968613,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.01259199995547533,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2308639958500862,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.280159950256348,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.18772800266742706,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7369759976863861,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3688480108976364,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05307199992239475,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.0551999993622303,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.2": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.20230399817228317,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14790400117635727,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14548800140619278,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8131359815597534,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7333440184593201,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7371039986610413,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.1396160125732422,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7289120256900787,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7182080149650574,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07276800274848938,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.010816000401973724,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.28625600039958954,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.317183971405029,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.18729600310325623,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7442239820957184,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3710879981517792,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05275199934840202,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05523199960589409,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.3": [
+   {
+    "name": "attention.wq_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.22860799729824066,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wq_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.31728000938892365,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wkv_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.06985599920153618,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wkv_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.20745600014925003,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.383903980255127,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7381119728088379,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wo.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7060800194740295,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07176000252366066,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.010848000179976225,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2154719978570938,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.187792062759399,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1873600035905838,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7411200106143951,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3741439878940582,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05276799947023392,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05523199960589409,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.4": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.19393599778413773,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14766399562358856,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14660800248384476,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8095199763774872,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7409279942512512,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7399680018424988,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.1384959816932678,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7340959906578064,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7195039987564087,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.0719039998948574,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.01071999967098236,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.29600000381469727,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.220495939254761,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1878720000386238,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7419680058956146,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3669759929180145,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05273599922657013,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05523199960589409,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.5": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.17908799648284912,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.15137600153684616,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.14720000326633453,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8115040063858032,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7378080189228058,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7382560074329376,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.1396159529685974,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7323040068149567,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7188960015773773,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07241600006818771,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.010735999792814255,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.26470399647951126,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.234832048416138,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.18753600120544434,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7423360049724579,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.36985599994659424,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05276799947023392,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.055215999484062195,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.6": [
+   {
+    "name": "delta_attention.forget_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2008799985051155,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.forget_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.15873600542545319,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.beta.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1422239989042282,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.q_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.8135199844837189,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.k_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7385919988155365,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.v_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.739760011434555,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.1384799480438232,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7300159931182861,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "delta_attention.output_proj.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7168479859828949,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07172800227999687,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.010768000036478043,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2630080059170723,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.163424015045166,
+    "calls": 8,
+    "bytes": 234924577
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.18731199949979782,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7410880029201508,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3678400069475174,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.052959999069571495,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05523199960589409,
+    "calls": 8,
+    "bytes": 0
+   }
+  ],
+  "layers.7": [
+   {
+    "name": "attention.wq_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2370079979300499,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wq_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3425759971141815,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wkv_a.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.055616000667214394,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wkv_b.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2049119994044304,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.383023977279663,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7375999987125397,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wo.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7050560116767883,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.router.gate.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.07241600006818771,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.010751999914646149,
+    "calls": 8,
+    "bytes": 1048576
+   },
+   {
+    "name": "moe.routed_down.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.21535999327898026,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 5.946383953094482,
+    "calls": 8,
+    "bytes": 726247969
+   },
+   {
+    "name": "moe.routed_up.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1878719925880432,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w13.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.7403840124607086,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_experts.w2.linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.37004800140857697,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "moe.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.052799999713897705,
+    "calls": 8,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.055215999484062195,
+    "calls": 8,
+    "bytes": 0
+   }
+  ]
+ },
+ "unattributed_bytes": {
+  "layers.4": {},
+  "layers.2": {},
+  "layers.0": {},
+  "layers.6": {},
+  "layers.5": {},
+  "layers.7": {},
+  "layers.3": {},
+  "layers.1": {}
+ }
+}

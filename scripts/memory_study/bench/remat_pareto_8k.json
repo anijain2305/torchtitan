@@ -1,0 +1,2665 @@
+{
+ "setup": "Kimi K3, 8K, FSDP 512 + EP 64, DistMoE, fake PG; 8-layer model scaled to 93 layers; bytes = activations held per microbatch from forward to backward; recompute_s = extra forward per step",
+ "region_forward_s_per_step": {
+  "delta_attention.forget_a.linear": 0.11365931549072265,
+  "delta_attention.forget_b.linear": 0.07287842601537704,
+  "delta_attention.beta.linear": 0.06024698935747147,
+  "delta_attention.q_proj.linear": 0.23315704340934754,
+  "delta_attention.k_proj.linear": 0.20507542023658754,
+  "delta_attention.v_proj.linear": 0.2066076568365097,
+  "delta_attention.inner_attention": 0.34100396595001214,
+  "delta_attention.output_gate.linear": 0.23684761753082273,
+  "delta_attention.output_proj.linear": 0.20062429502010345,
+  "feed_forward.w13.linear": 0.01656166458129883,
+  "feed_forward.w2.linear": 0.007987008094787598,
+  "ffn_residual": 0.020577740633487704,
+  "moe.router.gate.linear": 0.09261537415981293,
+  "routing_decision": 0.06106859503537416,
+  "moe.routed_down.linear": 0.13079782388210295,
+  "moe.routed_experts.dist_moe": 2.4771968116760252,
+  "moe.routed_up.linear": 0.06900188035964966,
+  "moe.shared_experts.w13.linear": 0.2902505459785461,
+  "moe.shared_experts.w2.linear": 0.1377198606967926,
+  "moe.shared_add": 0.019623014479875564,
+  "attention.wq_a.linear": 0.03962879991531372,
+  "attention.wq_b.linear": 0.034220543146133424,
+  "attention.wkv_a.linear": 0.02127129578590393,
+  "attention.wkv_b.linear": 0.023432448148727417,
+  "attention.inner_attention": 0.13381785678863525,
+  "attention.gate.linear": 0.07168972778320312,
+  "attention.wo.linear": 0.06749107074737548
+ },
+ "always_saved": [
+  "ffn_residual",
+  "moe.routed_experts.dist_moe",
+  "moe.shared_add",
+  "routing_decision"
+ ],
+ "save_all_bytes": 291131786649.6,
+ "full_remat_bytes": 32749217792.0,
+ "block_forward_s_per_step": 6.737907718276977,
+ "save_all_recompute_s": 1.3528549265369776,
+ "frontier": [
+  {
+   "recompute_regions": [],
+   "bytes": 291131786649.6,
+   "recompute_s": 0.0
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear"
+   ],
+   "bytes": 281495851622.4,
+   "recompute_s": 0.022158335924148558
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "bytes": 169800292352.0,
+   "recompute_s": 0.346682058763504
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "bytes": 155872499712.0,
+   "recompute_s": 0.4105374445676803
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "bytes": 145068863897.6,
+   "recompute_s": 0.4795263714790344
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "bytes": 142373525504.0,
+   "recompute_s": 0.511833776628971
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "bytes": 141265098752.0,
+   "recompute_s": 0.5278284012436866
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "bytes": 136426815078.4,
+   "recompute_s": 0.5996333295464514
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "bytes": 117902150451.20001,
+   "recompute_s": 0.8753678067803381
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "bytes": 104027020902.4,
+   "recompute_s": 1.0837380725979804
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "bytes": 98618267648.0,
+   "recompute_s": 1.2011536512494085
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear"
+   ],
+   "bytes": 95791952281.6,
+   "recompute_s": 1.2683974280476569
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear"
+   ],
+   "bytes": 87688167014.4,
+   "recompute_s": 1.469596724975109
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention"
+   ],
+   "bytes": 82790698598.4,
+   "recompute_s": 1.602759476172924
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "bytes": 82170098892.8,
+   "recompute_s": 1.6298107406973839
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "bytes": 74928134963.2,
+   "recompute_s": 1.6640312838435172
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "bytes": 61064752742.399994,
+   "recompute_s": 1.8691067040801048
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "bytes": 47135261081.600006,
+   "recompute_s": 2.0757143609166144
+  },
+  {
+   "recompute_regions": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "bytes": 33248405504.0,
+   "recompute_s": 2.308871404325962
+  }
+ ],
+ "trials": [
+  {
+   "base": [],
+   "add": "attention.gate.linear",
+   "bytes": 286312359321.6,
+   "gain": 4819427328.0,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [],
+   "add": "attention.inner_attention",
+   "bytes": 286264101068.8,
+   "gain": 4867685580.799988,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [],
+   "add": "attention.wkv_a.linear",
+   "bytes": 290933676236.8,
+   "gain": 198110412.7999878,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [],
+   "add": "attention.wkv_b.linear",
+   "bytes": 281495851622.4,
+   "gain": 9635935027.199951,
+   "cost_s": 0.022158335924148558
+  },
+  {
+   "base": [],
+   "add": "attention.wo.linear",
+   "bytes": 288312824422.4,
+   "gain": 2818962227.199951,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [],
+   "add": "attention.wq_a.linear",
+   "bytes": 290527806873.6,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [],
+   "add": "delta_attention.forget_b.linear",
+   "bytes": 277248329113.6,
+   "gain": 13883457536.0,
+   "cost_s": 0.06385538580417632
+  },
+  {
+   "base": [],
+   "add": "delta_attention.inner_attention",
+   "bytes": 179458565324.8,
+   "gain": 111673221324.79999,
+   "cost_s": 0.32452372283935543
+  },
+  {
+   "base": [],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 277288297881.6,
+   "gain": 13843488768.0,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 283056717619.2,
+   "gain": 8075069030.399963,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [],
+   "add": "feed_forward.w13.linear",
+   "bytes": 290069806899.2,
+   "gain": 1061979750.3999634,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [],
+   "add": "moe.routed_down.linear",
+   "bytes": 285718381977.6,
+   "gain": 5413404672.0,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [],
+   "add": "moe.routed_up.linear",
+   "bytes": 280364303769.6,
+   "gain": 10767482880.0,
+   "cost_s": 0.06898892691135405
+  },
+  {
+   "base": [],
+   "add": "moe.router.gate.linear",
+   "bytes": 288475525734.4,
+   "gain": 2656260915.199951,
+   "cost_s": 0.03230740514993668
+  },
+  {
+   "base": [],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 272648929075.2,
+   "gain": 18482857574.399963,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 276636272025.6,
+   "gain": 4859579596.800049,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 276600424652.8,
+   "gain": 4895426969.600037,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 281272478720.0,
+   "gain": 223372902.4000244,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 278635277312.0,
+   "gain": 2860574310.4000244,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 280891871846.4,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "delta_attention.forget_b.linear",
+   "bytes": 267570392064.0,
+   "gain": 13925459558.400024,
+   "cost_s": 0.06385538580417632
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "delta_attention.inner_attention",
+   "bytes": 169800292352.0,
+   "gain": 111695559270.40002,
+   "cost_s": 0.32452372283935543
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 267625011404.8,
+   "gain": 13870840217.600037,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 273406132019.2,
+   "gain": 8089719603.200012,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "feed_forward.w13.linear",
+   "bytes": 280422730752.0,
+   "gain": 1073120870.4000244,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 276082641920.0,
+   "gain": 5413209702.400024,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "moe.routed_up.linear",
+   "bytes": 270714693017.59998,
+   "gain": 10781158604.800049,
+   "cost_s": 0.06898892691135405
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "moe.router.gate.linear",
+   "bytes": 278819926630.4,
+   "gain": 2675924992.0,
+   "cost_s": 0.03230740514993668
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 262966117785.59998,
+   "gain": 18529733836.80005,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 164971935744.0,
+   "gain": 4828356608.0,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 164871943372.8,
+   "gain": 4928348979.200012,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 169550125056.0,
+   "gain": 250167296.0,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 166988070502.4,
+   "gain": 2812221849.600006,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 169183729664.0,
+   "gain": 616562688.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "delta_attention.forget_b.linear",
+   "bytes": 155872499712.0,
+   "gain": 13927792640.0,
+   "cost_s": 0.06385538580417632
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 155893957836.8,
+   "gain": 13906334515.200012,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 161690954547.2,
+   "gain": 8109337804.799988,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "feed_forward.w13.linear",
+   "bytes": 168652281856.0,
+   "gain": 1148010496.0,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 164395890688.0,
+   "gain": 5404401664.0,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "moe.routed_up.linear",
+   "bytes": 158973427302.4,
+   "gain": 10826865049.600006,
+   "cost_s": 0.06898892691135405
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "moe.router.gate.linear",
+   "bytes": 167084899942.4,
+   "gain": 2715392409.600006,
+   "cost_s": 0.03230740514993668
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 151255858790.4,
+   "gain": 18544433561.600006,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 151024618291.2,
+   "gain": 4847881420.799988,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 150956238848.0,
+   "gain": 4916260864.0,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 155644029747.2,
+   "gain": 228469964.7999878,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 153037884211.2,
+   "gain": 2834615500.799988,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 155268519936.0,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 141986758246.4,
+   "gain": 13885741465.600006,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 147781530009.6,
+   "gain": 8090969702.399994,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "feed_forward.w13.linear",
+   "bytes": 154768768614.4,
+   "gain": 1103731097.600006,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 150477617152.0,
+   "gain": 5394882560.0,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "moe.routed_up.linear",
+   "bytes": 145068863897.6,
+   "gain": 10803635814.399994,
+   "cost_s": 0.06898892691135405
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "moe.router.gate.linear",
+   "bytes": 153162455040.0,
+   "gain": 2710044672.0,
+   "cost_s": 0.03230740514993668
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 137351149568.0,
+   "gain": 18521350144.0,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 140248166809.6,
+   "gain": 4820697088.0,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 140163298508.8,
+   "gain": 4905565388.800018,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 144822317465.6,
+   "gain": 246546432.0,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 142247617740.8,
+   "gain": 2821246156.8000183,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 144464884121.6,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 131179111628.79999,
+   "gain": 13889752268.800018,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 136996716134.4,
+   "gain": 8072147763.200012,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "feed_forward.w13.linear",
+   "bytes": 143987968819.2,
+   "gain": 1080895078.399994,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 139676850176.0,
+   "gain": 5392013721.600006,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "moe.router.gate.linear",
+   "bytes": 142373525504.0,
+   "gain": 2695338393.600006,
+   "cost_s": 0.03230740514993668
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 126541024051.20001,
+   "gain": 18527839846.399994,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 137538567782.4,
+   "gain": 4834957721.600006,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 137446123520.0,
+   "gain": 4927401984.0,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 142128761651.2,
+   "gain": 244763852.7999878,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 139551833702.4,
+   "gain": 2821691801.600006,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 141769545728.0,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 128500763443.20001,
+   "gain": 13872762060.799988,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 134266119372.79999,
+   "gain": 8107406131.200012,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "feed_forward.w13.linear",
+   "bytes": 141265098752.0,
+   "gain": 1108426752.0,
+   "cost_s": 0.015994624614715576
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 136972677529.6,
+   "gain": 5400847974.399994,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 123848895283.20001,
+   "gain": 18524630220.799988,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "attention.gate.linear",
+   "bytes": 136426815078.4,
+   "gain": 4838283673.600006,
+   "cost_s": 0.07180492830276489
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 136331696947.20001,
+   "gain": 4933401804.799988,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 141017874022.4,
+   "gain": 247224729.6000061,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 138449491968.0,
+   "gain": 2815606784.0,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 140661118976.0,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 127376229580.79999,
+   "gain": 13888869171.200012,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 133164421529.6,
+   "gain": 8100677222.399994,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 135854913536.0,
+   "gain": 5410185216.0,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 122739782041.6,
+   "gain": 18525316710.399994,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 131497184870.4,
+   "gain": 4929630208.0,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 136212014284.79999,
+   "gain": 214800793.6000061,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 133592645222.4,
+   "gain": 2834169856.0,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 135822835302.4,
+   "gain": 603979776.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 122532632576.0,
+   "gain": 13894182502.399994,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 128332583321.6,
+   "gain": 8094231756.799988,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 131023075328.0,
+   "gain": 5403739750.399994,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear"
+   ],
+   "add": "moe.shared_experts.w13.linear",
+   "bytes": 117902150451.20001,
+   "gain": 18524664627.19998,
+   "cost_s": 0.2757344772338867
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 112996585062.4,
+   "gain": 4905565388.800018,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 117675658035.20001,
+   "gain": 226492416.0,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 115080904294.4,
+   "gain": 2821246156.8000183,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 117306002227.20001,
+   "gain": 596148224.0,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "delta_attention.output_gate.linear",
+   "bytes": 104027020902.4,
+   "gain": 13875129548.800018,
+   "cost_s": 0.2083702658176422
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 109816135270.4,
+   "gain": 8086015180.800018,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 112499886899.20001,
+   "gain": 5402263552.0,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 99097864192.0,
+   "gain": 4929156710.399994,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 103799191552.0,
+   "gain": 227829350.3999939,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 101206693888.0,
+   "gain": 2820327014.399994,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 103417275596.79999,
+   "gain": 609745305.6000061,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 95920701030.4,
+   "gain": 8106319872.0,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear"
+   ],
+   "add": "moe.routed_down.linear",
+   "bytes": 98618267648.0,
+   "gain": 5408753254.399994,
+   "cost_s": 0.11741557865142822
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 93705265561.6,
+   "gain": 4913002086.399994,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 98414162329.6,
+   "gain": 204105318.3999939,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "add": "attention.wo.linear",
+   "bytes": 95791952281.6,
+   "gain": 2826315366.399994,
+   "cost_s": 0.06724377679824829
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 98015234867.20001,
+   "gain": 603032780.7999878,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 90498216345.6,
+   "gain": 8120051302.399994,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 90884604313.6,
+   "gain": 4907347968.0,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 95588292608.0,
+   "gain": 203659673.6000061,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 95209022668.79999,
+   "gain": 582929612.8000183,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear"
+   ],
+   "add": "delta_attention.output_proj.linear",
+   "bytes": 87688167014.4,
+   "gain": 8103785267.200012,
+   "cost_s": 0.20119929692745206
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear"
+   ],
+   "add": "attention.inner_attention",
+   "bytes": 82790698598.4,
+   "gain": 4897468416.0,
+   "cost_s": 0.13316275119781495
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 87459248128.0,
+   "gain": 228918886.3999939,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 87089924915.2,
+   "gain": 598242099.199997,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 82538673356.8,
+   "gain": 252025241.59999084,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention"
+   ],
+   "add": "attention.wq_a.linear",
+   "bytes": 82170098892.8,
+   "gain": 620599705.5999908,
+   "cost_s": 0.02705126452445984
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 81930292838.4,
+   "gain": 239806054.40000916,
+   "cost_s": 0.018445823907852172
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 81930292838.4,
+   "gain": 239806054.40000916,
+   "cost_s": 0.02127129578590393
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "attention.wq_b.linear",
+   "bytes": 74928134963.2,
+   "gain": 7241963929.600006,
+   "cost_s": 0.034220543146133424
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "delta_attention.beta.linear",
+   "bytes": 82050875801.6,
+   "gain": 119223091.19999695,
+   "cost_s": 0.06024698935747147
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "delta_attention.forget_a.linear",
+   "bytes": 82024137113.6,
+   "gain": 145961779.19999695,
+   "cost_s": 0.11365931549072265
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "delta_attention.k_proj.linear",
+   "bytes": 68304766976.0,
+   "gain": 13865331916.800003,
+   "cost_s": 0.20507542023658754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "delta_attention.q_proj.linear",
+   "bytes": 68298033152.0,
+   "gain": 13872065740.800003,
+   "cost_s": 0.23315704340934754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "delta_attention.v_proj.linear",
+   "bytes": 68296946892.8,
+   "gain": 13873152000.0,
+   "cost_s": 0.2066076568365097
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "feed_forward.w2.linear",
+   "bytes": 82170098892.8,
+   "gain": 0.0,
+   "cost_s": 0.007987008094787598
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear"
+   ],
+   "add": "moe.shared_experts.w2.linear",
+   "bytes": 82170098892.8,
+   "gain": 0.0,
+   "cost_s": 0.1377198606967926
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 74692729651.2,
+   "gain": 235405312.0,
+   "cost_s": 0.02127129578590393
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "delta_attention.beta.linear",
+   "bytes": 74800444620.8,
+   "gain": 127690342.3999939,
+   "cost_s": 0.06024698935747147
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "delta_attention.forget_a.linear",
+   "bytes": 74786183987.2,
+   "gain": 141950976.0,
+   "cost_s": 0.11365931549072265
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "delta_attention.k_proj.linear",
+   "bytes": 61064752742.399994,
+   "gain": 13863382220.800003,
+   "cost_s": 0.20507542023658754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "delta_attention.q_proj.linear",
+   "bytes": 61044928102.399994,
+   "gain": 13883206860.800003,
+   "cost_s": 0.23315704340934754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "delta_attention.v_proj.linear",
+   "bytes": 61049189580.8,
+   "gain": 13878945382.399994,
+   "cost_s": 0.2066076568365097
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "feed_forward.w2.linear",
+   "bytes": 74928134963.2,
+   "gain": 0.0,
+   "cost_s": 0.007987008094787598
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear"
+   ],
+   "add": "moe.shared_experts.w2.linear",
+   "bytes": 74928134963.2,
+   "gain": 0.0,
+   "cost_s": 0.1377198606967926
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 60850989056.0,
+   "gain": 213763686.3999939,
+   "cost_s": 0.02127129578590393
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "delta_attention.beta.linear",
+   "bytes": 60950905241.600006,
+   "gain": 113847500.7999878,
+   "cost_s": 0.06024698935747147
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "delta_attention.forget_a.linear",
+   "bytes": 60887679385.600006,
+   "gain": 177073356.7999878,
+   "cost_s": 0.11365931549072265
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "delta_attention.q_proj.linear",
+   "bytes": 47151917056.0,
+   "gain": 13912835686.399994,
+   "cost_s": 0.23315704340934754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "delta_attention.v_proj.linear",
+   "bytes": 47135261081.600006,
+   "gain": 13929491660.799988,
+   "cost_s": 0.2066076568365097
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "feed_forward.w2.linear",
+   "bytes": 61064752742.399994,
+   "gain": 0.0,
+   "cost_s": 0.007987008094787598
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear"
+   ],
+   "add": "moe.shared_experts.w2.linear",
+   "bytes": 61064752742.399994,
+   "gain": 0.0,
+   "cost_s": 0.1377198606967926
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 46912333824.0,
+   "gain": 222927257.6000061,
+   "cost_s": 0.02127129578590393
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "delta_attention.beta.linear",
+   "bytes": 47056953753.600006,
+   "gain": 78307328.0,
+   "cost_s": 0.06024698935747147
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "delta_attention.forget_a.linear",
+   "bytes": 46998713548.8,
+   "gain": 136547532.80000305,
+   "cost_s": 0.11365931549072265
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "delta_attention.q_proj.linear",
+   "bytes": 33248405504.0,
+   "gain": 13886855577.600006,
+   "cost_s": 0.23315704340934754
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "feed_forward.w2.linear",
+   "bytes": 47135261081.600006,
+   "gain": 0.0,
+   "cost_s": 0.007987008094787598
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear"
+   ],
+   "add": "moe.shared_experts.w2.linear",
+   "bytes": 47135261081.600006,
+   "gain": 0.0,
+   "cost_s": 0.1377198606967926
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "add": "attention.wkv_a.linear",
+   "bytes": 33015451238.4,
+   "gain": 232954265.59999847,
+   "cost_s": 0.02127129578590393
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "add": "delta_attention.beta.linear",
+   "bytes": 33150258790.4,
+   "gain": 98146713.59999847,
+   "cost_s": 0.06024698935747147
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "add": "delta_attention.forget_a.linear",
+   "bytes": 33116083404.800003,
+   "gain": 132322099.19999695,
+   "cost_s": 0.11365931549072265
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "add": "feed_forward.w2.linear",
+   "bytes": 33248405504.0,
+   "gain": 0.0,
+   "cost_s": 0.007987008094787598
+  },
+  {
+   "base": [
+    "attention.wkv_b.linear",
+    "delta_attention.inner_attention",
+    "delta_attention.forget_b.linear",
+    "moe.routed_up.linear",
+    "moe.router.gate.linear",
+    "feed_forward.w13.linear",
+    "attention.gate.linear",
+    "moe.shared_experts.w13.linear",
+    "delta_attention.output_gate.linear",
+    "moe.routed_down.linear",
+    "attention.wo.linear",
+    "delta_attention.output_proj.linear",
+    "attention.inner_attention",
+    "attention.wq_a.linear",
+    "attention.wq_b.linear",
+    "delta_attention.k_proj.linear",
+    "delta_attention.v_proj.linear",
+    "delta_attention.q_proj.linear"
+   ],
+   "add": "moe.shared_experts.w2.linear",
+   "bytes": 33248405504.0,
+   "gain": 0.0,
+   "cost_s": 0.1377198606967926
+  }
+ ]
+}
