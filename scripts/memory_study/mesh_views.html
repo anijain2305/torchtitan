@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One set of GPUs, several device meshes</title>
+<style>
+.viz-root {
+  --surface-1: #fcfcfb; --surface-2: #f3f2ee; --cell-a: #ecebe7; --cell-b: #dcdbd5;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --grid: #d9d7cf;
+  --sel: #2a78d6; --sel-text: #ffffff; --me: #eb6834;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  .viz-root {
+    --surface-1: #1a1a19; --surface-2: #232321; --cell-a: #2c2c2a; --cell-b: #3a3a37;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --grid: #3a3a37;
+    --sel: #3987e5; --sel-text: #ffffff; --me: #d95926;
+    color-scheme: dark;
+  }
+}
+body { margin: 0; }
+.viz-root { background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 48px; }
+h1 { font-size: 22px; margin: 0 0 6px; }
+h2 { font-size: 16px; margin: 28px 0 6px; }
+p, li { color: var(--text-secondary); max-width: 860px; }
+code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; color: var(--text-primary); }
+.controls { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin: 16px 0 6px;
+  padding: 10px 12px; background: var(--surface-2); border-radius: 8px; }
+.controls label { font-size: 13px; color: var(--text-secondary); }
+.controls .seg { display: inline-flex; border: 1px solid var(--grid); border-radius: 6px; overflow: hidden; margin-left: 6px; }
+.controls button { border: 0; background: transparent; color: var(--text-primary); padding: 3px 10px; font: inherit; cursor: pointer; }
+.controls button.on { background: var(--sel); color: var(--sel-text); }
+.controls button:disabled { opacity: .35; cursor: not-allowed; }
+.derived { font-size: 13px; color: var(--text-secondary); }
+.derived b { color: var(--text-primary); }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--text-secondary); margin: 8px 0 0; }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+.views { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+table.grid { border-collapse: separate; border-spacing: 2px; }
+table.grid th { font-weight: 500; font-size: 11px; color: var(--text-secondary); padding: 0 4px; white-space: nowrap; }
+.cell { width: 30px; height: 26px; border-radius: 4px; text-align: center; font: 12px ui-monospace, Menlo, monospace;
+  color: var(--text-primary); cursor: pointer; box-sizing: border-box; user-select: none; }
+.cell.a { background: var(--cell-a); } .cell.b { background: var(--cell-b); }
+.cell.in { background: var(--sel); color: var(--sel-text); }
+.cell.me { outline: 3px solid var(--me); outline-offset: -1px; }
+.viewcap { font-size: 13px; margin: 0 0 6px; }
+.viewcap b { color: var(--text-primary); }
+.strips { display: grid; grid-template-columns: 210px auto; gap: 6px 14px; align-items: center; }
+.strip { display: flex; gap: 2px; }
+.strip .cell { width: 26px; height: 24px; line-height: 24px; font-size: 11px; }
+.rowlab { font-size: 13px; }
+.rowlab b { display: block; color: var(--text-primary); }
+.rowlab span { font-size: 12px; color: var(--text-secondary); }
+.members { grid-column: 2; font: 12px ui-monospace, Menlo, monospace; color: var(--text-secondary); margin: -4px 0 6px; }
+.warn { color: var(--me); font-size: 13px; }
+.notes li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="viz-root"><div class="wrap">
+<h1>One set of GPUs, several device meshes</h1>
+<p>A device mesh is a labeling of the same ranks, not a separate set of GPUs. torchtitan builds
+several meshes by reshaping the flat rank list row-major (<code>parallelism_context.py</code>):
+a dense view <code>(dp_shard, cp, tp)</code> and a sparse (expert) view
+<code>(edp_shard, ep)</code>. Each axis is a set of process groups, so a TP pair, an EP group and an
+FSDP group are all sets of the same GPUs. Hover any rank to see every group it belongs to.</p>
+<p>Shown on 32 GPUs so every rank fits; the post's layout (512 GPUs, <code>dp_shard 256 × tp 2</code>,
+EP 64, so <code>edp_shard 8</code>) has the same structure with longer rows.</p>
+
+<div class="controls" id="controls"></div>
+<div class="derived" id="derived"></div>
+<div class="legend">
+  <span><span class="sw" style="background: var(--sel)"></span>in the hovered rank's group</span>
+  <span><span class="sw" style="outline: 3px solid var(--me); outline-offset: -3px"></span>the hovered rank</span>
+  <span><span class="sw" style="background: var(--cell-a)"></span><span class="sw" style="background: var(--cell-b)"></span>alternate groups (to show where groups start and end)</span>
+</div>
+
+<h2>1. The two reshapes of ranks 0 .. 31</h2>
+<p>Same numbers, two grids. The innermost axis is consecutive ranks in both, which is why a TP pair
+always sits inside one EP group.</p>
+<div class="views" id="views"></div>
+
+<h2>2. Every group the hovered rank is in</h2>
+<p>Each row is the same 32 ranks; the blue cells are the hovered rank's group for that row's parallelism.</p>
+<div class="strips" id="strips"></div>
+
+<h2>What each group does</h2>
+<ul class="notes">
+  <li><b>TP group</b> (dense view, axis <code>tp</code>): activation all-gather / reduce-scatter around attention and the shared-expert MLP; splits TP-sharded weights.</li>
+  <li><b>CP group</b> (axis <code>cp</code>): K/V exchange (MLA, Ulysses all-to-all) and KDA state passing; tokens split for the whole layer.</li>
+  <li><b>Data-parallel group</b> (axis <code>dp_shard</code>): ranks that get different microbatches; the TP and CP ranks inside a data-parallel rank share one microbatch.</li>
+  <li><b>Dense FSDP group</b> (<code>dp_shard</code> and <code>cp</code>): all-gather / reduce-scatter of dense weights and gradients. CP folds in because CP ranks hold the same dense weights; TP does not, because TP ranks hold different halves.</li>
+  <li><b>EP group</b> (sparse view, axis <code>ep</code>): token all-to-all to the GPUs that own each token's experts. It contains whole TP and CP groups, so it is <code>tp × cp ×</code> part of <code>dp_shard</code>.</li>
+  <li><b>Expert FSDP group</b> (axis <code>edp_shard</code> = <code>dp_shard · cp · tp / ep</code>): all-gather / reduce-scatter of expert weights among ranks that own the same experts.</li>
+</ul>
+</div></div>
+
+<script>
+const WORLD = 32;
+const state = { tp: 2, cp: 1, ep: 4, rank: 0 };
+const OPTIONS = { tp: [1, 2, 4], cp: [1, 2], ep: [2, 4, 8, 16] };
+
+function valid(s) {
+  const dense = s.tp * s.cp;
+  return WORLD % dense === 0 && WORLD % s.ep === 0 && s.ep % dense === 0;
+}
+function derived(s) {
+  return { dp: WORLD / (s.tp * s.cp), edp: WORLD / s.ep };
+}
+// rank -> coordinates, row-major as in torchtitan's _unflatten
+function coords(r, s) {
+  return { t: r % s.tp, c: Math.floor(r / s.tp) % s.cp, d: Math.floor(r / (s.tp * s.cp)),
+           x: r % s.ep, e: Math.floor(r / s.ep) };
+}
+const ROWS = [
+  { key: "tp", title: "TP group", axis: "dense: tp", same: (a, b) => a.d === b.d && a.c === b.c, gid: k => k.d * 1000 + k.c },
+  { key: "cp", title: "CP group", axis: "dense: cp", same: (a, b) => a.d === b.d && a.t === b.t, gid: k => k.d * 1000 + k.t },
+  { key: "dp", title: "Data-parallel group", axis: "dense: dp_shard", same: (a, b) => a.c === b.c && a.t === b.t, gid: k => k.c * 1000 + k.t },
+  { key: "fsdp", title: "Dense FSDP group", axis: "dense: dp_shard × cp", same: (a, b) => a.t === b.t, gid: k => k.t },
+  { key: "ep", title: "EP group", axis: "sparse: ep", same: (a, b) => a.e === b.e, gid: k => k.e },
+  { key: "edp", title: "Expert FSDP group", axis: "sparse: edp_shard", same: (a, b) => a.x === b.x, gid: k => k.x },
+];
+
+function cell(r, cls) {
+  return `<div class="cell ${cls}" data-rank="${r}" title="rank ${r}">${r}</div>`;
+}
+function cls(r, inGroup, parity) {
+  return (inGroup ? "in" : parity ? "b" : "a") + (r === state.rank ? " me" : "");
+}
+
+function renderControls() {
+  const html = Object.entries(OPTIONS).map(([k, vals]) =>
+    `<label>${k.toUpperCase()}<span class="seg">` +
+    vals.map(v => {
+      const s = { ...state, [k]: v };
+      return `<button data-k="${k}" data-v="${v}" class="${state[k] === v ? "on" : ""}" ${valid(s) ? "" : "disabled"}>${v}</button>`;
+    }).join("") + `</span></label>`).join("");
+  document.getElementById("controls").innerHTML = html +
+    `<button data-preset="1" style="border:1px solid var(--grid);border-radius:6px">post layout (TP 2, EP 64 → scaled)</button>`;
+  const d = derived(state);
+  document.getElementById("derived").innerHTML =
+    `32 GPUs → dense view <b>(dp_shard ${d.dp}, cp ${state.cp}, tp ${state.tp})</b>, sparse view <b>(edp_shard ${d.edp}, ep ${state.ep})</b>. ` +
+    `EP must be a multiple of tp × cp = ${state.tp * state.cp} so each TP/CP group fits inside one EP group.`;
+}
+
+function renderViews() {
+  const s = state, me = coords(s.rank, s), d = derived(s);
+  // dense grid: rows = dp_shard, columns = (cp, tp)
+  let dense = `<p class="viewcap"><b>Dense view</b> (dp_shard × cp × tp): rows = dp_shard, columns = (cp, tp)</p><table class="grid"><tr><th></th>`;
+  for (let c = 0; c < s.cp; c++) for (let t = 0; t < s.tp; t++) dense += `<th>cp ${c}<br>tp ${t}</th>`;
+  dense += `</tr>`;
+  for (let dd = 0; dd < d.dp; dd++) {
+    dense += `<tr><th>d ${dd}</th>`;
+    for (let c = 0; c < s.cp; c++) for (let t = 0; t < s.tp; t++) {
+      const r = dd * s.tp * s.cp + c * s.tp + t;
+      dense += `<td>${cell(r, cls(r, ROWS[0].same(coords(r, s), me), dd % 2))}</td>`;
+    }
+    dense += `</tr>`;
+  }
+  dense += `</table><p class="viewcap">blue = the hovered rank's <b>TP group</b> (one row)</p>`;
+  // sparse grid: rows = edp_shard, columns = ep
+  let sparse = `<p class="viewcap"><b>Sparse view</b> (edp_shard × ep): rows = edp_shard, columns = ep</p><table class="grid"><tr><th></th>`;
+  for (let x = 0; x < s.ep; x++) sparse += `<th>ep ${x}</th>`;
+  sparse += `</tr>`;
+  for (let e = 0; e < d.edp; e++) {
+    sparse += `<tr><th>e ${e}</th>`;
+    for (let x = 0; x < s.ep; x++) {
+      const r = e * s.ep + x;
+      sparse += `<td>${cell(r, cls(r, ROWS[4].same(coords(r, s), me), Math.floor(x / (s.tp * s.cp)) % 2))}</td>`;
+    }
+    sparse += `</tr>`;
+  }
+  sparse += `</table><p class="viewcap">blue = the hovered rank's <b>EP group</b> (one row); shading = the TP/CP groups inside it</p>`;
+  document.getElementById("views").innerHTML = `<div>${dense}</div><div>${sparse}</div>`;
+}
+
+function renderStrips() {
+  const s = state, me = coords(s.rank, s);
+  let html = "";
+  for (const row of ROWS) {
+    const members = [];
+    let strip = "";
+    for (let r = 0; r < WORLD; r++) {
+      const k = coords(r, s), inG = row.same(k, me);
+      if (inG) members.push(r);
+      strip += cell(r, cls(r, inG, row.gid(k) % 2));
+    }
+    html += `<div class="rowlab"><b>${row.title}</b><span>${row.axis} · ${members.length} ranks</span></div>` +
+            `<div class="strip">${strip}</div>` +
+            `<div class="members">rank ${s.rank}'s group: {${members.join(", ")}}</div>`;
+  }
+  document.getElementById("strips").innerHTML = html;
+}
+
+function render() { renderControls(); renderViews(); renderStrips(); }
+
+document.addEventListener("mouseover", ev => {
+  const c = ev.target.closest(".cell[data-rank]");
+  if (c && +c.dataset.rank !== state.rank) { state.rank = +c.dataset.rank; renderViews(); renderStrips(); }
+});
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("button");
+  if (!b || b.disabled) return;
+  if (b.dataset.preset) Object.assign(state, { tp: 2, cp: 1, ep: 4 });
+  else state[b.dataset.k] = +b.dataset.v;
+  render();
+});
+render();
+</script>
+</body>
+</html>
