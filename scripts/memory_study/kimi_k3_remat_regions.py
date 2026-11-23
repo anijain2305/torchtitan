@@ -27,6 +27,7 @@ Usage:
 """
 
 import atexit
+import functools
 import json
 import os
 import statistics
@@ -115,41 +116,62 @@ def _checkpoint(*args, region_name=None, **kwargs):
         def call(*a, **kw):
             if remat.is_recomputing():
                 return inner(*a, **kw)
-            if region_name == "layers.0":
-                _state["forward"] += 1
-                if _measuring() and not _bytes:
-                    _alloc["before_layers"] = torch.cuda.memory_allocated()
-            _state["layer"] = region_name
-            snapshot = _measuring() and not _bytes
-            before = torch.cuda.memory_allocated() if snapshot else 0
-            if _measuring():
-                start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-                start.record()
-            try:
-                out = inner(*a, **kw)
-            finally:
-                _state["layer"] = None
-            if _measuring():
-                end.record()
-                _block_events.append((region_name, start, end))
-            if snapshot:  # what this block holds from its forward to its backward
-                _alloc_per_layer[region_name] = torch.cuda.memory_allocated() - before
-            if region_name == f"layers.{NUM_LAYERS - 1}" and _measuring() and not _bytes:
-                _alloc["after_layers"] = torch.cuda.memory_allocated()
-                _snapshot_saved_bytes()
-            return out
+            return _measured_block(region_name, inner, *a, **kw)
 
         return call
 
     return wrap
 
 
+def _measured_block(region_name, fn, *a, **kw):
+    """One transformer block's original forward: time it and, on the snapshot
+    microbatch, record what it holds from its forward to its backward."""
+    if region_name == "layers.0":
+        _state["forward"] += 1
+        if _measuring() and not _state.get("snap_done"):
+            _alloc["before_layers"] = torch.cuda.memory_allocated()
+    _state["layer"] = region_name
+    snapshot = _measuring() and not _state.get("snap_done")
+    before = torch.cuda.memory_allocated() if snapshot else 0
+    if _measuring():
+        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        start.record()
+    try:
+        out = fn(*a, **kw)
+    finally:
+        _state["layer"] = None
+    if _measuring():
+        end.record()
+        _block_events.append((region_name, start, end))
+    if snapshot:
+        _alloc_per_layer[region_name] = torch.cuda.memory_allocated() - before
+    if region_name == f"layers.{NUM_LAYERS - 1}" and snapshot:
+        _alloc["after_layers"] = torch.cuda.memory_allocated()
+        _snapshot_saved_bytes()
+        _state["snap_done"] = True
+    return out
+
+
 remat.region = _timed_region
 remat.checkpoint = _checkpoint
 
+if os.environ.get("KIMI_K3_INVENTORY_POLICY") == "none":
+    # No remat checkpoints to wrap: measure each block's forward directly.
+    from torchtitan.models.kimi_k3.model import KimiK3TransformerBlock as _Block
+
+    _orig_block_forward = _Block.forward
+    _block_names = {}
+
+    @functools.wraps(_orig_block_forward)  # sharding redistribution binds inputs by forward's signature
+    def _block_forward(self, *a, **kw):
+        name = _block_names.setdefault(id(self), f"layers.{len(_block_names)}")
+        return _measured_block(name, lambda *x, **y: _orig_block_forward(self, *x, **y), *a, **kw)
+
+    _Block.forward = _block_forward
+
 
 def _write():
-    if not OUT or not _events:
+    if not OUT or not (_events or _block_events):
         return
     torch.cuda.synchronize()
     times = defaultdict(list)
@@ -217,5 +239,19 @@ def remat_regions_8k() -> Trainer.Config:
         "full": FullActivationRematConfig(),
         "none": None,
     }[policy]
-    config.profiler = Profiler.Config()
+    slot = os.environ.get("KIMI_K3_INVENTORY_DM_SLOT")  # DistMoE activation slot factor
+    if slot:
+        config.dist_moe_runtime = replace(
+            config.dist_moe_runtime, activation_slot_capacity_factor=float(slot)
+        )
+    steps = os.environ.get("KIMI_K3_INVENTORY_STEPS")
+    if steps:
+        config.training.steps = int(steps)
+    prof = os.environ.get("KIMI_K3_INVENTORY_PROFILE")  # trace folder name: profile the last step
+    if prof:
+        last = config.training.steps
+        config.profiler = Profiler.Config(enable_profiling=True, save_traces_folder=f"profiling/{prof}",
+                                          profile_freq=last, profiler_warmup=1, profiler_active=1)
+    else:
+        config.profiler = Profiler.Config()
     return config

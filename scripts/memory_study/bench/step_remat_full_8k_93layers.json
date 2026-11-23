@@ -1,0 +1,18 @@
+{
+ "trace": "outputs/profiling/remat_full93p/iteration_6/rank0_trace.json.gz",
+ "fwd_bwd_span_s": 44.427919112304686,
+ "fwd_bwd_busy_s": 19.67212958203125,
+ "optimizer_span_s": 6.51711191015625,
+ "optimizer_busy_s": 0.8169325927734375,
+ "fwd_bwd_by_class_s": {
+  "Dense GEMM bf16": 7.653441406999999,
+  "DistMoE grouped GEMM (+fused dispatch/combine)": 5.187901684000051,
+  "FSDP buffer copies": 1.6046382049999957,
+  "Other elementwise, casts, reductions": 1.5480227319999957,
+  "Attention residuals": 1.3530424440000066,
+  "KDA": 1.2776897550000001,
+  "MLA": 0.5831890250000004,
+  "MXFP8 quantize": 0.30027239300000014,
+  "Norms (RMSNorm, L2)": 0.20823954800000039
+ }
+}
