@@ -96,13 +96,13 @@ persistent state.
 
 **ZeRO-1.** Sharding the master weights and the optimizer state divides both by
 512: the two green cells under persistent state. A big improvement! But what is
-going on with the working set? This is where working from first principles
-pays off. Once the master weights are sharded, how does a GPU run the model?
-Where does it get the weights from? Each GPU all-gathers the full compute weights
-from the shards, once per step, and keeps them for the whole step: that copy is
-the working set. We compute in MXFP8, so most compute weights take 1 byte per
-parameter, which is why the cell (2.84 TB) is close to Kimi K3's 2.78T
-parameters. Keep an eye on the working set; it matters a lot in a roofline
+going on with the working set? This is where working from first principles pays
+off. Once the master weights are sharded, how does a GPU run the model?
+Specifically, where does it get the weights from? Each GPU all-gathers the full
+compute weights from the shards, once per step, and keeps them for the whole
+step: *that copy is the working set*. We compute in MXFP8, so most compute
+weights take 1 byte per parameter, which is why the it is close to 2.78T, number
+of parameters. Keep an eye on the working set; it matters a lot in a roofline
 study. Overall, ZeRO-1 takes us from 33.4 TB per GPU to 14.0 TB.
 
 **ZeRO-2.** Now the gradients are sharded too, so the persistent gradients
@@ -118,11 +118,13 @@ weights while the current layer computes, so it holds two layers' worth of
 weights. In MXFP8 that is 61.8 GB, about a quarter of the fp32 gradients. We
 get very close, 378 GB, but that is still over the 288 GB of one GPU.
 
-Something interesting shows up here. Suppose we had 1,024 GPUs instead of 512:
-what would the ZeRO-3 row look like? The persistent state halves, but the
-working set does not move. Time for our first nugget:
+Now for something interesting. Suppose we had 1,024 GPUs instead of 512. What
+would the ZeRO-3 row look like? The persistent state halves, sure. But what
+about the working set? Does it budge? Not one byte: each GPU still holds two
+whole layers in flight, however many GPUs share the shards. Time for our first
+nugget:
 
-> NUGGET: FSDP's working set sets a floor that more GPUs cannot lower. With infinitely many GPUs the persistent state per GPU goes to zero, but Kimi K3 would still need 304 GB per GPU for the two layers in flight (242 GB of gradients plus 61.8 GB of weights), more than a GPU holds, before counting a single activation.
+> NUGGET: FSDP's working set sets a floor that more GPUs cannot lower. With infinitely many GPUs the persistent state per GPU goes to zero, but Kimi K3 would still need 304 GB per GPU for the two layers in flight (242 GB of gradients plus 61.8 GB of compute weights), more than a GPU holds, before counting a single activation.
 
 So FSDP is not enough; we need to shrink the working set itself. Almost all of
 it is experts, and I like to think the people who first scaled MoE models hit
