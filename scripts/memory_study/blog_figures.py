@@ -515,16 +515,21 @@ def zero_parts(ctx: str = "8K") -> list:
     m_sh, g_sh, o_sh = padded_state(d, 512, pad)
     out = []
 
-    def row(label, persistent, working, acts, parts, loop=0, total=None, note=""):
+    def row(label, persistent, working, acts, parts, loop=0, total=None, cell_notes=()):
+        """cell_notes: one note per persistent + working cell (how it is sharded)."""
         total = sum(persistent) + sum(working) + acts if total is None else total
         out.append({"label": label, "persistent": persistent, "working": working, "activations": acts,
-                    "loop": loop, "total": total, "parts": parts, "note": note})
+                    "loop": loop, "total": total, "parts": parts, "cell_notes": cell_notes})
 
     # persistent: (master weights, gradients, optimizer state) at their sharded size;
     # working: (weight copies, unsharded gradient copies) kept to compute
-    row("No sharding", (W, G, S_), (0, 0), acts1, (base_acts, meta1, rws))
-    row("ZeRO-1", (m_sh, G, o_sh), (copy, 0), acts1, (base_acts, meta1, rws), note="whole model")
-    row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 0), acts1, (base_acts, meta1, rws), note="whole model")
+    row("No sharding", (W, G, S_), (0, 0), acts1, (base_acts, meta1, rws),
+        cell_notes=("unsharded", "unsharded", "unsharded", "", ""))
+    row("ZeRO-1", (m_sh, G, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
+        cell_notes=("1/512", "unsharded, reduce-scattered once per step", "1/512",
+                    "whole model, gathered once and kept", ""))
+    row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
+        cell_notes=("1/512", "1/512", "1/512", "whole model, gathered once and kept", ""))
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
@@ -538,7 +543,10 @@ def zero_parts(ctx: str = "8K") -> list:
         loss_peak = sum(persistent) + acts - rws + chunk_loop  # the loss runs before the recompute peak
         row(label, persistent, working, acts, (base_acts, meta, rws),
             loop=chunk_loop if loss_peak > backward_peak else 0, total=max(backward_peak, loss_peak),
-            note=f"2 layers in flight, {NUM_EXPERTS // ep} experts each")
+            cell_notes=("1/512", "1/512", "1/512",
+                        f"2 layers all-gathered (current + prefetched), <b>{NUM_EXPERTS // ep} experts</b> each",
+                        f"2 layers (current + previous, still reduce-scattering), "
+                        f"<b>{NUM_EXPERTS // ep} experts</b> each"))
     return out
 
 
@@ -590,9 +598,11 @@ def zero_table(ctx: str = "8K") -> str:
         for i, (v, pv) in enumerate(zip(vals, p)):
             style = (rule if i in (0, 3, 5) else "") + shade(v, pv)
             text = (f"<b>{_dec(v)}</b>" if i == 5 else _dec(v)) if v else "-"
+            note = r["cell_notes"][i] if i < len(r["cell_notes"]) else ""
+            if note and v:
+                text += f'<span class="sub">{note}</span>'
             cells += f'<td style="{style}">{text}</td>' if style else f"<td>{text}</td>"
-        label = r["label"] + (f'<span class="sub">working set: {r["note"]}</span>' if r["note"] else "")
-        out.append(f"<tr><td>{label}</td>{cells}</tr>")
+        out.append(f"<tr><td>{r['label']}</td>{cells}</tr>")
         prev = vals
     out.append("</table>")
     return "".join(out)
