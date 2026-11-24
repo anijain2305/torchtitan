@@ -23,15 +23,15 @@ the two books alone. This post was born out of curiosity (or FOMO, if you
 prefer). I wanted to be able to reason about these questions myself.
 
 So I would not call this post novel. These parallelisms have been around for
-years, and many of the lessons here are already known (thanks to Natalia
-Gimelshein for keeping me grounded). But rooflining a hard model from first
-principles can give you the epiphanies that others earned over years of working
-on distributed training. For example, I knew what expert parallelism was, but
-working from first principles I reached a point where it was evident that FSDP
-would not be enough even with infinitely many GPUs, and I arrived at expert
-parallelism. These **nuggets** (a word I borrowed from the very talented Driss
-Guessous's [blog](https://drisspg.github.io/nuggets/)) were the real wins: they
-accelerated my learning so that I can reason about parallelism with more confidence.
+years, and many of the lessons here are already known. But rooflining a hard
+model from first principles can give you the epiphanies that others earned over
+years of working on distributed training. For example, I knew what expert
+parallelism was, but working from first principles I reached a point where it
+was evident that FSDP would not be enough even with infinitely many GPUs, and I
+arrived at expert parallelism. These **nuggets** (a word I borrowed from the
+very talented Driss Guessous's [blog](https://drisspg.github.io/nuggets/)) were
+the real wins: they accelerated my learning so that I can reason about
+parallelism with more confidence.
 
 Besides teaching you, working from first principles also finds bugs. When a
 measurement disagrees with what the first-principles model predicts, one of

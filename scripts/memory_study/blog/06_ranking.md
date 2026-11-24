@@ -10,7 +10,7 @@ step from each chunk's time and each hop, and ZeRO-1 adds the stage's
 all-gather and reduce-scatter once per step. Every config then runs the
 optimizer step ([[compute_roofline.2.3]]).
 
-The configs that fit in memory ([[sharding.7]]), ranked by step time (the toggle
+The configs that fit in memory ([[memory.7.7]]), ranked by step time (the toggle
 switches context). For PP, each config also names its schedule and its hop
 transport. The chart runs TorchTitan's transports, chain for plain 1F1B and
 cache for interleaving ([[step]]); whether direct would change anything is
@@ -43,7 +43,7 @@ family and schedule, and sort by the parts the sections below look at):
   step (ZeRO-1: only the master weights and optimizer state stay sharded),
   instead of gathering and reduce-scattering every layer every microbatch
   (ZeRO-3, as FSDP 512 does), so this happens once per step, with nothing to
-  hide behind ([[sharding.5]]).
+  hide behind ([[memory.7.5]]).
 - **Optimizer**: DistMuon's step, at the GPU time it needs ([[compute_roofline.2.3]]).
 
 The bars share one axis at both contexts; the four slowest 8K configs run past
@@ -138,7 +138,7 @@ and almost all of the gain is the bubble:
 - **The hops barely matter.** With 100 GB/s NICs a hop is short, so even plain
   1F1B, which exposes its hops, loses little to them.
 - **The cost is memory:** the first rank holds more chunks in flight
-  ([[sharding.6]]).
+  ([[memory.7.6]]).
 - **More is not always better.** With PP 16, `v = 4` leaves chunks of one or
   two layers, and the bubble grows back: at 8K it is slower than plain 1F1B
   in most splits.
