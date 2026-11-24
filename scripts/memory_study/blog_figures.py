@@ -577,7 +577,7 @@ def zero_table(ctx: str = "8K") -> str:
            + th("Persistent + working set", rule, ' rowspan="2"') + "</tr>",
            "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
                             for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
-                                                   "Weights", "Gradients")))
+                                                   "Weights (MXFP8)", "Gradients (fp32)")))
            + "</tr>"]
     prev = None
 
@@ -602,7 +602,9 @@ def zero_table(ctx: str = "8K") -> str:
         out.append(f"<tr><td>{r['label']}</td>{cells}</tr>")
         prev = vals
     out.append("</table>")
-    out.append("<p><em>Working set: ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
+    out.append("<p><em>Working set: the weight copies are MXFP8 for the routed experts (98% of the "
+               "parameters) and bf16 for the dense layers; gradients are fp32. "
+               "ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
                "ZeRO-1 also keeps the gradients unsharded until the reduce-scatter at the end of the step. "
                "FSDP holds two layers at a time: the weights of the current layer and the prefetched next one "
                "(all-gathered), and the gradients of the current layer and the previous one, whose "
