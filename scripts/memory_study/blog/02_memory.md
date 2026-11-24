@@ -6,7 +6,7 @@ Whatever is left of the GPU's memory is that config's budget for activations.
 Then, for each config, find the best speed-memory trade-off within that budget
 using remat and offloading. We set step time aside until the next section. A
 tool could search memory and speed together, but separating them keeps the
-reasoning small enough to follow (for us humans).
+reasoning small enough to follow (at least for us humans!).
 
 The section follows the same order. We first look at how large the persistent
 state is, and the discussion grows from there into the sharding needed to fit
@@ -44,13 +44,15 @@ the norms and a few small projections), which is only 0.09% of the parameters.
 
 **Stashed activations.** These are the tensors the forward pass keeps for the
 backward pass (through `save_for_backward` in an `autograd.Function`, and the
-same mechanism inside ATen's own ops). We look at them in detail later. Without
+same mechanism inside PyTorch's own ops). We look at them in detail later. Without
 any rematerialization or offloading, one sequence stashes 746 GB at 8K and
 3.0 TB at 32K (4x the footprint at 8K). We leave DistMoE out for now and bring
 it in when we get to shrinking activations.
 
-Here is all of it on a log2 scale, where each gridline is a factor of 2. It is
-an understatement to call this model memory hungry!
+All of this is deliberately simple: no parallelism, no remat, no offloading yet.
+As we bring those in, these two categories shrink, but new ones creep in, such
+as FSDP's transient buffers. Here is all of it on a log2 scale, where each
+gridline is a factor of 2.
 
 ::: figure memory-by-kind
 
@@ -58,12 +60,10 @@ an understatement to call this model memory hungry!
 it over 2 GPUs) shortens its bar by exactly one gridline. The dashed line is one
 GPU. Both charts in this section share the axis.*
 
-All of this is deliberately simple: no parallelism, no remat, no offloading
-yet. As we bring those in, these two categories shrink, but new ones creep in,
-such as FSDP's transient buffers. For now the takeaway is the scale. The whole
-cluster has 512 x 288 GB = 147 TB. The persistent state alone fills a quarter
-of it, and one 8K sequence per GPU, without remat, would need 382 TB of
-activations: 2.6 times the entire cluster.
+The key takeaway is the scale. The whole cluster has 512 x 288 GB = 147 TB, and
+the persistent state alone fills a quarter of it. The stashed activations of a
+single 8K sequence, 746 GB, are 2.6 times one GPU. It is an understatement to
+call this model memory hungry!
 
 ## Stashed Activations
 
@@ -99,9 +99,8 @@ The attention residuals run on TorchTitan's fused Triton kernel (an opt-in
 override adapted from Flash Linear Attention). It reads the block stack and the
 current partial sum directly, so it stashes no concatenated copies of them.
 
-As the chart above shows, even with nothing else in memory, one 8K sequence's
-stashed activations, 746 GB, are 2.6 times one GPU. Before tackling
-the persistent state, the next three subsections deal with activations:
+Before tackling the persistent state, the next three subsections deal with
+activations:
 rematerialization, which shrinks them; DistMoE, which does not shrink them but
 is how we run the routed experts, so its own memory has to be part of the
 picture; and MXFP8, which shrinks matmul operands to 8 bits.
