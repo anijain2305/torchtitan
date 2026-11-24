@@ -559,7 +559,6 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = build_model_config(args.flavor, parallelism=ParallelismConfig())
-    cfg = replace(cfg, vision_encoder=None)
     symbols = read_symbols(cfg)
     expected = expected_params(cfg, symbols)
 

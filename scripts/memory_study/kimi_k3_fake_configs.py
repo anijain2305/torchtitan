@@ -61,6 +61,7 @@ from torchtitan.components.data.text_datasets import DATASETS
 from torchtitan.components.loss import ChunkedLossWrapper, CrossEntropyLoss
 from torchtitan.components.optim import LRSchedulersContainer, Optim
 from torchtitan.config import TrainingConfig
+from torchtitan.config.configs import PrecisionConfig
 from torchtitan.config.parallelism import ParallelismConfig
 from torchtitan.distributed.activation_remat import FullActivationRematConfig
 from torchtitan.models.common.config_utils import decoder_vocab_size
@@ -99,9 +100,9 @@ def _balanced_routing(model_config) -> None:
 
     names = [f.name for f in dataclasses.fields(RoundRobinTokenChoiceTopKRouter.Config)]
     for layer in model_config.layers:
-        if layer.moe is not None:
-            old = layer.moe.router
-            layer.moe.router = RoundRobinTokenChoiceTopKRouter.Config(
+        if getattr(layer.feed_forward, "routed_experts", None) is not None:
+            old = layer.feed_forward.router
+            layer.feed_forward.router = RoundRobinTokenChoiceTopKRouter.Config(
                 **{n: getattr(old, n) for n in names if hasattr(old, n)}
             )
 
@@ -134,18 +135,12 @@ def _kimi_k3(
     parallelism: ParallelismConfig,
     steps: int = 4,
     model_transforms=(),
-    converters=None,
 ) -> Trainer.Config:
     """model_transforms rewrite the model config before the trainer config
     validates it (CP needs its attention modules swapped first)."""
     from torchtitan.config.transform import transform_model_config_
 
-    model_config = replace(
-        build_model_config(
-            "Kimi-K3", seq_len=seq_len, parallelism=parallelism, converters=converters
-        ),
-        vision_encoder=None,
-    )
+    model_config = build_model_config("Kimi-K3", seq_len=seq_len, parallelism=parallelism)
     if model_transforms:
         model_config = transform_model_config_(model_config, list(model_transforms))
     model_config = _triton_attention_residual(model_config)
@@ -175,13 +170,11 @@ def _kimi_k3(
         training=TrainingConfig(
             num_tokens_per_microbatch_per_dp_rank=tokens_per_microbatch,
             num_tokens_per_train_step=GLOBAL_TOKENS,
-            max_context_length=seq_len,
             steps=steps,
-            dtype="float32",
-            mixed_precision_param="bfloat16",
-            mixed_precision_reduce="float32",
-            disable_cuda_graphs=True,
+            disable_accelerator_graphs=True,
         ),
+        # fp32 master weights, gradients and optimizer state; bf16 compute; fp32 reduction
+        precision=PrecisionConfig(dtype="float32", param_dtype="bfloat16", reduce_dtype="float32"),
         dataloader=GrainDataLoader.Config(
             max_num_documents=c4_document_capacity(tokens_per_microbatch),
             dataset=ConcatThenSplitPackingConfig(dataset=DATASETS["c4_test"]),
@@ -236,14 +229,14 @@ def kimi_k3_fsdp_ep64_8k_distmoe() -> Trainer.Config:
     real_config_fn = flavors._kimi_k3_config
 
     def with_1024_experts(**kwargs):
-        return real_config_fn(**{**kwargs, "num_experts": 1024, "vision_encoder": None})
+        return real_config_fn(**{**kwargs, "num_experts": 1024})
 
     with mock.patch.object(flavors, "_kimi_k3_config", with_1024_experts):
         config = _kimi_k3(8192, parallelism)
     for layer in config.model.layers:
-        if layer.moe is not None:
-            layer.moe.routed_experts = replace(
-                layer.moe.routed_experts, activation_fn=SwiGLU.Config()
+        if getattr(layer.feed_forward, "routed_experts", None) is not None:
+            layer.feed_forward.routed_experts = replace(
+                layer.feed_forward.routed_experts, activation_fn=SwiGLU.Config()
             )
     config.dist_moe_runtime = DistMoeRuntime.Config(
         activation_slot_capacity_factor=None, scratch_capacity_factor=4.0
@@ -320,9 +313,11 @@ def kimi_k3_fsdp_ep64_32k_cp2_distmoe_longdocs_profiled() -> Trainer.Config:
     from torchtitan.models.common.activation import SwiGLU
     from torchtitan.models.common.attention import VarlenInnerAttention
     from torchtitan.models.common.attention.cp_attention import (
-        UlyssesCPVarlenInnerAttention,
+        UlyssesVarlenInnerAttention,
     )
     from torchtitan.models.common.attention.cp_kda import ContextParallelInnerKDA
+    from torchtitan.models.common.attention.cp_mla import UlyssesMLAAttention
+    from torchtitan.models.common.attention.mla import MLAAttention
     from torchtitan.models.common.attention.kda import InnerKDA
     from torchtitan.models.common.dist_moe.runtime import DistMoeRuntime
     from torchtitan.models.kimi_k3 import flavors
@@ -335,20 +330,21 @@ def kimi_k3_fsdp_ep64_32k_cp2_distmoe_longdocs_profiled() -> Trainer.Config:
     real_config_fn = flavors._kimi_k3_config
 
     def with_1024_experts(**kwargs):
-        return real_config_fn(**{**kwargs, "num_experts": 1024, "vision_encoder": None})
+        return real_config_fn(**{**kwargs, "num_experts": 1024})
 
     cp_transform = ContextParallelTransform(
         inner_attention_map={
-            VarlenInnerAttention: UlyssesCPVarlenInnerAttention,
+            VarlenInnerAttention: UlyssesVarlenInnerAttention,
+                    MLAAttention: UlyssesMLAAttention,
             InnerKDA: ContextParallelInnerKDA,
         }
     )
     with mock.patch.object(flavors, "_kimi_k3_config", with_1024_experts):
         config = _kimi_k3(32768, parallelism, model_transforms=[cp_transform])
     for layer in config.model.layers:
-        if layer.moe is not None:
-            layer.moe.routed_experts = replace(
-                layer.moe.routed_experts, activation_fn=SwiGLU.Config()
+        if getattr(layer.feed_forward, "routed_experts", None) is not None:
+            layer.feed_forward.routed_experts = replace(
+                layer.feed_forward.routed_experts, activation_fn=SwiGLU.Config()
             )
     config.dist_moe_runtime = DistMoeRuntime.Config(
         activation_slot_capacity_factor=None, scratch_capacity_factor=4.0
@@ -417,13 +413,13 @@ except ImportError:  # dist_moe not installed: the memory-validation configs nee
 _MXFP8_DENSE = [
     # KDA projections, except beta (width -> 96 heads): under TP 2 its 48 rows
     # break MXFP8's 32 x 32 weight tiles
-    "delta_attention.q_proj",
-    "delta_attention.k_proj",
-    "delta_attention.v_proj",
-    "delta_attention.output_gate",
-    "delta_attention.output_proj",
-    "delta_attention.forget_a",
-    "delta_attention.forget_b",
+    "attention.q_proj",
+    "attention.k_proj",
+    "attention.v_proj",
+    "attention.output_gate",
+    "attention.output_proj",
+    "attention.forget_a",
+    "attention.forget_b",
     # MLA projections
     "attention.wq_a",
     "attention.wq_b",
@@ -444,15 +440,17 @@ def _memory_study(
     from torchtitan.config.transform import (
         apply_transforms,
         ContextParallelTransform,
-        MXFP8LinearConverter,
+        MXFP8LinearTransform,
     )
     from torchtitan.config.transform.dist_moe import DistMoeTransform
     from torchtitan.models.common.activation import SwiGLU
     from torchtitan.models.common.attention import VarlenInnerAttention
     from torchtitan.models.common.attention.cp_attention import (
-        UlyssesCPVarlenInnerAttention,
+        UlyssesVarlenInnerAttention,
     )
     from torchtitan.models.common.attention.cp_kda import ContextParallelInnerKDA
+    from torchtitan.models.common.attention.cp_mla import UlyssesMLAAttention
+    from torchtitan.models.common.attention.mla import MLAAttention
     from torchtitan.models.common.attention.kda import InnerKDA
     from torchtitan.models.common.dist_moe.runtime import DistMoeRuntime
     from torchtitan.observability.profiler import Profiler
@@ -462,26 +460,19 @@ def _memory_study(
         transforms.append(
             ContextParallelTransform(
                 inner_attention_map={
-                    VarlenInnerAttention: UlyssesCPVarlenInnerAttention,
+                    VarlenInnerAttention: UlyssesVarlenInnerAttention,
+                    MLAAttention: UlyssesMLAAttention,
                     InnerKDA: ContextParallelInnerKDA,
                 }
             )
         )
-    config = _kimi_k3(
-        seq_len,
-        parallelism,
-        steps=3,
-        model_transforms=transforms,
-        converters=(
-            [MXFP8LinearConverter.Config(fqns=list(_MXFP8_DENSE))]
-            if DENSE_MXFP8
-            else None
-        ),
-    )
+    if DENSE_MXFP8:
+        transforms.append(MXFP8LinearTransform(fqns=list(_MXFP8_DENSE)))
+    config = _kimi_k3(seq_len, parallelism, steps=3, model_transforms=transforms)
     for layer in config.model.layers:
-        if layer.moe is not None:
-            layer.moe.routed_experts = replace(
-                layer.moe.routed_experts, activation_fn=SwiGLU.Config()
+        if getattr(layer.feed_forward, "routed_experts", None) is not None:
+            layer.feed_forward.routed_experts = replace(
+                layer.feed_forward.routed_experts, activation_fn=SwiGLU.Config()
             )
     config.dist_moe_runtime = DistMoeRuntime.Config(
         activation_slot_capacity_factor=None, scratch_capacity_factor=4.0
@@ -615,7 +606,7 @@ def _perf(
     _register_kda_metadata_pytree()
     config = _memory_study(name, seq_len, parallelism, cp=cp)
     config.training.steps = 4
-    config.training.disable_cuda_graphs = False
+    config.training.disable_accelerator_graphs = False
     config.profiler = Profiler.Config(
         enable_profiling=True,
         save_traces_folder=f"profiling/perf_{name}",
@@ -657,7 +648,7 @@ def perf_fsdp_ep64_32k_cp2_eager() -> Trainer.Config:
     shape between microbatches, so CUDA graphs cannot capture it), last step
     profiled: per-class kernel time is still comparable with the model."""
     config = perf_fsdp_ep64_32k_cp2()
-    config.training.disable_cuda_graphs = True
+    config.training.disable_accelerator_graphs = True
     config.profiler.save_traces_folder = "profiling/perf_fsdp_ep64_32k_cp2_eager"
     config.profiler.enable_memory_snapshot = (
         False  # the eager 32K step is near the GPU's limit
@@ -685,7 +676,7 @@ def _sweep(seq_len: int, cp: int, tp: int) -> Trainer.Config:
     if cp > 1 or (tp >= 4 and seq_len == 8192):
         # CP: CUDA graphs cannot capture KDA under CP. 8K TP 4 (16 microbatches)
         # under graphs gives an empty profiler trace; eager kernel times compare fine.
-        config.training.disable_cuda_graphs = True
+        config.training.disable_accelerator_graphs = True
     return config
 
 

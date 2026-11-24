@@ -579,7 +579,6 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = build_model_config(args.flavor, parallelism=ParallelismConfig())
-    cfg = replace(cfg, vision_encoder=None)
     moe = cfg.layers[KDA_LAYER].moe
     mla = cfg.layers[MLA_LAYER].attention
     kda = cfg.layers[KDA_LAYER].delta_attention

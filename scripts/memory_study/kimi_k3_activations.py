@@ -199,7 +199,6 @@ def run(
         converters=converters,
         parallelism=ParallelismConfig(),
     )
-    cfg = replace(cfg, vision_encoder=None)
     if attn_res == "triton":
         # The fused Triton attention residual (torchtitan_recipes override): it
         # reads the block stack and the partial sum directly, so it saves no
