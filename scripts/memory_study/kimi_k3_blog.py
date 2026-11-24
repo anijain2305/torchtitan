@@ -165,17 +165,21 @@ PLACEHOLDER = re.compile(r"^:::\s*(chart|table)\s+(\S+)\s*$", re.M)
 FIGURE = re.compile(r"^:::\s*figure\s+(\S+)\s*$", re.M)
 
 
-SECTION_KEY = re.compile(r"^(?:\d+[a-z]?_|appendix_)")
+SECTION_KEY = re.compile(r"^(?:\d+[a-z]?_|appendix_|zz_)")
 REF = re.compile(r"\[\[([a-z0-9_]+)(?:\.(\d+(?:\.\d+)?))?\]\]")
 
 
 def section_numbers(files: list[Path]) -> dict[str, str]:
     """File key (stem without its order prefix) -> section label: the first
-    file is the title (unnumbered), appendix_* files get letters, the rest 1, 2, ..."""
+    file is the title (unnumbered), appendix_* files get letters, zz_* files
+    (closing sections such as the thanks, sorted last) are unnumbered, the rest
+    1, 2, ..."""
     labels, n, a = {}, 0, 0
     for i, p in enumerate(files):
         key = SECTION_KEY.sub("", p.stem)
         if i == 0:
+            labels[key] = ""
+        elif p.stem.startswith("zz_"):
             labels[key] = ""
         elif p.stem.startswith("appendix_"):
             labels[key] = f"Appendix {chr(ord('A') + a)}"
@@ -379,7 +383,7 @@ def build() -> None:
     ]
     rendered = [(k, h.replace(INSIGHTS_MARK, insights_list(insights, labels)), t) for k, h, t in rendered]
     toc = "".join(
-        f'<li><a href="#sec-{k}">{html.escape(labels[k] + (": " if labels[k].startswith("Appendix") else ". ") + t)}</a></li>'
+        f'<li><a href="#sec-{k}">{html.escape((labels[k] + (": " if labels[k].startswith("Appendix") else ". ") if labels[k] else "") + t)}</a></li>'
         for k, _, t in rendered[1:]
     )
     parts = [
