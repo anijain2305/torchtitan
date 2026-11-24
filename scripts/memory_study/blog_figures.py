@@ -557,11 +557,11 @@ def zero_table(ctx: str = "8K") -> str:
     """The per-GPU table behind sharding-steps: persistent state (master
     weights, gradients, optimizer state at their sharded size) and working set
     (weight copies and unsharded gradient copies kept to compute). Activations
-    are the same in every row, so they are only part of the total."""
+    are left out: they depend on the remat policy, chosen later."""
     rows = zero_parts(ctx)
     th = lambda h, a="": f"<th{a}>{h}</th>"
     out = ['<table class="dtable"><tr>' + th("Per GPU", ' rowspan="2"') + th("Persistent state", ' colspan="3"')
-           + th("Working set", ' colspan="2"') + th("Total", ' rowspan="2"') + th("x GPU", ' rowspan="2"') + "</tr>",
+           + th("Working set", ' colspan="2"') + th("Persistent + working set", ' rowspan="2"') + "</tr>",
            # centered explicitly: the page's .dtable th:first-child rule would left-align the first sub-header
            "<tr>" + "".join(th(h, ' style="text-align: center !important"')
                             for h in ("Master weights", "Gradients", "Optimizer state", "Weights", "Gradients"))
@@ -574,20 +574,15 @@ def zero_table(ctx: str = "8K") -> str:
             return ""
         return ' style="background: rgba(0, 131, 0, 0.12)"' if v < pv else ' style="background: rgba(227, 73, 72, 0.15)"'
 
-    acts = sorted({round(r["activations"] / 1e9) for r in rows})
     for r in rows:
         vals = list(r["persistent"]) + list(r["working"])
+        vals.append(sum(vals))
         p = prev or [None] * len(vals)
-        cells = "".join(f"<td{shade(v, pv)}>{_dec(v) if v else '-'}</td>" for v, pv in zip(vals, p))
+        cells = "".join(f"<td{shade(v, pv)}>{_dec(v) if v else '-'}</td>" for v, pv in zip(vals[:-1], p))
         label = r["label"] + (f'<span class="sub">working set: {r["note"]}</span>' if r["note"] else "")
-        tot = f"<b>{_dec(r['total'])}</b>" + ('<span class="sub">peak: chunked-loss loop</span>' if r["loop"] else "")
-        out.append(f"<tr><td>{label}</td>{cells}<td>{tot}</td><td>{r['total'] / GPU_BYTES:.2f}</td></tr>")
+        out.append(f"<tr><td>{label}</td>{cells}<td{shade(vals[-1], p[-1])}><b>{_dec(vals[-1])}</b></td></tr>")
         prev = vals
     out.append("</table>")
-    lo, hi = acts[0], acts[-1]
-    act = f"{lo} GB" if lo == hi else f"{lo}-{hi} GB"
-    out.append(f"<p><em>Totals include {act} of activations per GPU (full remat + DistMoE), "
-               "about the same in every row.</em></p>")
     return "".join(out)
 
 
