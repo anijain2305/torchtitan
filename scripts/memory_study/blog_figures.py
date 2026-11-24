@@ -202,7 +202,7 @@ import json as _json
 import math as _math
 from pathlib import Path as _Path
 
-GB200_BYTES = 192e9
+GPU_BYTES = 288e9  # one GB300's HBM, the study's per-GPU budget
 COLORS = {"experts": "#2a78d6", "attention": "#eb6834", "other": "#1baf7a", "acts": "#eda100",
           "acts_full": "#9a6400", "weights": "#e87ba4", "grads": "#008300", "optstate": "#4a3aa7"}
 
@@ -226,7 +226,7 @@ def _bin(e: int) -> str:
 
 def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
     """Horizontal bars on a log2 axis (one gridline per power of 2, labels every
-    4x) with a line at one GB200's 192 GB. rows: (label, bytes, color), or
+    4x) with a line at one GB300's 288 GB. rows: (label, bytes, color), or
     (label, [(bytes, color, part label), ...], None) for a bar stacked from parts
     (each part's length on the log axis is the increase it adds)."""
     lab, w, bar, gap, top = 250, 760, 22, 10, 24  # w leaves room for the last axis label
@@ -247,10 +247,10 @@ def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
                    f'stroke-width="{1 if e % 2 else 1.4}"/>')
         if e % 2 == 0:
             out.append(_text(x(2 ** e), axis_y, _bin(e), 11, MUTED, "middle"))
-    gx = x(GB200_BYTES)
+    gx = x(GPU_BYTES)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{axis_y - 16}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
-    out.append(_text(gx + 4, top - 12, "one GB200: 192 GB", 11, INK))
+    out.append(_text(gx + 4, top - 12, "one GB300: 288 GB", 11, INK))
     for k, (label, b, color) in enumerate(rows):
         y = top + k * (bar + gap)
         out.append(_text(lab - 10, y + bar / 2 + 4, label, 12, INK2, "end"))
@@ -321,7 +321,7 @@ def memory_remat(ctx: str = "8K") -> str:
 
 
 def linear_stacked_bars(rows, aria, legend, top_gb=None, clip=()) -> str:
-    """Stacked horizontal bars on a linear axis (GB), with a line at one GB200.
+    """Stacked horizontal bars on a linear axis (GB), with a line at one GB300.
     rows: (label, [(bytes, color, part label), ...]). Rows whose label is in
     `clip` are left out of the axis range and drawn cut off at the right edge,
     with a break mark and their true total."""
@@ -337,7 +337,7 @@ def linear_stacked_bars(rows, aria, legend, top_gb=None, clip=()) -> str:
     h = top + len(rows) * (bar + gap) + 44 + 20 * len(leg_rows)
     axis_y = h - 22 - 20 * len(leg_rows)
     vmax = top_gb * 1e9 if top_gb else max(sum(p[0] for p in parts) for l, parts in rows if l not in clip) * 1.15
-    vmax = max(vmax, GB200_BYTES * 1.3)  # room for the one-GPU label
+    vmax = max(vmax, GPU_BYTES * 1.3)  # room for the one-GPU label
     x = lambda b: lab + (w - lab - 64) * b / vmax
     step = 50e9 if vmax <= 400e9 else 100e9
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{html.escape(aria)}">']
@@ -346,10 +346,10 @@ def linear_stacked_bars(rows, aria, legend, top_gb=None, clip=()) -> str:
         out.append(f'<line x1="{x(t):.1f}" x2="{x(t):.1f}" y1="{top - 6}" y2="{axis_y - 16}" stroke="{GRID}"/>')
         out.append(_text(x(t), axis_y, f"{t / 1e9:.0f} GB", 11, MUTED, "middle"))
         t += step
-    gx = x(GB200_BYTES)
+    gx = x(GPU_BYTES)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{axis_y - 16}" stroke="{INK}" '
                'stroke-width="1.5" stroke-dasharray="4 3"/>')
-    out.append(_text(gx + 4, top - 12, "one GB200: 192 GB", 11, INK))
+    out.append(_text(gx + 4, top - 12, "one GB300: 288 GB", 11, INK))
     for k, (label, parts) in enumerate(rows):
         y = top + k * (bar + gap)
         total = sum(p[0] for p in parts)
@@ -555,7 +555,7 @@ def zero_table(ctx: str = "8K") -> str:
         out.append(f"<tr><td>{label}</td><td{shade(mo, p[0])}>{cell(mo, '' if label == 'No sharding' else '1/512')}</td>"
                    f"<td{shade(g, p[1])}>{cell(g, g_note)}</td><td{shade(a, p[2])}>{cell(a, a_note)}</td>"
                    f"<td{shade(w, p[3])}>{cell(w, w_notes.get(label, ''))}</td>"
-                   f"<td{shade(total, p[4])}>{tot}</td><td>{total / GB200_BYTES:.2f}</td></tr>")
+                   f"<td{shade(total, p[4])}>{tot}</td><td>{total / GPU_BYTES:.2f}</td></tr>")
         prev = (mo, g, a, w, total)
     out.append("</table>")
     return "".join(out)
@@ -605,13 +605,13 @@ def cp_table(ctx: str = "8K") -> str:
         sh = lambda k: ("" if prev is None or abs(r[k] - prev[k]) <= 1e-6 * max(r[k], 1) else
                         ' style="background: rgba(0, 131, 0, 0.12)"' if r[k] < prev[k]
                         else ' style="background: rgba(227, 73, 72, 0.15)"')
-        fits = r["total"] <= GB200_BYTES
+        fits = r["total"] <= GPU_BYTES
         buf = _dec(r["buffers"]) + f'<span class="sub">{"chunked-loss loop" if r["loop"] else "2 layers in flight"}</span>'
         out.append(f'<tr><td>CP {r["cp"]}</td><td>{r["tokens"]:,.0f}</td><td>{r["microbatches"]:g}</td>'
                    f'<td{sh("acts")}>{_dec(r["acts"])}<span class="sub">incl. {_dec(r["meta"])} DistMoE indices</span></td>'
                    f'<td>{_dec(r["shards"])}</td><td{sh("buffers")}>{buf}</td>'
-                   f'<td{sh("total")}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 192 GB"}</span></td>'
-                   f'<td>{r["total"] / GB200_BYTES:.2f}</td></tr>')
+                   f'<td{sh("total")}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 288 GB"}</span></td>'
+                   f'<td>{r["total"] / GPU_BYTES:.2f}</td></tr>')
         prev = r
     out.append("</table>")
     return "".join(out)
@@ -632,7 +632,7 @@ def tp_table(ctx: str = "8K") -> str:
             buf = _dec(r["buffers"]) + f'<span class="sub">{"chunked-loss loop" if r["loop"] else "2 layers in flight"}</span>'
             out.append(f'<tr><td>{name}</td><td>{r["tokens"]:,.0f}</td><td{sh("acts")}>{_dec(r["acts"])}</td>'
                        f'<td{sh("buffers")}>{buf}</td><td{sh("total")}><b>{_dec(r["total"])}</b>{delta}</td>'
-                       f'<td>{r["total"] / GB200_BYTES:.2f}</td></tr>')
+                       f'<td>{r["total"] / GPU_BYTES:.2f}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -1102,7 +1102,7 @@ def compute_table(ctx: str = "8K", P: int = 1) -> str:
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     base = base_parts = None
     for cp, tp in SPLITS:
-        fits = mem(cp, tp)["total"] <= GB200_BYTES
+        fits = mem(cp, tp)["total"] <= GPU_BYTES
         u = sum(step_compute(ctx, P, cp, tp, shape_aware=False).values())
         r = step_compute(ctx, P, cp, tp)
         tot = sum(r.values())
@@ -1851,7 +1851,7 @@ def _ranked(ctx: str, transports: str = "all", overlap_tp_cp: bool = False) -> l
         for v, tr in scheds:
             for cp, tp in SPLITS:
                 mem = fsdp_ep_parts(ctx, cp, tp) if P == 1 else pp_parts(ctx, P, 1, cp, tp, v)
-                if mem["total"] > GB200_BYTES:
+                if mem["total"] > GPU_BYTES:
                     continue
                 r = m.step(st.Config(ctx, P, cp, tp, v, tr))
                 sched = "1F1B" if v == 1 else f"interleaved v = {v}"
@@ -1932,7 +1932,7 @@ def ranking_chart(ctx: str = "8K") -> str:
     ticks = "".join(f'<span style="left: {100 * t / _RANK_AXIS_S:.2f}%">{t} s</span>'
                     for t in range(0, _RANK_AXIS_S + 1, 5))
     out.append('<div class="rk-row rk-head"><span></span><span>Config</span><span class="rk-axis">' + ticks
-               + '</span><span class="r">Step</span><span>Memory of 192 GB</span></div>')
+               + '</span><span class="r">Step</span><span>Memory of 288 GB</span></div>')
     out.append('<div class="rk-rows">')
     pct = lambda t: 100 * min(t, _RANK_AXIS_S) / _RANK_AXIS_S
     for i, r in enumerate(rows, 1):
@@ -1960,7 +1960,7 @@ def ranking_chart(ctx: str = "8K") -> str:
             tip += [f'<span class="sw" style="background: {_rank_fill(c, st_)}"></span>{html.escape(lab)}: {v:.2f} s'
                     for lab, v, c, st_ in shown]
         clipped = x > _RANK_AXIS_S
-        fr = r["mem"] / GB200_BYTES
+        fr = r["mem"] / GPU_BYTES
         out.append(
             f'<div class="rk-row" data-fam="{r["P"]}" data-v="{r["v"]}" data-tr="{r["transport"] or "none"}" '
             f'data-step="{r["step"]:.3f}" data-mem="{r["mem"]:.0f}" '
@@ -2071,7 +2071,7 @@ def transport_compare_table() -> str:
            'their compute penalty); bold: the fastest transport</caption><tr>'
            + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     for ctx, P, cp, tp, v in cases:
-        if pp_parts(ctx, P, 1, cp, tp, v)["total"] > GB200_BYTES:
+        if pp_parts(ctx, P, 1, cp, tp, v)["total"] > GPU_BYTES:
             continue
         res = {}
         for tr in ("chain", "cache", "direct"):
@@ -2169,13 +2169,13 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
             r = pp_parts(ctx, P, 1, cp, tp)
             sh = lambda k: ("" if abs(r[k] - base[k]) <= 1e-3 * max(r[k], 1) else green if r[k] < base[k] else red)
             name = f"PP {P}, CP {cp}, TP {tp}"
-            fits = r["total"] <= GB200_BYTES
+            fits = r["total"] <= GPU_BYTES
             out.append(f'<tr><td>{name}<span class="sub">{r["microbatches"]:g} microbatches per pipeline</span></td>'
                        f'<td{sh("acts")}>{_dec(r["acts"])}<span class="sub">incl. {_dec(r["meta"])} DistMoE indices</span></td>'
                        f'<td{sh("grads")}>{_dec(r["grads"])}</td>'
                        f'<td{sh("weights")}>{_dec(r["weights"])}</td>'
-                       f'<td{green if fits else red}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 192 GB"}</span></td>'
-                       f'<td>{r["total"] / GB200_BYTES:.2f}</td></tr>')
+                       f'<td{green if fits else red}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 288 GB"}</span></td>'
+                       f'<td>{r["total"] / GPU_BYTES:.2f}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -2197,7 +2197,7 @@ def pp_vpp_table(ctx: str = "8K") -> str:
         for v in (1, 2, 4):
             r = pp_parts(ctx, P, 1, cp, 1, v)
             chunks = pp_inflight(P, v, int(r["microbatches"]))
-            fits = r["total"] <= GB200_BYTES
+            fits = r["total"] <= GPU_BYTES
             sched = "1F1B" if v == 1 else f"interleaved, v = {v}"
             out.append(f"<tr><td>PP {P}, {sched}</td><td>{r['microbatches']:.0f}</td><td>{chunks}</td>"
                        f"<td>{rank0_chunk_layers(P, v):g}</td>"
@@ -2209,7 +2209,7 @@ def pp_vpp_table(ctx: str = "8K") -> str:
 
 def fit_map(ctx: str = "8K") -> str:
     """Every config of this section: FSDP + EP 64 and PP 8 / 16 (ZeRO-1), each
-    with no split, CP 2 / 4 or TP 2 / 4. Green: fits in 192 GB; red: does not."""
+    with no split, CP 2 / 4 or TP 2 / 4. Green: fits in 288 GB; red: does not."""
     green, red = ' style="background: rgba(0, 131, 0, 0.12)"', ' style="background: rgba(227, 73, 72, 0.15)"'
     name = lambda cp, tp: f"CP {cp}, TP {tp}"
     families = [("FSDP 512, EP 64", lambda cp, tp: fsdp_ep_parts(ctx, cp, tp))]
@@ -2225,7 +2225,7 @@ def fit_map(ctx: str = "8K") -> str:
         cells = []
         for cp, tp in FIT_SPLITS:
             total = fn(cp, tp)["total"]
-            cells.append(f'<td{green if total <= GB200_BYTES else red}>{_dec(total)}</td>')
+            cells.append(f'<td{green if total <= GPU_BYTES else red}>{_dec(total)}</td>')
         out.append(f"<tr><td>{label}</td>{''.join(cells)}</tr>")
     out.append("</table>")
     return "".join(out)
@@ -2238,7 +2238,7 @@ def fit_count(ctx: str) -> tuple[int, int]:
             pp_parts(ctx, P, 1, cp, tp, v) for P in (8, 16) for v in (1, 2, 4)
         ]:
             n += 1
-            fits += r["total"] <= GB200_BYTES
+            fits += r["total"] <= GPU_BYTES
     return fits, n
 
 
