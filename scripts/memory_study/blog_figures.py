@@ -427,12 +427,18 @@ def dense_quantized_params() -> int:
 TOP_K, NUM_EXPERTS, MOE_LAYERS = 16, 896, 92
 
 
+DISTMOE_SCRATCH_FACTOR = 4  # the study's scratch capacity factor (recipe value)
+
+
 def routing_metadata(ep: int, local_experts: float, local_tokens: float) -> float:
     """Bytes DistMoE stashes per MoE layer per microbatch for its backward:
-    three int64 pointer arrays (forward gather, backward gather, scatter), each
-    sized for the worst case of every EP rank's tokens picking every local
-    expert: ep x local tokens x min(top-k, local experts) entries."""
-    return 3 * 8 * ep * local_tokens * min(TOP_K, local_experts)
+    three int64 pointer arrays (forward gather, backward gather, scatter). Each
+    holds the worst case (ep x local tokens x min(top-k, local experts)
+    entries), capped at the receive capacity DistMoE already enforces (scratch
+    factor x the rows a balanced layer receives, local tokens x top-k), as with
+    the routing-pointer fix."""
+    worst = ep * local_tokens * min(TOP_K, local_experts)
+    return 3 * 8 * min(worst, DISTMOE_SCRATCH_FACTOR * local_tokens * TOP_K)
 
 
 def expert_padding(num_experts: float, degree: int) -> float:
@@ -452,6 +458,14 @@ def recompute_working_set(ctx: str, local_tokens: float) -> float:
     layer = {x["key"]: x["bytes"] for x in c["activations"]["kda_layer"]["components"]}
     stash = sum(v for k, v in layer.items() if k != "routed")
     return 1.5 * stash * local_tokens / c["seq_len"]
+
+
+def padded_state(ctx_data: dict, degree: int, pad: float) -> tuple[float, float, float]:
+    """(master weights, gradients, optimizer state) per GPU when sharded
+    `degree` ways, with the expert part padded by `pad`."""
+    P = ctx_data["persistent"]["model"]
+    part = lambda k: (sum(P[k].values()) - P[k]["routed"] + pad * P[k]["routed"]) / degree
+    return part("weights"), part("grads"), part("state")
 
 
 def padded_shards(ctx_data: dict, degree: int, pad: float) -> tuple[float, float]:
@@ -493,38 +507,38 @@ def zero_parts(ctx: str = "8K") -> list:
     lm = S["V"] * S["D"]
     chunk_loop = 6 * lm + T / chunks * (442e3 + 4 * S["V"]) + 4 * T * S["D"]  # 442 KB: a chunk's saves per token
     rws = recompute_working_set(ctx, T)
-    G, MO = tot("grads"), tot("weights") + tot("state")
+    G = tot("grads")
     pad = expert_padding(NUM_EXPERTS, 512)  # without EP, each layer's 896 experts over 512 GPUs
-    g_shard, mo_shard = padded_shards(d, 512, pad)
     meta1 = MOE_LAYERS * routing_metadata(1, NUM_EXPERTS, T)
     acts1 = base_acts + rws + meta1  # full remat's stash and recompute peak, DistMoE, routing indices
+    W, S_ = tot("weights"), tot("state")
+    m_sh, g_sh, o_sh = padded_state(d, 512, pad)
     out = []
-    unsharded = (
-        ("No sharding", MO, G, "master + optimizer", "full gradients"),
-        ("ZeRO-1", mo_shard, copy + G, "master + optimizer, 1/512", "whole model: weights + gradients"),
-        ("ZeRO-2", mo_shard + g_shard, copy, "master + optimizer + gradients, 1/512", "whole model: weights"),
-    )
-    for label, persistent, working, p_note, w_note in unsharded:
-        out.append({"label": label, "persistent": persistent, "working": working, "activations": acts1,
-                    "loop": 0, "total": persistent + working + acts1, "parts": (base_acts, meta1, rws),
-                    "notes": (p_note, w_note)})
+
+    def row(label, persistent, working, acts, parts, loop=0, total=None, note=""):
+        total = sum(persistent) + sum(working) + acts if total is None else total
+        out.append({"label": label, "persistent": persistent, "working": working, "activations": acts,
+                    "loop": loop, "total": total, "parts": parts, "note": note})
+
+    # persistent: (master weights, gradients, optimizer state) at their sharded size;
+    # working: (weight copies, unsharded gradient copies) kept to compute
+    row("No sharding", (W, G, S_), (0, 0), acts1, (base_acts, meta1, rws))
+    row("ZeRO-1", (m_sh, G, o_sh), (copy, 0), acts1, (base_acts, meta1, rws), note="whole model")
+    row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 0), acts1, (base_acts, meta1, rws), note="whole model")
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
     # the layer being backpropagated is also recomputed in full
     for label, routed, ep in (("ZeRO-3 / FSDP", blk["routed"], 1), ("FSDP + EP 64", blk["routed"] / 64, 64)):
         meta = MOE_LAYERS * routing_metadata(ep, NUM_EXPERTS / ep, T)
-        g_s, mo_s = padded_shards(d, 512, expert_padding(NUM_EXPERTS / ep, 512 // ep))
+        m_s, g_s, o_s = padded_state(d, 512, expert_padding(NUM_EXPERTS / ep, 512 // ep))
         acts = base_acts + rws + meta
-        persistent, working = mo_s + g_s, 2 * layer_w(routed) + 2 * layer_g(routed)
-        backward_peak = persistent + working + acts
-        loss_peak = persistent + acts - rws + chunk_loop  # the loss runs before the recompute peak
-        experts = f"{NUM_EXPERTS // ep} experts each"
-        out.append({"label": label, "persistent": persistent, "working": working, "activations": acts,
-                    "loop": chunk_loop if loss_peak > backward_peak else 0,
-                    "total": max(backward_peak, loss_peak), "parts": (base_acts, meta, rws),
-                    "notes": ("master + optimizer + gradients, 1/512",
-                              f"2 layers in flight: weights + gradients, <b>{experts}</b>")})
+        persistent, working = (m_s, g_s, o_s), (2 * layer_w(routed), 2 * layer_g(routed))
+        backward_peak = sum(persistent) + sum(working) + acts
+        loss_peak = sum(persistent) + acts - rws + chunk_loop  # the loss runs before the recompute peak
+        row(label, persistent, working, acts, (base_acts, meta, rws),
+            loop=chunk_loop if loss_peak > backward_peak else 0, total=max(backward_peak, loss_peak),
+            note=f"2 layers in flight, {NUM_EXPERTS // ep} experts each")
     return out
 
 
@@ -540,11 +554,18 @@ def sharding_steps(ctx: str = "8K") -> str:
 
 
 def zero_table(ctx: str = "8K") -> str:
-    """The per-GPU table behind sharding-steps: persistent state (sharded),
-    working set (kept unsharded to compute), activations."""
+    """The per-GPU table behind sharding-steps: persistent state (master
+    weights, gradients, optimizer state at their sharded size) and working set
+    (weight copies and unsharded gradient copies kept to compute). Activations
+    are the same in every row, so they are only part of the total."""
     rows = zero_parts(ctx)
-    head = ["Per GPU", "Persistent state", "Working set", "Activations", "Total", "x GPU"]
-    out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
+    th = lambda h, a="": f"<th{a}>{h}</th>"
+    out = ['<table class="dtable"><tr>' + th("Per GPU", ' rowspan="2"') + th("Persistent state", ' colspan="3"')
+           + th("Working set", ' colspan="2"') + th("Total", ' rowspan="2"') + th("x GPU", ' rowspan="2"') + "</tr>",
+           # centered explicitly: the page's .dtable th:first-child rule would left-align the first sub-header
+           "<tr>" + "".join(th(h, ' style="text-align: center !important"')
+                            for h in ("Master weights", "Gradients", "Optimizer state", "Weights", "Gradients"))
+           + "</tr>"]
     prev = None
 
     def shade(v, pv):
@@ -553,19 +574,20 @@ def zero_table(ctx: str = "8K") -> str:
             return ""
         return ' style="background: rgba(0, 131, 0, 0.12)"' if v < pv else ' style="background: rgba(227, 73, 72, 0.15)"'
 
+    acts = sorted({round(r["activations"] / 1e9) for r in rows})
     for r in rows:
-        cell = lambda v, note="": (f"{_dec(v) if v else '-'}" + (f'<span class="sub">{note}</span>' if note else ""))
-        meta = r["parts"][1]
-        a_note = f"incl. {_dec(meta)} DistMoE indices" if meta > 1e9 else ""
-        p_note, w_note = r["notes"]
+        vals = list(r["persistent"]) + list(r["working"])
+        p = prev or [None] * len(vals)
+        cells = "".join(f"<td{shade(v, pv)}>{_dec(v) if v else '-'}</td>" for v, pv in zip(vals, p))
+        label = r["label"] + (f'<span class="sub">working set: {r["note"]}</span>' if r["note"] else "")
         tot = f"<b>{_dec(r['total'])}</b>" + ('<span class="sub">peak: chunked-loss loop</span>' if r["loop"] else "")
-        p = prev or (None,) * 4
-        out.append(f"<tr><td>{r['label']}</td><td{shade(r['persistent'], p[0])}>{cell(r['persistent'], p_note)}</td>"
-                   f"<td{shade(r['working'], p[1])}>{cell(r['working'], w_note)}</td>"
-                   f"<td{shade(r['activations'], p[2])}>{cell(r['activations'], a_note)}</td>"
-                   f"<td{shade(r['total'], p[3])}>{tot}</td><td>{r['total'] / GPU_BYTES:.2f}</td></tr>")
-        prev = (r["persistent"], r["working"], r["activations"], r["total"])
+        out.append(f"<tr><td>{label}</td>{cells}<td>{tot}</td><td>{r['total'] / GPU_BYTES:.2f}</td></tr>")
+        prev = vals
     out.append("</table>")
+    lo, hi = acts[0], acts[-1]
+    act = f"{lo} GB" if lo == hi else f"{lo}-{hi} GB"
+    out.append(f"<p><em>Totals include {act} of activations per GPU (full remat + DistMoE), "
+               "about the same in every row.</em></p>")
     return "".join(out)
 
 
