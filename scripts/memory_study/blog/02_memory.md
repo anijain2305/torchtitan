@@ -71,10 +71,8 @@ call this model memory hungry!
 Alright, time to roll up our sleeves! Let's shard the persistent state and fit
 it on our cluster.
 
-We start with plain data parallelism over all 512 GPUs. A step of 2,048
-sequences (at 8K) gives each GPU 4 of them, run one at a time as 4
-microbatches with gradient accumulation. On its own, data parallelism only
-multiplies the problem: every GPU holds the whole model. What shards the
+We start with plain data parallelism over all 512 GPUs. On its own, data
+parallelism only multiplies the problem: every GPU holds the whole model. What shards the
 persistent state across those 512 copies is [ZeRO](https://arxiv.org/abs/1910.02054).
 
 ### ZeRO / FSDP
@@ -101,7 +99,7 @@ persistent state.
 going on with the working set? This is where working from first principles
 pays off. Once the master weights are sharded, how does a GPU run the model?
 Where does it get the weights from? Each GPU all-gathers the full weights from
-the shards, once per step, and keeps them for every microbatch: that copy is
+the shards, once per step, and keeps them for the whole step: that copy is
 the working set. We compute in MXFP8, so most of these weights take 1 byte per
 parameter, which is why the cell (2.84 TB) is close to Kimi K3's 2.78T
 parameters. Keep an eye on the working set; it matters a lot in a roofline
