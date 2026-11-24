@@ -527,8 +527,10 @@ def zero_parts(ctx: str = "8K") -> list:
         cell_notes=("unsharded", "unsharded", "unsharded", "", ""))
     row("ZeRO-1", (m_sh, G, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
         cell_notes=("1/512", "unsharded", "1/512", "whole model", ""))
-    row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
-        cell_notes=("1/512", "1/512", "1/512", "whole model", ""))
+    # ZeRO-2 reduce-scatters each layer's gradient as backward produces it, like
+    # FSDP: the current layer's gradient plus the previous one's, still in flight
+    row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 2 * layer_g(blk["routed"])), acts1, (base_acts, meta1, rws),
+        cell_notes=("1/512", "1/512", "1/512", "whole model", f"2 layers, <b>{NUM_EXPERTS} experts</b>"))
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
@@ -606,9 +608,10 @@ def zero_table(ctx: str = "8K") -> str:
                "parameters) and bf16 for the dense layers; gradients are fp32. "
                "ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
                "ZeRO-1 also keeps the gradients unsharded until the reduce-scatter at the end of the step. "
-               "FSDP holds two layers at a time: the weights of the current layer and the prefetched next one "
-               "(all-gathered), and the gradients of the current layer and the previous one, whose "
-               "reduce-scatter is still running.</em></p>")
+               "ZeRO-2 and FSDP reduce-scatter each layer's gradients during backward, so they hold the "
+               "gradients of two layers: the current one and the previous one, whose reduce-scatter is "
+               "still running. FSDP also holds the weights of two layers: the current one and the "
+               "prefetched next one (all-gathered).</em></p>")
     return "".join(out)
 
 
