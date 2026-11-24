@@ -47,7 +47,8 @@ backward pass (through `save_for_backward` in an `autograd.Function`, and the
 same mechanism inside PyTorch's own ops). We look at them in detail later. Without
 any rematerialization or offloading, one sequence stashes 746 GB at 8K and
 3.0 TB at 32K (4x the footprint at 8K). We leave DistMoE out for now and bring
-it in when we get to shrinking activations.
+it in when we get to shrinking activations. We measure them with a simple pair of
+[saved-tensor hooks](https://docs.pytorch.org/tutorials/intermediate/autograd_saved_tensors_hooks_tutorial.html).
 
 All of this is deliberately simple: no parallelism, no remat, no offloading yet.
 As we bring those in, these two categories shrink, but new ones creep in, such
@@ -65,6 +66,9 @@ the persistent state alone fills a quarter of it. The stashed activations of a
 single 8K sequence, 746 GB, are 2.6 times one GPU. It is an understatement to
 call this model memory hungry!
 
+
+
+<!--
 ## Stashed Activations
 
 The forward pass keeps some tensors around for the backward pass. We call them
@@ -103,7 +107,7 @@ Before tackling the persistent state, the next three subsections deal with
 activations:
 rematerialization, which shrinks them; DistMoE, which does not shrink them but
 is how we run the routed experts, so its own memory has to be part of the
-picture; and MXFP8, which shrinks matmul operands to 8 bits.
+picture; and MXFP8, which shrinks matmul operands to 8 bits. -->
 
 ## Rematerialization
 
