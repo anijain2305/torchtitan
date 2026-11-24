@@ -1,5 +1,27 @@
 # The Memory Problem
 
+The blueprint is simple. First, find the parallelism configs that fit the
+weight-related memory: the sharded weights, gradients and optimizer states,
+plus the full copies of whatever layers a GPU is computing on (gathered layers
+under FSDP, unsharded weights and gradients under ZeRO-1). Whatever is left of
+the GPU's memory is that config's budget for activations. Then, for each
+config, find the best speed-memory trade-off within that budget using remat and
+offloading. We set step time aside until the next section. A tool could search
+memory and speed together, but separating them keeps the reasoning small
+enough to follow.
+
+The section follows the same order. We first look at how large the persistent
+state is, and the discussion grows from there into the sharding needed to fit
+it on our cluster; then we turn to activations:
+
+- What is the memory footprint we are dealing with?
+- Fitting the persistent state
+- Shrinking the activations
+- Spending the leftover memory on activations
+- Which parallelism configs fit
+
+## What is the memory footprint we are dealing with?
+
 Kimi K3 has 2.78T parameters. *Stored in fp32, the weights alone are 11.1 TB,
 58 times one GPU's 192 GB.* But weights are only part of what lives in GPU memory
 during training, and not the largest part. Let's look at what else is there.
@@ -118,7 +140,7 @@ backward. On top of full remat, that adds four things:
   backward can send gradients back to the right tokens. They are negligible
   without expert parallelism (0.3 GB at 8K), but they are sized for the worst
   case across the expert-parallel group, so with EP 64 they grow 56x, to 16 GB
-  ([[memory.7]]).
+  ([[memory.8]]).
 
 For one sequence:
 
@@ -157,7 +179,7 @@ post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
 Rematerialization brought the activations down to 56 GB per 8K sequence, well
 under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
 whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.7.3]], [[memory.7.4]]). The persistent state has
+tensor parallelism ([[memory.8.3]], [[memory.8.4]]). The persistent state has
 not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
 to be split across many GPUs.
 
@@ -191,7 +213,7 @@ of the fp32 master weights cannot run a forward pass on them, so it needs a
 separate copy of the weights in the format the matmuls use: the **compute
 weights**: MXFP8 for the routed experts, about 1 byte per parameter, and bf16
 for everything else. (FSDP gathers the experts in bf16 and frees that buffer
-once their MXFP8 copy is built; the fake runs in [[memory.7.8]] agree.) Under
+once their MXFP8 copy is built; the fake runs in [[memory.8.8]] agree.) Under
 ZeRO-1 and ZeRO-2 every GPU holds the whole model's compute weights: 2.84 TB,
 which after ZeRO-2 is the largest thing left.
 
@@ -213,7 +235,7 @@ layer computes, the next layer's weights are already being gathered, and in
 backward the previous layer's full gradient is still being reduce-scattered. So
 at the peak, in backward, a GPU holds **two layers' compute weights and two
 layers' full gradients** on top of its shards, plus remat's recompute working
-set for one layer ([[memory.3]]). Because the model is so large, two layers'
+set for one layer ([[memory.4]]). Because the model is so large, two layers'
 worth of gradients is 242 GB on its own.
 
 **Padding.** FSDP splits each tensor along its first dimension, and pads it when
@@ -244,7 +266,7 @@ experts are sharded over 8 GPUs, which pads to 16.
 **Caveat: DistMoE's routing indices.** For backward, DistMoE stashes three
 int64 index arrays per MoE layer, sized for the worst case: EP x tokens x 14
 entries. With EP 64 at 8K that is 16.2 GB over 92 layers, which is why the EP
-row's activations jump from 56 to 72 GB in [[memory.7.1]]'s table. (We are
+row's activations jump from 56 to 72 GB in [[memory.8.1]]'s table. (We are
 working with the DistMoE authors to shrink this.)
 
 > INSIGHT: Sharding what a GPU stores does not shard what it holds at the peak. FSDP stores 1/512 of everything, yet the layers in flight are unsharded: two layers' compute weights and gradients, hundreds of GB for a large MoE layer. EP does not change what each GPU stores; it shrinks what each GPU gathers, from every expert of a layer to its own.
@@ -396,7 +418,7 @@ split, so the two contexts give the same numbers:
 Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
 smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
 still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
-at every `v` ([[memory.7.7]]).
+at every `v` ([[memory.8.7]]).
 
 > NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
 
@@ -443,5 +465,3 @@ Memory alone does not pick a winner: next we build a performance model to rank
 the configs that fit.
 
 ## Notes
-
-
