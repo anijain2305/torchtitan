@@ -1,0 +1,18 @@
+{
+ "trace": "outputs/profiling/rperf_off_block/iteration_4/rank0_trace.json.gz",
+ "fwd_bwd_span_s": 19.35142759082031,
+ "fwd_bwd_busy_s": 18.376612794921876,
+ "optimizer_span_s": 1.398615109375,
+ "optimizer_busy_s": 0.4188445517578125,
+ "fwd_bwd_by_class_s": {
+  "Dense GEMM bf16": 5.957468339999957,
+  "DistMoE grouped GEMM (+fused dispatch/combine)": 5.414696900000009,
+  "Other elementwise, casts, reductions": 1.7212250969999952,
+  "FSDP buffer copies": 1.6997212869999982,
+  "KDA": 1.3729798729999994,
+  "Attention residuals": 1.2607689730000047,
+  "MLA": 0.6787290379999996,
+  "MXFP8 quantize": 0.3330087019999997,
+  "Norms (RMSNorm, L2)": 0.21275041199999997
+ }
+}

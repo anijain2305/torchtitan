@@ -49,6 +49,21 @@ from torchtitan.distributed.activation_remat import (
 from torchtitan.observability.profiler import Profiler
 from torchtitan.trainer import Trainer
 
+# TODO: remove once the study's PyTorch build (13552b6, Nov 6) is newer than the
+# FSDP2 accessor torchtitan's activation offloader calls. Same body as upstream
+# FSDPModule.get_all_gather_copy_in_stream.
+from torch.distributed.fsdp import FSDPModule as _FSDPModule
+
+if not hasattr(_FSDPModule, "get_all_gather_copy_in_stream"):
+
+    def _get_all_gather_copy_in_stream(self) -> torch.Stream:
+        state = self._get_fsdp_state()
+        if state._is_root is None:
+            raise RuntimeError("call after the root FSDP module's first forward")
+        return state._comm_ctx.all_gather_copy_in_stream
+
+    _FSDPModule.get_all_gather_copy_in_stream = _get_all_gather_copy_in_stream
+
 NUM_LAYERS = int(os.environ.get("KIMI_K3_INVENTORY_LAYERS", "8"))
 OUT = os.environ.get("KIMI_K3_INVENTORY_OUT")
 # microbatch forwards to skip before measuring (step 1 warms up DistMoE, FSDP, allocator)
@@ -152,10 +167,14 @@ def _measured_block(region_name, fn, *a, **kw):
     return out
 
 
-remat.region = _timed_region
-remat.checkpoint = _checkpoint
+# KIMI_K3_INVENTORY_PLAIN=1: no instrumentation (CUDA-graphed runs; event
+# timing inside a graph capture is not meaningful).
+_PLAIN = os.environ.get("KIMI_K3_INVENTORY_PLAIN") == "1"
+if not _PLAIN:
+    remat.region = _timed_region
+    remat.checkpoint = _checkpoint
 
-if os.environ.get("KIMI_K3_INVENTORY_POLICY") == "none":
+if os.environ.get("KIMI_K3_INVENTORY_POLICY") == "none" and not _PLAIN:
     # No remat checkpoints to wrap: measure each block's forward directly.
     from torchtitan.models.kimi_k3.model import KimiK3TransformerBlock as _Block
 
@@ -224,6 +243,37 @@ def _block_times() -> dict[str, float]:
 
 def _recompute_regions() -> list[str]:
     return [r for r in os.environ.get("KIMI_K3_INVENTORY_RECOMPUTE", "").split(",") if r]
+
+
+def _policy():
+    """KIMI_K3_INVENTORY_POLICY / _RECOMPUTE / _OFFLOAD as a remat config (or None)."""
+    policy = os.environ.get("KIMI_K3_INVENTORY_POLICY", "save_all")
+    # KIMI_K3_INVENTORY_OFFLOAD: "1" = block inputs + every retained save; otherwise a
+    # comma-separated list of region patterns, where "block" means the block inputs
+    spec = os.environ.get("KIMI_K3_INVENTORY_OFFLOAD", "")
+    items = ["block", "*"] if spec == "1" else [x for x in spec.split(",") if x]
+    if policy == "save_all":
+        return ActivationRematConfig(
+            save_regions=["*"],
+            recompute_regions=_recompute_regions(),
+            offload_block_input="block" in items,
+            offload_regions=[x for x in items if x != "block"],
+        )
+    assert not items, "offload is only wired for save_all policies"
+    return {"full": FullActivationRematConfig(), "none": None}[policy]
+
+
+def remat_perf_8k() -> Trainer.Config:
+    """perf_fsdp_ep64_8k truncated to NUM_LAYERS (CUDA graphs, last step profiled) with the remat /
+    offload policy from the environment; run with KIMI_K3_INVENTORY_PLAIN=1.
+    Traces go to outputs/profiling/<KIMI_K3_INVENTORY_PROFILE>."""
+    config = base.perf_fsdp_ep64_8k()
+    config.model = replace(config.model, layers=config.model.layers[:NUM_LAYERS])
+    config.activation_remat = _policy()
+    prof = os.environ.get("KIMI_K3_INVENTORY_PROFILE", "remat_perf_8k")
+    config.profiler = replace(config.profiler, save_traces_folder=f"profiling/{prof}",
+                              enable_memory_snapshot=False)
+    return config
 
 
 def remat_regions_8k() -> Trainer.Config:
