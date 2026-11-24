@@ -560,12 +560,18 @@ def sharding_steps(ctx: str = "8K") -> str:
                      f"per-GPU memory at each sharding step at {ctx}, log2 axis")
 
 
-def zero_table(ctx: str = "8K") -> str:
+def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
     """The per-GPU table behind sharding-steps: persistent state (master
     weights, gradients, optimizer state at their sharded size) and working set
     (weight copies and unsharded gradient copies kept to compute). Activations
-    are left out: they depend on the remat policy, chosen later."""
+    are left out: they depend on the remat policy, chosen later.
+    ep=False: the ZeRO rows only (the ZeRO/FSDP subsection). ep=True: the same
+    table again with the FSDP + EP 64 row revealed: the earlier rows are greyed,
+    ZeRO-3 stays as the row to compare against, and the EP row is accented with
+    how many times smaller each changed cell is."""
     rows = zero_parts(ctx)
+    if not ep:
+        rows = rows[:-1]
     rule = "border-left: 2px solid #898781;"  # separates the column groups
     tint = "background: rgba(137, 135, 129, 0.10);"
     center = "text-align: center !important;"  # the page's .dtable th:first-child rule would left-align
@@ -589,21 +595,39 @@ def zero_table(ctx: str = "8K") -> str:
             return ""
         return "background: rgba(0, 131, 0, 0.12);" if v < pv else "background: rgba(227, 73, 72, 0.15);"
 
-    for r in rows:
+    accent = "#2a78d6"  # marks the row this table adds
+    for k, r in enumerate(rows):
         vals = list(r["persistent"]) + list(r["working"])
         vals.append(sum(vals))
         p = prev or [None] * len(vals)
+        new = ep and k == len(rows) - 1
+        dim = ep and k < len(rows) - 2  # rows already discussed, kept for context
         cells = ""
         for i, (v, pv) in enumerate(zip(vals, p)):
-            style = (rule if i in (0, 3, 5) else "") + shade(v, pv)
+            style = (rule if i in (0, 3, 5) else "") + ("" if dim else shade(v, pv))
             text = (f"<b>{_dec(v)}</b>" if i == 5 else _dec(v)) if v else "-"
             note = r["cell_notes"][i] if i < len(r["cell_notes"]) else ""
+            if new and pv and v < pv / 1.5:
+                note = f"<b>{pv / v:.0f}x smaller</b>" + (f", {note}" if note else "")
             if note and v:
                 text += f'<span class="sub">{note}</span>'
             cells += f'<td style="{style}">{text}</td>' if style else f"<td>{text}</td>"
-        out.append(f"<tr><td>{r['label']}</td>{cells}</tr>")
+        if new:
+            label = (f'<b>{r["label"]}</b><span class="sub" style="color: {accent}; font-weight: 600;">'
+                     "new: expert parallelism</span>")
+            out.append(f'<tr style="box-shadow: inset 4px 0 0 {accent};"><td>{label}</td>{cells}</tr>')
+        else:
+            row_style = ' style="opacity: 0.4;"' if dim else ""
+            out.append(f'<tr{row_style}><td>{r["label"]}</td>{cells}</tr>')
         prev = vals
     out.append("</table>")
+    if ep:
+        out.append("<p><em>The ZeRO rows from the table above, greyed except ZeRO-3, which the new "
+                   "row is compared against. EP leaves every shard at about 1/512; it shrinks the "
+                   "working set, because each GPU gathers only its group's 14 experts per layer instead "
+                   "of all 896. The dense part of each layer (bf16 weights, fp32 gradients) does not "
+                   "shrink.</em></p>")
+        return "".join(out)
     out.append("<p><em>Working set: the weight copies are MXFP8 for the routed experts (98% of the "
                "parameters) and bf16 for the dense layers; gradients are fp32. "
                "ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
@@ -2309,6 +2333,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),
+                "zero-ep-table": by_context(lambda c: zero_table(c, ep=True)),
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

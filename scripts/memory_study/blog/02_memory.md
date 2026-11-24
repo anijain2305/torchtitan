@@ -66,135 +66,73 @@ the persistent state alone fills a quarter of it. The stashed activations of a
 single 8K sequence, 746 GB, are 2.6 times one GPU. It is an understatement to
 call this model memory hungry!
 
+## Fitting the persistent state
 
+Alright, time to roll up our sleeves! Let's shard the persistent state and fit
+it on our cluster.
 
-<!--
-## Stashed Activations
+We start with plain data parallelism over all 512 GPUs. A step of 2,048
+sequences (at 8K) gives each GPU 4 of them, run one at a time as 4
+microbatches with gradient accumulation. On its own, data parallelism only
+multiplies the problem: every GPU holds the whole model. What shards the
+persistent state across those 512 copies is [ZeRO](https://arxiv.org/abs/1910.02054).
 
-The forward pass keeps some tensors around for the backward pass. We call them
-*stashed activations*, to avoid the word "saved", which is easily confused with
-saving memory. Unlike the persistent state, they scale with tokens, not
-parameters.
+### ZeRO / FSDP
 
-To keep things simple, a microbatch is one sequence: 8,192 tokens at 8K, or
-32,768 at 32K. Measured with a fake-tensor run (see [[methodology.1]] for how), one sequence stashes
-**746 GB at 8K** and **3.0 TB at 32K** (4x the footprint at 8K). The toggle at the
-top right switches the charts between the two.
+ZeRO comes in three stages, each sharding one more thing:
 
-Where do they go? At 8K:
+- **ZeRO-1** shards the master weights and the optimizer state.
+- **ZeRO-2** also shards the gradients.
+- **ZeRO-3** also shards the weights used for compute, part of the *working
+  set* (more on that below). This is what PyTorch's FSDP does by default, as
+  long as you are not using pipeline parallelism (why? we will see later), so I
+  use "ZeRO-3" and "FSDP" interchangeably.
 
-| Stashed by | GB | Share |
-|---|---|---|
-| Routed experts | 420 | 56% |
-| Attention (KDA and MLA) | 244 | 33% |
-| Shared experts, norms, head, loss, layer 0 | 57 | 8% |
-| Attention residuals | 25 | 3% |
-| **Total** | **746** |  |
+Let's apply them one at a time and watch what happens to the memory per GPU
+(green: less than the row above, red: more).
 
-More than half of it is the routed experts. Each token goes to 16 experts, so each of its
-expert intermediates is stashed 16 times over. That is what rematerialization
-goes after next.
+::: figure zero-table
 
-This is deliberately simple again. Tensor parallelism (with sequence
-parallelism) and context parallelism split each sequence across GPUs and shrink
-what each one stashes; we bring them in when we get there.
+**No sharding.** Our problem statement: every GPU holds all 33.4 TB of
+persistent state.
 
-The attention residuals run on TorchTitan's fused Triton kernel (an opt-in
-override adapted from Flash Linear Attention). It reads the block stack and the
-current partial sum directly, so it stashes no concatenated copies of them.
+**ZeRO-1.** Sharding the master weights and the optimizer state divides both by
+512: the two green cells under persistent state. A big improvement! But what is
+going on with the working set? This is where working from first principles
+pays off. Once the master weights are sharded, how does a GPU run the model?
+Where does it get the weights from? Each GPU all-gathers the full weights from
+the shards, once per step, and keeps them for every microbatch: that copy is
+the working set. We compute in MXFP8, so most of these weights take 1 byte per
+parameter, which is why the cell (2.84 TB) is close to Kimi K3's 2.78T
+parameters. Keep an eye on the working set; it matters a lot in a roofline
+study. Overall, ZeRO-1 takes us from 33.4 TB per GPU to 14.0 TB.
 
-Before tackling the persistent state, the next three subsections deal with
-activations:
-rematerialization, which shrinks them; DistMoE, which does not shrink them but
-is how we run the routed experts, so its own memory has to be part of the
-picture; and MXFP8, which shrinks matmul operands to 8 bits. -->
+**ZeRO-2.** Now the gradients are sharded too, so the persistent gradients
+divide by 512. All good! But again the working set takes a hit. Backward
+produces each layer's full gradient before reduce-scattering it to the shards,
+and to hide that communication, the reduce-scatter of the previous layer runs
+while the current layer computes. So at the peak a GPU holds two layers' full
+gradients, in fp32: 242 GB. Still, we keep going down, to 3.15 TB per GPU.
 
-## Rematerialization
+**ZeRO-3.** Finally, our very own PyTorch FSDP shards the compute weights as
+well. The trick mirrors the reduce-scatter: FSDP all-gathers the next layer's
+weights while the current layer computes, so it holds two layers' worth of
+weights. In MXFP8 that is 61.8 GB, about a quarter of the fp32 gradients. We
+get very close, 378 GB, but that is still over the 288 GB of one GPU.
 
-Rematerialization (torch_remat, commonly known as activation checkpointing) stashes fewer tensors in the forward pass, and recomputes them during backward. With full remat, each layer keeps only its input (plus the
-routing decisions), and the activations of one 8K sequence drop from 746 GB to
-**15.6 GB**, about 48x less. The price is one extra forward pass: 8 FLOPs per parameter per
-token instead of 6, about 33% more compute.
+Something interesting shows up here. Suppose we had 1,024 GPUs instead of 512:
+what would the ZeRO-3 row look like? The persistent state halves, but the
+working set does not move. Time for our first nugget:
 
-**Recompute's contribution to the peak.** Before each layer's backward, remat
-reruns its forward, recreating that layer's intermediate activations: about
-6 GB per 8K tokens, one layer at a time. The peak comes at the first layer of
-the backward pass, when the whole stash is still live, so it is the stash plus
-one layer's working set.
+> NUGGET: FSDP's working set sets a floor that more GPUs cannot lower. With infinitely many GPUs the persistent state per GPU goes to zero, but Kimi K3 would still need 304 GB per GPU for the two layers in flight (242 GB of gradients plus 61.8 GB of weights), more than a GPU holds, before counting a single activation.
 
-The chart below compares no remat, TorchTitan's default remat (which keeps
-every region the model declares except the routed experts' first projection,
-w13, recomputing only that) and full remat, drawn as its stash plus the
-recompute peak. From here on, full remat means both: 21 GB per 8K sequence.
+So FSDP is not enough; we need to shrink the working set itself. Almost all of
+it is experts, and I like to think the people who first scaled MoE models hit
+this same wall. Their answer was expert parallelism.
 
-::: figure memory-remat
+### Expert parallelism
 
-## DistMoE
-
-[DistMoE](https://github.com/meta-pytorch/dist_moe) is a recent library from
-the PyTorch team for running MoE layers efficiently: its kernels overlap the
-token dispatch and combine with the expert GEMMs, drop no tokens, and work with
-CUDA graphs. Any production training system has something like it to efficiently manage
-routing imbalance, and its implementation changes both memory
-and speed. So even though it pulls us away from the idealized picture, we bring
-it in now.
-
-Memory is tight, so we configure DistMoE to recompute too: per MoE layer it
-stashes only the layer's input and recomputes the expert intermediates in
-backward. On top of full remat, that adds four things:
-
-- **Its stashed input**, held in DistMoE's own preallocated buffer.
-- **Its output**, which full remat keeps instead of recomputing (why: see
-  [[methodology.2]]).
-- **Scratch** for one layer's temporaries, reused by every layer and sized with
-  a capacity factor of 4 so that experts receiving more than their share of
-  tokens still fit.
-- **Routing indices**: three int64 index arrays per MoE layer, stashed so the
-  backward can send gradients back to the right tokens. They are negligible
-  without expert parallelism (0.3 GB at 8K), but they are sized for the worst
-  case across the expert-parallel group, so with EP 64 they grow 56x, to 16 GB
-  ([[memory.7]]).
-
-For one sequence:
-
-|  | 8K | 32K |
-|---|---|---|
-| Full remat (stash + recompute peak) | 21.2 GB | 85.0 GB |
-| DistMoE stashed inputs | 5.4 GB | 21.6 GB |
-| DistMoE outputs | 5.4 GB | 21.6 GB |
-| DistMoE scratch (capacity factor 4) | 23.6 GB | 94.5 GB |
-| **Activations** | **56 GB** | **223 GB** |
-
-::: figure memory-distmoe
-
-> NOTE: DistMoE's scratch gets large at 32K: 94.5 GB, about half of one GPU's 192 GB on its own. It scales with the capacity factor, so it is a knob we can turn down once we know how imbalanced the routing really is. For now we keep the factor at 4.
-
-From here on, "activations" means full remat (stash plus recompute peak) plus
-DistMoE's stashed inputs, outputs and scratch -- 56 GB per 8K sequence and
-223 GB per 32K sequence. The routing indices come in with expert
-parallelism.
-
-## MXFP8
-
-MXFP8 runs the matmuls on 8-bit operands with a shared scale per 32 elements,
-about 1 byte per element instead of 2. We use it for the routed experts only,
-through DistMoE's own MXFP8 kernels; the dense linears stay in bf16. Memory
-barely changes: **with full remat, a layer stashes only
-its bf16 input, so there is little left for MXFP8 to shrink.** DistMoE still
-stashes its input in bf16, and its scratch shrinks by only about 6% (23.6 to
-22.2 GB at 8K), since most of its temporaries stay in bf16. The rest of the
-post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
-
-## Where We Stand
-
-::: figure memory-summary
-
-Rematerialization brought the activations down to 56 GB per 8K sequence, well
-under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
-whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.7.3]], [[memory.7.4]]). The persistent state has
-not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
-to be split across many GPUs.
+::: figure zero-ep-table
 
 ## Using Parallelism to Fit the Model
 
@@ -290,6 +228,136 @@ working with the DistMoE authors to shrink this.)
 GPU.** At 32K the activations are 223 GB even before DistMoE's routing indices,
 which grow to 65 GB with EP 64, so it is far from fitting. Spoiler: we will need context or tensor
 parallelism.
+
+
+
+<!--
+## Stashed Activations
+
+The forward pass keeps some tensors around for the backward pass. We call them
+*stashed activations*, to avoid the word "saved", which is easily confused with
+saving memory. Unlike the persistent state, they scale with tokens, not
+parameters.
+
+To keep things simple, a microbatch is one sequence: 8,192 tokens at 8K, or
+32,768 at 32K. Measured with a fake-tensor run (see [[methodology.1]] for how), one sequence stashes
+**746 GB at 8K** and **3.0 TB at 32K** (4x the footprint at 8K). The toggle at the
+top right switches the charts between the two.
+
+Where do they go? At 8K:
+
+| Stashed by | GB | Share |
+|---|---|---|
+| Routed experts | 420 | 56% |
+| Attention (KDA and MLA) | 244 | 33% |
+| Shared experts, norms, head, loss, layer 0 | 57 | 8% |
+| Attention residuals | 25 | 3% |
+| **Total** | **746** |  |
+
+More than half of it is the routed experts. Each token goes to 16 experts, so each of its
+expert intermediates is stashed 16 times over. That is what rematerialization
+goes after next.
+
+This is deliberately simple again. Tensor parallelism (with sequence
+parallelism) and context parallelism split each sequence across GPUs and shrink
+what each one stashes; we bring them in when we get there.
+
+The attention residuals run on TorchTitan's fused Triton kernel (an opt-in
+override adapted from Flash Linear Attention). It reads the block stack and the
+current partial sum directly, so it stashes no concatenated copies of them.
+
+Before tackling the persistent state, the next three subsections deal with
+activations:
+rematerialization, which shrinks them; DistMoE, which does not shrink them but
+is how we run the routed experts, so its own memory has to be part of the
+picture; and MXFP8, which shrinks matmul operands to 8 bits. -->
+<!--
+## Rematerialization
+
+Rematerialization (torch_remat, commonly known as activation checkpointing) stashes fewer tensors in the forward pass, and recomputes them during backward. With full remat, each layer keeps only its input (plus the
+routing decisions), and the activations of one 8K sequence drop from 746 GB to
+**15.6 GB**, about 48x less. The price is one extra forward pass: 8 FLOPs per parameter per
+token instead of 6, about 33% more compute.
+
+**Recompute's contribution to the peak.** Before each layer's backward, remat
+reruns its forward, recreating that layer's intermediate activations: about
+6 GB per 8K tokens, one layer at a time. The peak comes at the first layer of
+the backward pass, when the whole stash is still live, so it is the stash plus
+one layer's working set.
+
+The chart below compares no remat, TorchTitan's default remat (which keeps
+every region the model declares except the routed experts' first projection,
+w13, recomputing only that) and full remat, drawn as its stash plus the
+recompute peak. From here on, full remat means both: 21 GB per 8K sequence.
+
+::: figure memory-remat
+
+## DistMoE
+
+[DistMoE](https://github.com/meta-pytorch/dist_moe) is a recent library from
+the PyTorch team for running MoE layers efficiently: its kernels overlap the
+token dispatch and combine with the expert GEMMs, drop no tokens, and work with
+CUDA graphs. Any production training system has something like it to efficiently manage
+routing imbalance, and its implementation changes both memory
+and speed. So even though it pulls us away from the idealized picture, we bring
+it in now.
+
+Memory is tight, so we configure DistMoE to recompute too: per MoE layer it
+stashes only the layer's input and recomputes the expert intermediates in
+backward. On top of full remat, that adds four things:
+
+- **Its stashed input**, held in DistMoE's own preallocated buffer.
+- **Its output**, which full remat keeps instead of recomputing (why: see
+  [[methodology.2]]).
+- **Scratch** for one layer's temporaries, reused by every layer and sized with
+  a capacity factor of 4 so that experts receiving more than their share of
+  tokens still fit.
+- **Routing indices**: three int64 index arrays per MoE layer, stashed so the
+  backward can send gradients back to the right tokens. They are negligible
+  without expert parallelism (0.3 GB at 8K), but they are sized for the worst
+  case across the expert-parallel group, so with EP 64 they grow 56x, to 16 GB
+  ([[memory.7]]).
+
+For one sequence:
+
+|  | 8K | 32K |
+|---|---|---|
+| Full remat (stash + recompute peak) | 21.2 GB | 85.0 GB |
+| DistMoE stashed inputs | 5.4 GB | 21.6 GB |
+| DistMoE outputs | 5.4 GB | 21.6 GB |
+| DistMoE scratch (capacity factor 4) | 23.6 GB | 94.5 GB |
+| **Activations** | **56 GB** | **223 GB** |
+
+::: figure memory-distmoe
+
+> NOTE: DistMoE's scratch gets large at 32K: 94.5 GB, about half of one GPU's 192 GB on its own. It scales with the capacity factor, so it is a knob we can turn down once we know how imbalanced the routing really is. For now we keep the factor at 4.
+
+From here on, "activations" means full remat (stash plus recompute peak) plus
+DistMoE's stashed inputs, outputs and scratch -- 56 GB per 8K sequence and
+223 GB per 32K sequence. The routing indices come in with expert
+parallelism.
+
+## MXFP8
+
+MXFP8 runs the matmuls on 8-bit operands with a shared scale per 32 elements,
+about 1 byte per element instead of 2. We use it for the routed experts only,
+through DistMoE's own MXFP8 kernels; the dense linears stay in bf16. Memory
+barely changes: **with full remat, a layer stashes only
+its bf16 input, so there is little left for MXFP8 to shrink.** DistMoE still
+stashes its input in bf16, and its scratch shrinks by only about 6% (23.6 to
+22.2 GB at 8K), since most of its temporaries stay in bf16. The rest of the
+post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
+
+## Where We Stand
+
+::: figure memory-summary
+
+Rematerialization brought the activations down to 56 GB per 8K sequence, well
+under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
+whole GPU, before anything else is stored. We come back to it with context and
+tensor parallelism ([[memory.7.3]], [[memory.7.4]]). The persistent state has
+not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
+to be split across many GPUs. -->
 
 ### Context Parallelism
 

@@ -288,8 +288,8 @@ def resolve_refs(body: str, labels: dict[str, str], as_html: bool = False) -> st
     return REF.sub(ref, body)
 
 
-RULE_LABEL = "Insight"
-BOXES = {"> RULE:": "rule", "> INSIGHT:": "rule", "> NOTE:": "note", "> CAVEAT:": "caveat"}
+RULE_LABEL = "Nugget"
+BOXES = {"> RULE:": "rule", "> INSIGHT:": "rule", "> NUGGET:": "rule", "> NOTE:": "note", "> CAVEAT:": "caveat"}
 BOX_LABELS = {"rule": RULE_LABEL, "note": "Side note", "caveat": "Caveat"}
 
 
