@@ -559,12 +559,20 @@ def zero_table(ctx: str = "8K") -> str:
     (weight copies and unsharded gradient copies kept to compute). Activations
     are left out: they depend on the remat policy, chosen later."""
     rows = zero_parts(ctx)
-    th = lambda h, a="": f"<th{a}>{h}</th>"
-    out = ['<table class="dtable"><tr>' + th("Per GPU", ' rowspan="2"') + th("Persistent state", ' colspan="3"')
-           + th("Working set", ' colspan="2"') + th("Persistent + working set", ' rowspan="2"') + "</tr>",
-           # centered explicitly: the page's .dtable th:first-child rule would left-align the first sub-header
-           "<tr>" + "".join(th(h, ' style="text-align: center !important"')
-                            for h in ("Master weights", "Gradients", "Optimizer state", "Weights", "Gradients"))
+    rule = "border-left: 2px solid #898781;"  # separates the column groups
+    tint = "background: rgba(137, 135, 129, 0.10);"
+    center = "text-align: center !important;"  # the page's .dtable th:first-child rule would left-align
+
+    def th(h, style="", attrs=""):
+        return f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
+
+    out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
+           + th("Persistent state", rule + tint + center, ' colspan="3"')
+           + th("Working set", rule + tint + center, ' colspan="2"')
+           + th("Persistent + working set", rule, ' rowspan="2"') + "</tr>",
+           "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
+                            for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
+                                                   "Weights", "Gradients")))
            + "</tr>"]
     prev = None
 
@@ -572,15 +580,19 @@ def zero_table(ctx: str = "8K") -> str:
         """Green if this row needs less than the row above, red if more."""
         if pv is None or abs(v - pv) <= 1e-6 * max(v, pv, 1):
             return ""
-        return ' style="background: rgba(0, 131, 0, 0.12)"' if v < pv else ' style="background: rgba(227, 73, 72, 0.15)"'
+        return "background: rgba(0, 131, 0, 0.12);" if v < pv else "background: rgba(227, 73, 72, 0.15);"
 
     for r in rows:
         vals = list(r["persistent"]) + list(r["working"])
         vals.append(sum(vals))
         p = prev or [None] * len(vals)
-        cells = "".join(f"<td{shade(v, pv)}>{_dec(v) if v else '-'}</td>" for v, pv in zip(vals[:-1], p))
+        cells = ""
+        for i, (v, pv) in enumerate(zip(vals, p)):
+            style = (rule if i in (0, 3, 5) else "") + shade(v, pv)
+            text = (f"<b>{_dec(v)}</b>" if i == 5 else _dec(v)) if v else "-"
+            cells += f'<td style="{style}">{text}</td>' if style else f"<td>{text}</td>"
         label = r["label"] + (f'<span class="sub">working set: {r["note"]}</span>' if r["note"] else "")
-        out.append(f"<tr><td>{label}</td>{cells}<td{shade(vals[-1], p[-1])}><b>{_dec(vals[-1])}</b></td></tr>")
+        out.append(f"<tr><td>{label}</td>{cells}</tr>")
         prev = vals
     out.append("</table>")
     return "".join(out)
