@@ -621,21 +621,6 @@ def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
             out.append(f'<tr{row_style}><td>{r["label"]}</td>{cells}</tr>')
         prev = vals
     out.append("</table>")
-    if ep:
-        out.append("<p><em>The ZeRO rows from the table above, greyed except ZeRO-3, which the new "
-                   "row is compared against. EP leaves every shard at about 1/512; it shrinks the "
-                   "working set, because each GPU gathers only its group's 14 experts per layer instead "
-                   "of all 896. The dense part of each layer (bf16 weights, fp32 gradients) does not "
-                   "shrink.</em></p>")
-        return "".join(out)
-    out.append("<p><em>Working set: the weight copies are MXFP8 for the routed experts (98% of the "
-               "parameters) and bf16 for the dense layers; gradients are fp32. "
-               "ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
-               "ZeRO-1 also keeps the gradients unsharded until the reduce-scatter at the end of the step. "
-               "ZeRO-2 and FSDP reduce-scatter each layer's gradients during backward, so they hold the "
-               "gradients of two layers: the current one and the previous one, whose reduce-scatter is "
-               "still running. FSDP also holds the weights of two layers: the current one and the "
-               "prefetched next one (all-gathered).</em></p>")
     return "".join(out)
 
 
