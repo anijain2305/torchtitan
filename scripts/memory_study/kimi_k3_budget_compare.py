@@ -96,7 +96,7 @@ def main() -> None:
     print("   breakdown 8K ZeRO-2 EP128 TP8: " + ", ".join(f"{k} {v / GB:.0f}" for k, v in r.items()))
 
     print("\n== Nugget checks")
-    z = {row[0]: row[6] for row in bf.zero_parts("8K")}
+    z = {row["label"]: row["total"] for row in bf.zero_parts("8K")}
     for label, tot in z.items():
         print(f"   8K {label:24s} {tot / GB:8.0f} GB  {fits(tot)}")
     for ctx in ("32K",):

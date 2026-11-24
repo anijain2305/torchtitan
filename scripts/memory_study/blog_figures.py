@@ -466,10 +466,14 @@ def padded_shards(ctx_data: dict, degree: int, pad: float) -> tuple[float, float
 
 def zero_parts(ctx: str = "8K") -> list:
     """Per-GPU memory over 512 GPUs at each sharding step (data parallel, one
-    sequence per microbatch, full remat + DistMoE), with the compute weights in
-    MXFP8 (FSDP releases the bf16 all-gather output once the MXFP8 copy is
-    built). Rows: (label, compute weights, gradients, master + optimizer,
-    activations, peak from the chunked-loss loop or 0, total, activation parts)."""
+    sequence per microbatch, full remat + DistMoE), grouped by lifetime:
+      - persistent: what is sharded (master weights + optimizer state, plus the
+        gradient shards once gradients are sharded);
+      - working: what is kept unsharded to compute (the compute copies of the
+        weights -- bf16 dense, MXFP8 experts -- and unsharded gradients): the
+        whole model under ZeRO-1/2, the two layers in flight under FSDP.
+    Rows are dicts: label, persistent, working, activations, loop (peak from the
+    chunked-loss loop, or 0), total, parts (activation parts), notes."""
     d = _data()
     P = d["persistent"]["model"]
     tot = lambda k: sum(P[k].values())
@@ -495,8 +499,15 @@ def zero_parts(ctx: str = "8K") -> list:
     meta1 = MOE_LAYERS * routing_metadata(1, NUM_EXPERTS, T)
     acts1 = base_acts + rws + meta1  # full remat's stash and recompute peak, DistMoE, routing indices
     out = []
-    for label, w, g, mo in (("No sharding", 0, G, MO), ("ZeRO-1", copy, G, mo_shard), ("ZeRO-2", copy, g_shard, mo_shard)):
-        out.append((label, w, g, mo, acts1, 0, w + g + mo + acts1, (base_acts, meta1, rws)))
+    unsharded = (
+        ("No sharding", MO, G, "master + optimizer", "full gradients"),
+        ("ZeRO-1", mo_shard, copy + G, "master + optimizer, 1/512", "whole model: weights + gradients"),
+        ("ZeRO-2", mo_shard + g_shard, copy, "master + optimizer + gradients, 1/512", "whole model: weights"),
+    )
+    for label, persistent, working, p_note, w_note in unsharded:
+        out.append({"label": label, "persistent": persistent, "working": working, "activations": acts1,
+                    "loop": 0, "total": persistent + working + acts1, "parts": (base_acts, meta1, rws),
+                    "notes": (p_note, w_note)})
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
@@ -505,16 +516,20 @@ def zero_parts(ctx: str = "8K") -> list:
         meta = MOE_LAYERS * routing_metadata(ep, NUM_EXPERTS / ep, T)
         g_s, mo_s = padded_shards(d, 512, expert_padding(NUM_EXPERTS / ep, 512 // ep))
         acts = base_acts + rws + meta
-        w, g = 2 * layer_w(routed), g_s + 2 * layer_g(routed)
-        backward_peak = w + g + mo_s + acts
-        loss_peak = g_s + mo_s + acts - rws + chunk_loop  # the loss runs before the recompute peak
-        out.append((label, w, g, mo_s, acts, chunk_loop if loss_peak > backward_peak else 0,
-                    max(backward_peak, loss_peak), (base_acts, meta, rws)))
+        persistent, working = mo_s + g_s, 2 * layer_w(routed) + 2 * layer_g(routed)
+        backward_peak = persistent + working + acts
+        loss_peak = persistent + acts - rws + chunk_loop  # the loss runs before the recompute peak
+        experts = f"{NUM_EXPERTS // ep} experts each"
+        out.append({"label": label, "persistent": persistent, "working": working, "activations": acts,
+                    "loop": chunk_loop if loss_peak > backward_peak else 0,
+                    "total": max(backward_peak, loss_peak), "parts": (base_acts, meta, rws),
+                    "notes": ("master + optimizer + gradients, 1/512",
+                              f"2 layers in flight: weights + gradients, <b>{experts}</b>")})
     return out
 
 
 def zero_steps(ctx: str = "8K") -> list:
-    return [(r[0], r[6]) for r in zero_parts(ctx)]
+    return [(r["label"], r["total"]) for r in zero_parts(ctx)]
 
 
 def sharding_steps(ctx: str = "8K") -> str:
@@ -525,14 +540,10 @@ def sharding_steps(ctx: str = "8K") -> str:
 
 
 def zero_table(ctx: str = "8K") -> str:
-    """The per-GPU table behind sharding-steps."""
+    """The per-GPU table behind sharding-steps: persistent state (sharded),
+    working set (kept unsharded to compute), activations."""
     rows = zero_parts(ctx)
-    G512 = rows[2][2]  # ZeRO-2's gradient shard
-    head = ["Per GPU", "Master + optimizer", "Gradients", "Activations", "Compute weights (MXFP8)",
-            "Total", "x GPU"]
-    w_notes = {"ZeRO-1": "whole model", "ZeRO-2": "whole model",
-               "ZeRO-3 / FSDP": "2 x <b>896 experts</b>",
-               "FSDP + EP 64": "2 x <b>14 experts</b>"}
+    head = ["Per GPU", "Persistent state", "Working set", "Activations", "Total", "x GPU"]
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     prev = None
 
@@ -542,21 +553,18 @@ def zero_table(ctx: str = "8K") -> str:
             return ""
         return ' style="background: rgba(0, 131, 0, 0.12)"' if v < pv else ' style="background: rgba(227, 73, 72, 0.15)"'
 
-    for label, w, g, mo, a, loop, total, (base_a, meta, rws) in rows:
+    for r in rows:
         cell = lambda v, note="": (f"{_dec(v) if v else '-'}" + (f'<span class="sub">{note}</span>' if note else ""))
+        meta = r["parts"][1]
         a_note = f"incl. {_dec(meta)} DistMoE indices" if meta > 1e9 else ""
-        if label in ("ZeRO-3 / FSDP", "FSDP + EP 64"):
-            experts = "896 experts" if label == "ZeRO-3 / FSDP" else "14 experts"
-            g_note = f"{_dec(G512)} + {_dec(g - G512)} (2 x <b>{experts}</b>)"
-        else:
-            g_note = {"No sharding": "", "ZeRO-1": "unsharded", "ZeRO-2": "1/512"}[label]
-        tot = f"<b>{_dec(total)}</b>" + ('<span class="sub">peak: chunked-loss loop</span>' if loop else "")
-        p = prev or (None,) * 5
-        out.append(f"<tr><td>{label}</td><td{shade(mo, p[0])}>{cell(mo, '' if label == 'No sharding' else '1/512')}</td>"
-                   f"<td{shade(g, p[1])}>{cell(g, g_note)}</td><td{shade(a, p[2])}>{cell(a, a_note)}</td>"
-                   f"<td{shade(w, p[3])}>{cell(w, w_notes.get(label, ''))}</td>"
-                   f"<td{shade(total, p[4])}>{tot}</td><td>{total / GPU_BYTES:.2f}</td></tr>")
-        prev = (mo, g, a, w, total)
+        p_note, w_note = r["notes"]
+        tot = f"<b>{_dec(r['total'])}</b>" + ('<span class="sub">peak: chunked-loss loop</span>' if r["loop"] else "")
+        p = prev or (None,) * 4
+        out.append(f"<tr><td>{r['label']}</td><td{shade(r['persistent'], p[0])}>{cell(r['persistent'], p_note)}</td>"
+                   f"<td{shade(r['working'], p[1])}>{cell(r['working'], w_note)}</td>"
+                   f"<td{shade(r['activations'], p[2])}>{cell(r['activations'], a_note)}</td>"
+                   f"<td{shade(r['total'], p[3])}>{tot}</td><td>{r['total'] / GPU_BYTES:.2f}</td></tr>")
+        prev = (r["persistent"], r["working"], r["activations"], r["total"])
     out.append("</table>")
     return "".join(out)
 
@@ -597,7 +605,7 @@ def fsdp_ep_parts(ctx: str = "8K", cp: int = 1, tp: int = 1) -> dict:
 def cp_table(ctx: str = "8K") -> str:
     """FSDP + EP 64 at CP 1 / 2 / 4 / 8, shaded against the row above."""
     rows = [fsdp_ep_parts(ctx, cp) for cp in (1, 2, 4)]
-    head = ["FSDP + EP 64", "Tokens / GPU", "Microbatches", "Activations", "Shards", "Largest temporary",
+    head = ["FSDP + EP 64", "Tokens / GPU", "Microbatches", "Activations", "Persistent state", "Working set",
             "Total", "x GPU"]
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     prev = None
@@ -620,7 +628,7 @@ def cp_table(ctx: str = "8K") -> str:
 def tp_table(ctx: str = "8K") -> str:
     """TP next to CP of the same degree; each TP row shaded against its CP row."""
     pairs = [(fsdp_ep_parts(ctx, cp=k), fsdp_ep_parts(ctx, tp=k)) for k in (2, 4)]
-    head = ["FSDP + EP 64", "Tokens / GPU", "Activations", "Largest temporary", "Total", "x GPU"]
+    head = ["FSDP + EP 64", "Tokens / GPU", "Activations", "Working set", "Total", "x GPU"]
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     for c, t in pairs:
         for r, ref in ((c, None), (t, c)):
@@ -704,6 +712,7 @@ def pp_parts(ctx: str = "8K", P: int = 8, zero: int = 1, cp: int = 1, tp: int = 
         "v": v,
         "held": held, "v": v, "held": held, "zero": zero, "cp": cp, "tp": tp, "layers": ls, "gpus": g, "experts": 896 // g,
             "microbatches": m, "mo": mo, "grads": gr, "acts": acts, "meta": meta, "weights": w, "temp": temp,
+            "working": w + gr + temp,
             "total": total,
             "valid": m >= P}
 
@@ -2159,8 +2168,8 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
     split by CP or TP. Cells are shaded against the same PP degree without a
     split; the total is green if it fits in one GPU, red if not."""
     splits = [(1, 1), (2, 1), (1, 2), (4, 1), (1, 4)]
-    head = [f"PP {degrees[0]}, ZeRO-1 (FSDP {512 // degrees[0]}, EP {512 // degrees[0]})" if len(degrees) == 1 else "PP, ZeRO-1", "Activations", "Gradients (stage)",
-            "Compute weights (stage, MXFP8)", "Total", "x GPU"]
+    head = [f"PP {degrees[0]}, ZeRO-1 (FSDP {512 // degrees[0]}, EP {512 // degrees[0]})" if len(degrees) == 1 else "PP, ZeRO-1", "Activations",
+            "Persistent state", "Working set", "Total", "x GPU"]
     green, red = ' style="background: rgba(0, 131, 0, 0.12)"', ' style="background: rgba(227, 73, 72, 0.15)"'
     out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     for P in degrees:
@@ -2172,8 +2181,8 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
             fits = r["total"] <= GPU_BYTES
             out.append(f'<tr><td>{name}<span class="sub">{r["microbatches"]:g} microbatches per pipeline</span></td>'
                        f'<td{sh("acts")}>{_dec(r["acts"])}<span class="sub">incl. {_dec(r["meta"])} DistMoE indices</span></td>'
-                       f'<td{sh("grads")}>{_dec(r["grads"])}</td>'
-                       f'<td{sh("weights")}>{_dec(r["weights"])}</td>'
+                       f'<td{sh("mo")}>{_dec(r["mo"])}<span class="sub">master + optimizer, 1/{r["gpus"]} of the stage</span></td>'
+                       f'<td{sh("working")}>{_dec(r["working"])}<span class="sub">the stage, unsharded: weights + gradients</span></td>'
                        f'<td{green if fits else red}><b>{_dec(r["total"])}</b><span class="sub">{"fits" if fits else "over 288 GB"}</span></td>'
                        f'<td>{r["total"] / GPU_BYTES:.2f}</td></tr>')
     out.append("</table>")
