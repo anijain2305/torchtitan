@@ -585,7 +585,7 @@ def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
            + th("Persistent + working set", rule, ' rowspan="2"') + "</tr>",
            "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
                             for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
-                                                   "Weights (MXFP8)", "Gradients (fp32)")))
+                                                   "Compute weights (MXFP8)", "Gradients (fp32)")))
            + "</tr>"]
     prev = None
 

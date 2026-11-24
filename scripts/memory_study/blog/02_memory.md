@@ -1,7 +1,7 @@
 # The Memory Problem
 
 The blueprint is simple. First, find the parallelism configs that fit the
-weight-related memory: the sharded weights, gradients and optimizer states.
+weight-related memory: the sharded master weights, gradients and optimizer state.
 Whatever is left of the GPU's memory is that config's budget for activations.
 Then, for each config, find the best speed-memory trade-off within that budget
 using remat and offloading. We set step time aside until the next section. A
@@ -81,8 +81,8 @@ ZeRO comes in three stages, each sharding one more thing:
 
 - **ZeRO-1** shards the master weights and the optimizer state.
 - **ZeRO-2** also shards the gradients.
-- **ZeRO-3** also shards the weights used for compute, part of the *working
-  set* (more on that below). This is what PyTorch's FSDP does by default, as
+- **ZeRO-3** also shards the *compute weights*, the copy the matmuls run on and
+  part of the *working set* (more on that below). This is what PyTorch's FSDP does by default, as
   long as you are not using pipeline parallelism (why? we will see later), so I
   use "ZeRO-3" and "FSDP" interchangeably.
 
@@ -98,9 +98,9 @@ persistent state.
 512: the two green cells under persistent state. A big improvement! But what is
 going on with the working set? This is where working from first principles
 pays off. Once the master weights are sharded, how does a GPU run the model?
-Where does it get the weights from? Each GPU all-gathers the full weights from
-the shards, once per step, and keeps them for the whole step: that copy is
-the working set. We compute in MXFP8, so most of these weights take 1 byte per
+Where does it get the weights from? Each GPU all-gathers the full compute weights
+from the shards, once per step, and keeps them for the whole step: that copy is
+the working set. We compute in MXFP8, so most compute weights take 1 byte per
 parameter, which is why the cell (2.84 TB) is close to Kimi K3's 2.78T
 parameters. Keep an eye on the working set; it matters a lot in a roofline
 study. Overall, ZeRO-1 takes us from 33.4 TB per GPU to 14.0 TB.
