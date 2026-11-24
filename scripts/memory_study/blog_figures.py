@@ -526,10 +526,9 @@ def zero_parts(ctx: str = "8K") -> list:
     row("No sharding", (W, G, S_), (0, 0), acts1, (base_acts, meta1, rws),
         cell_notes=("unsharded", "unsharded", "unsharded", "", ""))
     row("ZeRO-1", (m_sh, G, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
-        cell_notes=("1/512", "unsharded, reduce-scattered once per step", "1/512",
-                    "whole model, gathered once and kept", ""))
+        cell_notes=("1/512", "unsharded", "1/512", "whole model", ""))
     row("ZeRO-2", (m_sh, g_sh, o_sh), (copy, 0), acts1, (base_acts, meta1, rws),
-        cell_notes=("1/512", "1/512", "1/512", "whole model, gathered once and kept", ""))
+        cell_notes=("1/512", "1/512", "1/512", "whole model", ""))
     # FSDP overlaps communication with compute, so two layers are in flight: in
     # backward, the current and the prefetched layer's compute weights, and the
     # current layer's gradient plus the previous one's, still being reduce-scattered;
@@ -543,10 +542,8 @@ def zero_parts(ctx: str = "8K") -> list:
         loss_peak = sum(persistent) + acts - rws + chunk_loop  # the loss runs before the recompute peak
         row(label, persistent, working, acts, (base_acts, meta, rws),
             loop=chunk_loop if loss_peak > backward_peak else 0, total=max(backward_peak, loss_peak),
-            cell_notes=("1/512", "1/512", "1/512",
-                        f"2 layers all-gathered (current + prefetched), <b>{NUM_EXPERTS // ep} experts</b> each",
-                        f"2 layers (current + previous, still reduce-scattering), "
-                        f"<b>{NUM_EXPERTS // ep} experts</b> each"))
+            cell_notes=("1/512", "1/512", "1/512", f"2 layers, <b>{NUM_EXPERTS // ep} experts</b>",
+                        f"2 layers, <b>{NUM_EXPERTS // ep} experts</b>"))
     return out
 
 
@@ -605,6 +602,11 @@ def zero_table(ctx: str = "8K") -> str:
         out.append(f"<tr><td>{r['label']}</td>{cells}</tr>")
         prev = vals
     out.append("</table>")
+    out.append("<p><em>Working set: ZeRO-1 and ZeRO-2 gather the whole model's weights once and keep them; "
+               "ZeRO-1 also keeps the gradients unsharded until the reduce-scatter at the end of the step. "
+               "FSDP holds two layers at a time: the weights of the current layer and the prefetched next one "
+               "(all-gathered), and the gradients of the current layer and the previous one, whose "
+               "reduce-scatter is still running.</em></p>")
     return "".join(out)
 
 
