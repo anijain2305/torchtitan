@@ -174,6 +174,11 @@ EXTRA_CSS = """
 .tpfix { display: inline-block; outline: 1.5px solid #c98500; background: rgba(237, 161, 0, 0.12);
          border-radius: 3px; padding: 0 4px; }
 .dtable tr.tpfix-row td { border-bottom: 0; padding-top: 14px; padding-bottom: 8px; }
+/* PP weight table: arrows from plain ZeRO-1's cells down to PP 8's */
+.ppa-wrap { position: relative; }
+.ppa-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.ppa { display: inline-block; outline: 1.5px solid #2a78d6; background: rgba(42, 120, 214, 0.08);
+       border-radius: 3px; padding: 0 4px; }
 .tpfix-sum { display: inline-block; border: 1.5px solid #c98500; background: rgba(237, 161, 0, 0.12);
              border-radius: 6px; padding: 2px 10px; font-size: 12px; color: var(--text-primary); }
 @media (min-width: 1400px) {
@@ -504,6 +509,30 @@ const drawBrackets = () => {{
 }};
 drawBrackets();
 window.addEventListener("resize", drawBrackets);
+// PP weight table: an elbow arrow down each column's left margin, from the
+// "from" box to the "to" box, labeled at its head
+const drawArrows = () => {{
+  for (const wrap of document.querySelectorAll(".ppa-wrap")) {{
+    const svg = wrap.querySelector(".ppa-lines"), base = wrap.getBoundingClientRect();
+    if (!base.width) continue;
+    let out = '<defs><marker id="ppa-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+            + '<path d="M0 0 L8 4 L0 8 z" fill="#2a78d6"/></marker></defs>';
+    for (const from of wrap.querySelectorAll('.ppa[data-role="from"]')) {{
+      const to = wrap.querySelector(`.ppa[data-role="to"][data-g="${{from.dataset.g}}"]`);
+      if (!to) continue;
+      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+      const x = from.closest("td").getBoundingClientRect().left - base.left + 5;  // the column's left edge
+      const y0 = a.top + a.height / 2 - base.top, y1 = b.top + b.height / 2 - base.top;
+      out += `<path d="M${{a.left - base.left - 2}} ${{y0}} H${{x}} V${{y1}} H${{b.left - base.left - 3}}" fill="none" `
+           + 'stroke="#2a78d6" stroke-width="1.5" marker-end="url(#ppa-head)"/>';
+      out += `<text x="${{x - 4}}" y="${{(y0 + y1) / 2 + 4}}" text-anchor="end" font-size="11" font-weight="600" `
+           + `fill="#2a78d6" stroke="#f9f9f7" stroke-width="3" paint-order="stroke">${{to.dataset.label}}</text>`;
+    }}
+    svg.innerHTML = out;
+  }}
+}};
+drawArrows();
+window.addEventListener("resize", drawArrows);
 for (const btn of document.querySelectorAll(".ctx-toggle button")) btn.addEventListener("click", drawBrackets);
 // ranking chart: hover tooltip and filters (FSDP rows follow the family filter only)
 const tip = document.createElement("div");

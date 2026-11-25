@@ -899,7 +899,8 @@ def pp_weight_table() -> str:
     center = "text-align: center !important;"
     th = lambda h, style="", attrs="": f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
     ncol = 7
-    out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
+    out = ['<div class="ppa-wrap"><svg class="ppa-lines" aria-hidden="true"></svg>'
+           '<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
            + th("Persistent state", rule + tint + center, ' colspan="3"')
            + th("Working set", rule + tint + center)
            + th("Persistent + working set", rule, ' rowspan="2"')
@@ -908,6 +909,11 @@ def pp_weight_table() -> str:
                             for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
                                                    "Compute weights"))) + "</tr>"]
     sub = lambda t: f'<span class="sub">{t}</span>'
+    # boxes the page script joins with arrows: plain ZeRO-1's gradients and
+    # compute weights down to PP 8's, labeled with how many times smaller
+    box = lambda text, g, role, label="": (f'<span class="ppa" data-g="{g}" data-role="{role}"'
+                                           + (f' data-label="{label}"' if label else "") + f">{text}</span>")
+    q8 = pp_weight_parts(8)
 
     def row(label, cells, total, dim=False):
         left = GPU_BYTES - total
@@ -924,23 +930,30 @@ def pp_weight_table() -> str:
     g_exp, g_dense = P_["grads"]["routed"], sum(P_["grads"].values()) - P_["grads"]["routed"]
     w_exp = MXFP8_WEIGHT_BYTES * P_["weights"]["routed"] / 4
     m, gr, o = z1["persistent"]
-    row("ZeRO-1", [_dec(m) + sub("1/512"), _dec(gr) + sub(f"dense {_dec(g_dense)}<br>experts {_dec(g_exp)}"),
+    row("ZeRO-1", [_dec(m) + sub("1/512"),
+                   box(_dec(gr), "grads", "from") + sub(f"dense {_dec(g_dense)}<br>experts {_dec(g_exp)}"),
                    _dec(o) + sub("1/512"),
-                   _dec(z1["working"][0]) + sub(f"dense {_dec(z1['working'][0] - w_exp)}<br>experts {_dec(w_exp)}")],
+                   box(_dec(z1["working"][0]), "weights", "from")
+                   + sub(f"dense {_dec(z1['working'][0] - w_exp)}<br>experts {_dec(w_exp)}")],
         sum(z1["persistent"]) + sum(z1["working"]), dim=True)
+    shrink = {"grads": (gr, q8["exp_g"] + q8["dense_g"]), "weights": (z1["working"][0], q8["exp_w"] + q8["dense_w"])}
     out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">ZeRO-1 + PP, EP = the stage\'s GPUs, '
                "first stage</td></tr>")
     for P in (4, 8, 16):
         q = pp_weight_parts(P)
         frac = f"1/{512 // P * 1}"
         split = lambda e, dn: f"dense {_dec(dn)}<br>experts {_dec(e)} (1/{q['gpus']})"
+        gtxt, wtxt = _dec(q["exp_g"] + q["dense_g"]), _dec(q["exp_w"] + q["dense_w"])
+        if P == 8:
+            gtxt = box(gtxt, "grads", "to", f"{shrink['grads'][0] / shrink['grads'][1]:.0f}x smaller")
+            wtxt = box(wtxt, "weights", "to", f"{shrink['weights'][0] / shrink['weights'][1]:.0f}x smaller")
         row(f"PP {P}" + sub(f"{q['layers']} layers on {q['gpus']} GPUs"),
             [_dec(q["master"]) + sub(f"stage, 1/{q['gpus']}"),
-             _dec(q["exp_g"] + q["dense_g"]) + sub(split(q["exp_g"], q["dense_g"])),
+             gtxt + sub(split(q["exp_g"], q["dense_g"])),
              _dec(q["optim"]) + sub(f"stage, 1/{q['gpus']}"),
-             _dec(q["exp_w"] + q["dense_w"]) + sub(split(q["exp_w"], q["dense_w"]))],
+             wtxt + sub(split(q["exp_w"], q["dense_w"]))],
             q["total"])
-    out.append("</table>")
+    out.append("</table></div>")
     return "".join(out)
 
 
