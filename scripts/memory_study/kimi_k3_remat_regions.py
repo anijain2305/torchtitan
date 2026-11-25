@@ -276,12 +276,17 @@ def remat_perf_8k() -> Trainer.Config:
     return config
 
 
-def remat_regions_8k() -> Trainer.Config:
-    """mem_fsdp_ep64_8k truncated to NUM_LAYERS layers; KIMI_K3_INVENTORY_POLICY
+def remat_regions_32k() -> Trainer.Config:
+    """remat_regions_8k at 32K (mem_fsdp_ep64_32k)."""
+    return remat_regions_8k(base.mem_fsdp_ep64_32k)
+
+
+def remat_regions_8k(make=None) -> Trainer.Config:
+    """mem_fsdp_ep64_8k (or `make`) truncated to NUM_LAYERS layers; KIMI_K3_INVENTORY_POLICY
     = save_all (save_regions=["*"], the default; KIMI_K3_INVENTORY_RECOMPUTE is a
     comma-separated recompute_regions list on top of it), full (full remat: shows
     the regions model code always saves) or none (no remat)."""
-    config = base.mem_fsdp_ep64_8k()
+    config = (make or base.mem_fsdp_ep64_8k)()
     config.model = replace(config.model, layers=config.model.layers[:NUM_LAYERS])
     policy = os.environ.get("KIMI_K3_INVENTORY_POLICY", "save_all")
     config.activation_remat = {

@@ -305,55 +305,62 @@ def memory_by_kind(ctx: str = "8K") -> str:
                      f"persistent state by kind and saved activations at {ctx}, log2 axis")
 
 
-# One 8K sequence's stash with DistMoE running the routed experts, nothing else
-# rematerialized, FSDP + EP 64: the 8-layer no-remat run (bench/
-# remat_policy_8k_none_fixedptrs.json) scaled to 93 layers, with DistMoE
-# recomputing its intermediates (activation slots off, today's default).
-DISTMOE_RECOMPUTE_8K = 322 * 2**30
+# DistMoE runs (8-layer model, FSDP + EP 64, fake PG, nothing rematerialized,
+# DistMoE recomputing its intermediates, the default), one per context.
+DISTMOE_NONE_RUNS = {"8K": "remat_policy_8k_none_fixedptrs.json", "32K": "remat_policy_32k_none.json"}
+# DistMoE's scratch with MXFP8 experts (the study's precision): dist_moe.plan_memory
+# with BlockScaledFormat.MXFP8_E4M3 (staged), capacity factor 4, EP 64,
+# intermediate_dim 3072 (dist_moe b76e0e0 + the routing-pointer fix). The bf16
+# planner values (23.6 / 94.5 GB) are in kimi_k3_data.json.
+DISTMOE_SCRATCH_MXFP8 = {"8K": 22.22e9, "32K": 88.65e9}
 
 
-# DistMoE's scratch at 8K with MXFP8 experts (the study's precision): dist_moe.
-# plan_memory with BlockScaledFormat.MXFP8_E4M3 (staged), capacity factor 4,
-# EP 64, intermediate_dim 3072 (dist_moe b76e0e0 + the routing-pointer fix).
-# The bf16 planner value, 23.6 GB, is in kimi_k3_data.json.
-DISTMOE_SCRATCH_MXFP8_8K = 22.22e9
+def distmoe_recompute(ctx: str) -> float:
+    """One sequence's stash with DistMoE recomputing, scaled from the 8-layer
+    run to 93 layers: layer 0 (KDA + dense FFN) + 68 x the mean KDA + MoE layer
+    (layers 1, 2, 4-6) + 24 x the mean MLA + MoE layer (layers 3, 7)."""
+    g = _bench(DISTMOE_NONE_RUNS[ctx])["allocated_growth_per_layer"]
+    kda = [g[f"layers.{i}"] for i in (1, 2, 4, 5, 6)]
+    mla = [g[f"layers.{i}"] for i in (3, 7)]
+    return g["layers.0"] + 68 * sum(kda) / len(kda) + 24 * sum(mla) / len(mla)
 
 
-def distmoe_keep_all_8k() -> float:
+def distmoe_keep_all(ctx: str) -> float:
     """The same with DistMoE keeping its intermediates: plus one MoE layer's
     activation slots at capacity factor 1.0 (balanced routing; measured in
-    bench/dist_moe_slots_8k.json) for each of the 92 MoE layers."""
-    path = _Path(__file__).resolve().parent / "bench" / "dist_moe_slots_8k.json"
-    rows = {r["slot"]: r for r in _json.loads(path.read_text())["rows"]}
-    return DISTMOE_RECOMPUTE_8K + MOE_LAYERS * (rows[1.0]["context_bytes"] - rows[None]["context_bytes"])
+    bench/dist_moe_slots_<ctx>.json) for each of the 92 MoE layers."""
+    rows = {r["slot"]: r for r in _bench(f"dist_moe_slots_{ctx.lower()}.json")["rows"]}
+    return distmoe_recompute(ctx) + MOE_LAYERS * (rows[1.0]["context_bytes"] - rows[None]["context_bytes"])
 
 
-def activations_distmoe() -> str:
-    """One 8K sequence's activations, nothing else rematerialized, on a linear
+def activations_distmoe(ctx: str = "8K") -> str:
+    """One sequence's activations, nothing else rematerialized, on a linear
     axis: first without DistMoE (PyTorch stashes the routed experts like any
     layer; the fake-tensor inventory), then DistMoE's two extremes (measured
     runs): the rest of the model's stash, DistMoE's stashed inputs, its output
     (stashed for the next ops), its intermediates (only when it keeps them) and
-    its scratch. 8K only (the DistMoE runs are 8K)."""
+    its scratch."""
     d = _data()
-    dm = d["cp_sweep"]["8K"]["1"]["nopp_f4"]
-    acts = d["contexts"]["8K"]["activations"]
+    dm = d["cp_sweep"][ctx]["1"]["nopp_f4"]
+    acts = d["contexts"][ctx]["activations"]
     routed_naive = sum(acts[k]["count"] * next(c["bytes"] for c in acts[k]["components"] if c["key"] == "routed")
                        for k in ("kda_layer", "mla_layer"))
     inputs, output = dm["saved"], dm["output"]
-    rest = DISTMOE_RECOMPUTE_8K - inputs - output
-    inter = distmoe_keep_all_8k() - DISTMOE_RECOMPUTE_8K
+    rec = distmoe_recompute(ctx)
+    rest = rec - inputs - output
+    inter = distmoe_keep_all(ctx) - rec
+    scratch = DISTMOE_SCRATCH_MXFP8[ctx]
     c_rest, c_in, c_out, c_int, c_sc = "#c3c2b7", "#1baf7a", "#eb6834", "#2a78d6", "#e87ba4"
+    c_naive = "#eda100"
     base = [(rest, c_rest, "rest of the model"), (inputs, c_in, "DistMoE inputs"),
             (output, c_out, "DistMoE output")]
-    c_naive = "#eda100"
     return linear_stacked_bars(
         [("No DistMoE", [(acts["total"] - routed_naive, c_rest, "rest of the model"),
-                                                       (routed_naive, c_naive, "routed experts")]),
+                         (routed_naive, c_naive, "routed experts")]),
          ("DistMoE keeps its intermediates", base + [(inter, c_int, "DistMoE intermediates"),
-                                                     (DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")]),
-         ("DistMoE recomputes them (default)", base + [(DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")])],
-        "activations of one 8K sequence at DistMoE's two extremes, by part",
+                                                     (scratch, c_sc, "DistMoE scratch")]),
+         ("DistMoE recomputes them (default)", base + [(scratch, c_sc, "DistMoE scratch")])],
+        f"activations of one {ctx} sequence, without DistMoE and at DistMoE's two extremes, by part",
         legend=[("Rest of the model", c_rest), ("Routed experts, stashed by PyTorch", c_naive),
                 ("DistMoE inputs", c_in), ("DistMoE output", c_out),
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
@@ -394,12 +401,13 @@ def linear_stacked_bars(rows, aria, legend, top_gb=None, clip=()) -> str:
     vmax = top_gb * 1e9 if top_gb else max(sum(p[0] for p in parts) for l, parts in rows if l not in clip) * 1.15
     vmax = max(vmax, GPU_BYTES * 1.3)  # room for the one-GPU label
     x = lambda b: lab + (w - lab - 64) * b / vmax
-    step = 50e9 if vmax <= 400e9 else 100e9
+    step = next(st for st in (50e9, 100e9, 250e9, 500e9, 1000e9) if vmax / st <= 9)  # at most ~9 gridlines
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{html.escape(aria)}">']
     t = 0.0
     while t <= vmax:
         out.append(f'<line x1="{x(t):.1f}" x2="{x(t):.1f}" y1="{top - 6}" y2="{axis_y - 16}" stroke="{GRID}"/>')
-        out.append(_text(x(t), axis_y, f"{t / 1e9:.0f} GB", 11, MUTED, "middle"))
+        out.append(_text(x(t), axis_y, f"{t / 1e9:.0f} GB" if t < 1e12 else f"{t / 1e12:g} TB",
+                         11, MUTED, "middle"))
         t += step
     gx = x(GPU_BYTES)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{axis_y - 16}" stroke="{INK}" '
@@ -2640,7 +2648,7 @@ def by_context(fn):
     return render
 
 
-FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": activations_distmoe,
+FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": by_context(activations_distmoe),
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),

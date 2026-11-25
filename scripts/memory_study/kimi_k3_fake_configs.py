@@ -509,6 +509,16 @@ def mem_fsdp_ep64_8k() -> Trainer.Config:
     )
 
 
+def mem_fsdp_ep64_32k() -> Trainer.Config:
+    """FSDP 512, EP 64, CP 1, TP 1 at 32K (does not fit at full depth; for
+    truncated activation measurements)."""
+    return _memory_study(
+        "fsdp_ep64_32k",
+        32768,
+        ParallelismConfig(data_parallel_shard_degree=-1, expert_parallel_degree=64),
+    )
+
+
 def mem_fsdp_ep64_32k_cp2() -> Trainer.Config:
     """FSDP 512, EP 64, CP 2 at 32K (blog model: 178 GB)."""
     return _memory_study(

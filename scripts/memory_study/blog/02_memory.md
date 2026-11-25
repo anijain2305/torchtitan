@@ -288,15 +288,18 @@ DistMoE:
 
 ::: figure activations-distmoe
 
-*One 8K sequence. No DistMoE: the fake-tensor inventory, all bf16. DistMoE
-bars: FSDP + EP 64, dense layers in bf16 and routed experts in MXFP8, measured
-on 8 layers (and one MoE layer for the buffers) and scaled to all 93; their
-"rest of the model" (335 GB) differs slightly from the inventory's (326 GB).*
+*One sequence; the toggle at the top right switches between 8K and 32K. No
+DistMoE: the fake-tensor inventory, all bf16. DistMoE bars: FSDP + EP 64, dense
+layers in bf16 and routed experts in MXFP8, measured on 8 layers (and one MoE
+layer for the buffers) and scaled to all 93; their "rest of the model" differs
+slightly from the inventory's.*
 
-Keeping DistMoE's intermediates costs 315 GB, almost as much as the rest of the
-model (335 GB). Its inputs and output are small, 5.4 GB each, and so is the
-22.2 GB scratch. Recomputing roughly halves the total, but either way one
-sequence is more than a whole GPU. That is the problem; the next section shrinks
+At 8K, keeping DistMoE's intermediates costs 315 GB, almost as much as the rest
+of the model (335 GB). Its inputs and output are small, 5.4 GB each, and so is
+the 22.2 GB scratch. Recomputing roughly halves the total, but either way one
+sequence is more than a whole GPU. At 32K everything grows 4x, and the scratch
+stops being small: 88.7 GB, almost a third of a GPU, before a single tensor is
+stashed. That is the problem; the next section shrinks
 it. DistMoE's buffer size is one of the knobs: if a config has memory to spare,
 growing the buffers so that DistMoE stops recomputing is one way to spend it.
 
