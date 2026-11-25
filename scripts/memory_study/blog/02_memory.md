@@ -224,21 +224,20 @@ room: TP 4 and TP 8 both fit.
 
 ### Shrinking the weights with PP
 
-TP is one way to make ZeRO-1 affordable. Pipeline parallelism (PP) is the
-other, and it is the more common one.
+Before we go to activations, lets look into Pipeline Parallelism as well. You might be wondering why do we need pipeline parallelism complexity if our FSDP config already leaves ~200 GB for activations. The reason is FSDP communications. FSDP gathers and reduce scatters every microbatch. Not only this can get exposed if the compute overlap is not enough, it also makes the compute go slow (as we will measure later). Pipeline parallelism increase system complexity (its not SPMD anymore), so practitioners avoid it for as long as possible. But when FSDP comms are just too slow, and our previous alternative of using TP is also slow (which is very often the case), pipeline parallelism gets attracitve.
 
-**How PP shards.** PP splits the layers into stages and gives each stage its
-own slice of the GPUs: with PP 8, each stage holds 12 of the 93 layers on 64
-GPUs. Everything we have seen so far then happens *inside* a stage: ZeRO-1
+
+
+**How PP shards.** PP splits the layers into stages. Each stage then owns a group of GPUs (each stage is SPMD). For example, with PP 8, each stage holds 12 of the 93 layers on 64 GPUs. Everything we have seen so far then happens *inside* a stage: ZeRO-1
 shards the stage's master weights and optimizer state over its GPUs, and EP
-spreads the stage's experts over them, so EP equals the stage's GPU count. Each
-GPU now holds the whole-step copies ZeRO-1 needs, the compute weights and the
-unsharded gradients, for its stage only.
+spreads the stage's experts over them, and same with TP and CP (discussed later).
 
-**Why reach for it?** Not for the activations: PP does nothing to shrink them,
-as we will see. PP is about communication. FSDP gathers each layer's weights
-and reduce-scatters its gradients for every microbatch; ZeRO-1 within a stage
-does both once per step. PP is what makes that affordable:
+
+The interesting part here is that PP enables Zero-1 where earlier we had to go to FSDP withuot PP (or suboptimal PP). Lets look at how this is possible. Lets look at one stage.
+
+Lets look at the Zero-1 without any thing from 3.2.1. The compute weights there were 2.84 TB - these are unsharded weights kept alive throughout the step. With PP, the pesisitent memory is still the same. But look at the row tieh Zero-1 + PP. It just correposnds to the unsharded weights of the first stage, a very reasoable 45.5 GB. And this our second nugget. PP makes Zero-1 affordable, even though the persisitent state is still same, the working set reduces roughly by the number of stages.
+
+
 
 ::: tree-step pp snapshot
 
