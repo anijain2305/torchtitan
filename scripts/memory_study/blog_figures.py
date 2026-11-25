@@ -702,8 +702,10 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
         grads = 4 * (routed + dense)  # unsharded across the FSDP axis until the end of the step
         weights = MXFP8_WEIGHT_BYTES * (q_all + routed) + 2 * (dense - q_all)
         working = (weights, 0.0)
-        split = f"experts 1/{ep}, dense " + (f"1/{tp}" if tp > 1 else "whole")
-        notes = ("1/512", split, "1/512", split, "")
+        dense_deg = f"1/{tp}" if tp > 1 else "whole"
+        notes = ("1/512", _split_note(4 * routed, f"1/{ep}", 4 * dense, dense_deg), "1/512",
+                 _split_note(MXFP8_WEIGHT_BYTES * routed, f"1/{ep}", weights - MXFP8_WEIGHT_BYTES * routed,
+                             dense_deg), "")
     else:
         blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
         routed = blk["routed"] / ep
@@ -715,6 +717,11 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
     total = master + grads + optim + sum(working)
     return {"zero": zero, "ep": ep, "tp": tp, "persistent": (master, grads, optim), "working": working,
             "total": total, "notes": notes}
+
+
+def _split_note(experts: float, experts_deg: str, dense: float, dense_deg: str) -> str:
+    """Cell note: a cell's experts vs dense bytes, each with how it is split."""
+    return f"experts {_dec(experts)} ({experts_deg})<br>dense {_dec(dense)} ({dense_deg})"
 
 
 EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
@@ -738,8 +745,15 @@ def ep_tp_table() -> str:
                                                    "Compute weights", "Gradients (fp32)"))) + "</tr>"]
     # reminder rows from the ZeRO table, greyed, so the EP + TP rows read against them
     out.append(f'<tr><td colspan="8" style="{tint} font-weight: 600;">From the ZeRO table</td></tr>')
+    P = _data()["persistent"]["model"]
+    g_exp, g_dense = P["grads"]["routed"], sum(P["grads"].values()) - P["grads"]["routed"]
+    w_exp = MXFP8_WEIGHT_BYTES * P["weights"]["routed"] / 4
     for zr in zero_parts("8K")[:2]:
         vals = list(zr["persistent"]) + list(zr["working"])
+        zr = dict(zr, cell_notes=list(zr["cell_notes"]))
+        zr["cell_notes"][1] = _split_note(g_exp, "unsharded", g_dense, "unsharded")
+        if vals[3]:
+            zr["cell_notes"][3] = _split_note(w_exp, "whole", vals[3] - w_exp, "whole")
         cells = "".join((f'<td style="{rule}">' if i in (0, 3) else "<td>")
                         + ((_dec(v) + (f'<span class="sub">{zr["cell_notes"][i]}</span>' if zr["cell_notes"][i] else ""))
                            if v else "-") + "</td>" for i, v in enumerate(vals))
