@@ -75,7 +75,7 @@ We start with plain data parallelism over all 512 GPUs. On its own, data
 parallelism only multiplies the problem: every GPU holds the whole model. What shards the
 persistent state across those 512 copies is [ZeRO](https://arxiv.org/abs/1910.02054).
 
-### ZeRO / FSDP
+### Sharding the weights with ZeRO / FSDP
 
 ZeRO comes in three stages, each sharding one more thing:
 
@@ -130,7 +130,7 @@ So FSDP is not enough; we need to shrink the working set itself. Almost all of
 it is experts, and I like to think the people who first scaled MoE models hit
 this same wall. Their answer was expert parallelism.
 
-### Expert parallelism
+### Shrinking the expert weights with EP
 
 Almost all of the working set is routed experts: 296 of the 304 GB. Expert
 parallelism (EP) goes after exactly that part.
@@ -173,7 +173,7 @@ the larger part, and TP can go after them.
 
 > NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
 
-### Tensor parallelism
+### Shrinking the dense weights with TP
 
 TP shows up twice in this post. Here we look at what it does to the weight
 footprint; later it comes back to shrink the activations, which is where it
