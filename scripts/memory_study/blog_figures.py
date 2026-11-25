@@ -385,6 +385,7 @@ def remat_offload_frontier() -> str:
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
     run = lambda r: (peaks[r] * 2**30, _bench(f"ladder_8k/{r}.json")["fwd_bwd_span_s"])
     sel, att_ff, full = run("rperf_sel"), run("rperf_off_attn_ff"), run("rperf_full")
+    undo = run("rperf_off_attn_ff_dm0.25")  # greedy's undo step: a quarter of DistMoE's buffer back
     # steps not run at full depth, from measured differences:
     #  - recomputing attention: no remat's extra stash over selective (8-layer policy
     #    runs scaled to 93 layers), time from the 8-layer no-remat / selective ratio;
@@ -410,8 +411,8 @@ def remat_offload_frontier() -> str:
     budget = GPU_BYTES - weights
     blue, orange, green = "#2a78d6", "#eb6834", "#1baf7a"
     paths = [  # name, color, [(point, estimated)], legend text
-        ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False)],
-         "free offload, then DistMoE recomputes, then recompute attention"),
+        ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False), (undo, False)],
+         "free offload, DistMoE recomputes, recompute attention, then undo: a quarter of DistMoE's buffer back"),
         ("Remat only", orange, [(none, True), (dm_only, True), (sel, False)],
          "DistMoE recomputes, then recompute attention"),
         ("Full remat", green, [(none, True), (full, False)], "recompute every layer"),
@@ -438,11 +439,15 @@ def remat_offload_frontier() -> str:
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, t + 44, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
     halo = lambda txt: txt.replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1)
-    end_place = {"Greedy": (10, 22, "start"), "Remat only": (10, -12, "start"),
+    end_place = {"Greedy": (-8, 26, "middle"), "Remat only": (10, -12, "start"),
                  "Full remat": (10, -12, "start")}
     for name, c, pts, _ in paths:
+        fwd = pts[:-1] if name == "Greedy" else pts  # greedy's last segment is the undo step: dashed
         out.append(f'<polyline fill="none" stroke="{c}" stroke-width="2" points="'
-                   + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in pts) + '"/>')
+                   + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in fwd) + '"/>')
+        if name == "Greedy":
+            out.append(f'<polyline fill="none" stroke="{c}" stroke-width="2" stroke-dasharray="5 4" points="'
+                       + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in pts[-2:]) + '"/>')
         for p, est in pts[1:]:
             out.append(f'<g><title>{html.escape(name)}: {p[1]:.2f} s, {_dec(act(p))} for activations'
                        f'{" (estimated)" if est else ""}</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '

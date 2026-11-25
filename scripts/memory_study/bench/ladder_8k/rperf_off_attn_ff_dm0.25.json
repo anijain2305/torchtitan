@@ -1,0 +1,18 @@
+{
+ "trace": "outputs/profiling/rperf_off_attn_ff_dm0.25/iteration_4/rank0_trace.json.gz",
+ "fwd_bwd_span_s": 18.999045072265623,
+ "fwd_bwd_busy_s": 17.9345859921875,
+ "optimizer_span_s": 1.3453665419921874,
+ "optimizer_busy_s": 0.4172226279296875,
+ "fwd_bwd_by_class_s": {
+  "Dense GEMM bf16": 5.941735537999912,
+  "DistMoE grouped GEMM (+fused dispatch/combine)": 5.0465128109999755,
+  "Other elementwise, casts, reductions": 1.7203722330000029,
+  "FSDP buffer copies": 1.6841327120000051,
+  "KDA": 1.345964899999999,
+  "Attention residuals": 1.259450285,
+  "MLA": 0.6727751429999997,
+  "MXFP8 quantize": 0.32020115499999985,
+  "Norms (RMSNorm, L2)": 0.2163628300000001
+ }
+}

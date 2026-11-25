@@ -360,8 +360,8 @@ Here is the general recipe I followed:
 3. **If it does not fit** (our case: a single 8K sequence is already more than a
    GPU), there are two levers:
     - **Rematerialization and offloading.** There are many ways to get under
-      the budget ([[memory.4.1]] shows a few). A greedy approach works well:
-      keep taking the step that frees the most memory for the least time,
+      the budget ([[memory.4.1]] shows a few). We apply a greedy approach for now:
+      incrementally apply these optimizations in the order that frees the most memory for the least time,
       starting with offloads the GPU can hide behind compute, until the config
       fits. If the last step overshoots by a lot, undo some of the steps you
       took, buying back recompute or offload time with the memory you do not
@@ -386,48 +386,28 @@ There are two ways to stash less, and both trade something for memory:
 
 - **Rematerialization** (with [torch_remat](https://github.com/meta-pytorch/remat))
   does not stash a region's tensors at all; backward recomputes them. It costs
-  compute.
+  compute. DistMoE's own config from 3.3 also sits here: the size of its buffers.
 - **Offloading** stashes them in CPU memory instead: forward copies them out,
   backward copies them back, over the link between the GPU and its CPU (on a
   GB300, the C2C link to the Grace CPU). It costs bandwidth, and it is free as
   long as the copies hide behind compute.
 
-On top of these sits DistMoE's own knob from 3.3, the size of its buffers. A
-policy picks, region by region, what to stash, what to recompute and what to
-offload. Rather than search every combination, we measured a ladder: start
-from the cheapest bytes to give up, and add one region at a time.
+This is a large search space. So we apply a greedy approach. We did not spend serious efforts in this approach, so it is definitely possible it can be easily improved. The basic idea is to rank the steps based on how much overhead (recompute/offload latency) per bytes. Based on this we incrementally keep applying these optimization until we fit the activation footprint under the budget that parallelism config sets. Since these steps can jump a lot (they are very discreet and not really a gradual space), we can undo some of the earlier steps and save some earlier recompute/offload cost. Again this is a very simple recipe, and you can definitely come up with better.
 
-We measured one config, FSDP + EP 64 at 8K, with all 93 layers on one GB300
-(the other GPUs faked) and CUDA graphs on. Time is the forward and backward of
-a step. Memory is what the activations take: the peak per GPU minus the
-config's weight footprint from 3.2, set against the budget that footprint
-leaves over.
+
+Lets look at three different paths that let us fit into the budget for FSDP + EP 64 at 8K. The blue one is our greedy appraoch, the other two paths are just showcasing other paths that are suboptimal. To read this chart, start from the bottom right, which is no remat, no offload config, and then each line applies a different set of optimizations in order.
+
 
 ::: figure remat-offload-frontier
 
-*8K, FSDP 512 + EP 64, CP 1. Every path starts from no remat at the bottom
-right. Endpoints are measured at full depth; the hollow points along the way do
-not fit, so they were estimated from measured steps, 8-layer runs and the
-one-layer DistMoE benchmark.*
+- **Remat only.** Recompute DistMoe, then attention. It lands right on the budget line..
+- **Greedy.** Take the step that frees the most memory for the least time: offload the attention projects and feed-forward as they can hide behind the next layer compute. Then, recomppute DistMoe and finally attention. This is an example of overshoot where we now have lot of memory left and then we can try to buy back some performance. For example (not done here), we could choose DistMoE buffer in a manner, such that half ot the layers stash and other half compute.
+- **Full remat.** One step. Gets you under the budget but very slow.
 
-Every path starts at the bottom right, where nothing is recomputed, and has to
-get to the left of the budget line. Here are three:
+A general insight that was new to me after this experiment was that offload is very powerful, and can reduce a portion of memory footprint for free if you are not using C2C link for any other purpose.
+> NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute.
 
-- **Remat only.** Let DistMoE recompute, then recompute attention (the cores of
-  KDA and MLA). It lands right on the budget line: it fits, but only just.
-- **Greedy.** Take the step that frees the most memory for the least time:
-  first offload the attention projections and the feed-forward, which hides
-  behind compute for free, then let DistMoE recompute, then recompute
-  attention. It ends at almost the same speed, but far inside the budget. That
-  leftover memory is where undoing steps comes in: spent on growing DistMoE's
-  buffer, for example, it can buy back time.
-- **Full remat.** One step, also far inside the budget, but by far the slowest:
-  it recomputes everything, including what offloading would hide for free.
 
-> NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute. On a GB300, offloading the attention projections and the feed-forward frees most of the activations that recomputing attention leaves, for under a percent of step time; after that, recompute whatever is cheapest per byte freed. Full remat, which recomputes everything, is beaten on both time and memory.
-
-Everything to the right of the budget line is faster, but does not fit this
-config. That is where context and tensor parallelism come in, next.
 
 This is one config at one context length. Others land differently. How much
 can be offloaded for free scales with the forward time it hides behind. CP and
