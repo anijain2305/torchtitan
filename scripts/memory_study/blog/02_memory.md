@@ -393,17 +393,17 @@ There are two ways to stash less, and both trade something for memory:
 
 This is a large search space, so we use a greedy approach. We did not put
 serious effort into it, so it can very likely be improved. The idea is to rank
-the steps by their overhead (recompute or offload time) per byte freed, and
-keep applying the cheapest one until the activations fit under the budget the
-parallelism config leaves. The steps are discrete and can jump a lot, so the
-last one may overshoot; we can then undo some earlier steps and win back some
-of their recompute or offload cost. Again, this is a very simple recipe, and
-you can certainly come up with better ones.
+the steps by their overhead (recompute or offload time) per byte freed, and keep
+applying the cheapest one until the activations fit under the budget set by the
+parallelism config. The steps are discrete and can jump a lot, so the last one
+may overshoot and free far more memory than needed. We can then undo some
+earlier steps and win back some of their recompute or offload cost. Again, this
+is a very simple recipe, and you can certainly come up with better ones.
 
 Let's look at three different paths that fit FSDP + EP 64 at 8K into its
-budget. The blue one is our greedy approach; the other two show alternatives
+budget. The blue one is our greedy approach, and the other two show alternatives
 that end up slower. To read the chart, start at the bottom right, with no remat
-and no offload; each line then applies its own steps in order.
+and no offload. Each line then applies its own steps in order.
 
 ::: figure remat-offload-frontier
 
@@ -413,8 +413,8 @@ and no offload; each line then applies its own steps in order.
   offload the attention projections and the feed-forward, as the copies hide
   behind compute; then let DistMoE recompute, and finally recompute attention.
   This overshoots, leaving a lot of memory unused, so we buy back some speed:
-  giving a quarter of DistMoE's buffer back, so that about a quarter of the
-  layers keep their intermediates, takes it to the fastest setting that fits.
+  we grow DistMoE's activation buffer, so that some layers keep their
+  intermediates instead of recomputing them.
 - **Full remat.** One step. It gets under the budget, but it is very slow.
 
 A general insight that was new to me from this experiment: offloading is very
