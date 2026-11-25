@@ -678,6 +678,52 @@ def working_set_mix() -> str:
     return "".join(out)
 
 
+def working_set_flip() -> str:
+    """Slope chart of the working set's two parts, routed experts and dense
+    layers, from FSDP over 512 GPUs to FSDP + EP 64, on a log2 axis: the
+    experts line plunges 64x, the dense line stays flat, and the two cross
+    (the flip). Independent of the context length."""
+    d = _data()
+    blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
+    dense = sum(blk.values()) - blk["routed"]
+    q = dense_quantized_params()
+    dense_ws = 2 * (MXFP8_WEIGHT_BYTES * q + 2 * (dense - q)) + 2 * 4 * dense  # two layers' weights + grads
+    expert_ws = lambda ep: 2 * (MXFP8_WEIGHT_BYTES + 4) * blk["routed"] / ep
+    series = [("Routed experts", "#2a78d6", expert_ws(1), expert_ws(64)),
+              ("Dense layers", "#eb6834", dense_ws, dense_ws)]
+    w, h, top, bottom = 760, 320, 30, 270
+    ax, xa, xb = 70, 300, 540
+    lo, hi = 1, 9  # 2 GB .. 512 GB
+    y = lambda v: bottom - (bottom - top) * (_math.log2(v / 1e9) - lo) / (hi - lo)
+    out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="working set per GPU: routed '
+           'experts vs dense layers, FSDP 512 without and with EP 64, log2 axis">']
+    for e in range(lo, hi + 1):
+        gy = y(2 ** e * 1e9)
+        out.append(f'<line x1="{ax}" x2="{xb + 30}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="{GRID}" stroke-width="1"/>')
+        out.append(_text(ax - 8, gy + 4, f"{2 ** e} GB", 11, MUTED, "end"))
+    out.append(_text(ax - 8, top - 14, "working set per GPU, log2 axis", 11, MUTED, "start"))
+    for x, label in ((xa, "FSDP 512"), (xb, "FSDP 512 + EP 64")):
+        out.append(f'<line x1="{x}" x2="{x}" y1="{top}" y2="{bottom}" stroke="{GRID}" stroke-width="1.4"/>')
+        out.append(_text(x, bottom + 26, label, 12, INK2, "middle", weight=600))
+    e0, e1 = (_math.log2(v) for v in series[0][2:])
+    cx = xa + (e0 - _math.log2(dense_ws)) / (e0 - e1) * (xb - xa)  # where the lines cross
+    out.append(f'<circle cx="{cx:.1f}" cy="{y(dense_ws):.1f}" r="13" fill="none" stroke="{INK2}" '
+               'stroke-width="1" stroke-dasharray="2 2"/>')
+    out.append(_text(cx, y(dense_ws) - 20, "the flip", 11, INK2, "middle", weight=600))
+    for k, (name, col, va, vb) in enumerate(series):
+        out.append(f'<g><title>{name}: {_dec(va)} -> {_dec(vb)}</title>'
+                   f'<line x1="{xa}" x2="{xb}" y1="{y(va):.1f}" y2="{y(vb):.1f}" stroke="{col}" stroke-width="2.5"/>')
+        for x, v in ((xa, va), (xb, vb)):
+            out.append(f'<circle cx="{x}" cy="{y(v):.1f}" r="5" fill="{col}" stroke="{SURFACE}" stroke-width="2"/>')
+        out.append("</g>")
+        out.append(_text(xa - 12, y(va) + 4, f"{name} {_dec(va)}", 12, INK, "end", weight=600))
+        out.append(_text(xb + 12, y(vb) + 4 + (-4 if k else 6), _dec(vb), 12, INK, weight=600))
+    out.append(_text(xb + 12, y(series[0][3]) + 22, "64x smaller", 11, MUTED))
+    out.append(_text(xb + 12, y(dense_ws) - 18, "unchanged", 11, MUTED))
+    out.append("</svg>")
+    return "".join(out)
+
+
 def fsdp_ep_parts(ctx: str = "8K", cp: int = 1, tp: int = 1) -> dict:
     """FSDP + EP 64 per GPU with each sequence split over cp x tp GPUs; same
     rules as zero_parts. CP ranks fold into FSDP; TP (with sequence
@@ -2374,6 +2420,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),
                 "zero-ep-table": by_context(lambda c: zero_table(c, ep=True)),
                 "working-set-mix": working_set_mix,
+                "working-set-flip": working_set_flip,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),
