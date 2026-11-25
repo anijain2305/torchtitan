@@ -624,6 +624,60 @@ def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
     return "".join(out)
 
 
+def working_set_mix() -> str:
+    """What the working set is made of under FSDP over 512 GPUs, without and
+    with EP 64: each bar is one config's working set (two layers' compute
+    weights and fp32 gradients) at 100%, split into routed experts and dense
+    layers, with the total at the right. Color = experts vs dense; hatch =
+    compute weights, solid = gradients. Independent of the context length."""
+    d = _data()
+    blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
+    dense = sum(blk.values()) - blk["routed"]
+    q = dense_quantized_params()
+    dense_w = 2 * (MXFP8_WEIGHT_BYTES * q + 2 * (dense - q))  # two layers
+    blue, orange = "#2a78d6", "#eb6834"
+    kinds = [("Expert gradients (fp32)", blue, False), ("Expert compute weights (MXFP8)", blue, True),
+             ("Dense gradients (fp32)", orange, False), ("Dense compute weights (bf16)", orange, True)]
+    rows = []
+    for label, ep in (("FSDP 512", 1), ("FSDP 512 + EP 64", 64)):
+        r = blk["routed"] / ep
+        rows.append((label, [2 * 4 * r, 2 * MXFP8_WEIGHT_BYTES * r, 2 * 4 * dense, dense_w]))
+    lab, w, x0, x1, bar, gap, top = 150, 760, 150, 670, 34, 30, 28
+    h = top + len(rows) * (bar + gap) + 56
+    out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="working set composition, '
+           'FSDP 512 without and with EP 64">', "<defs>"]
+    for name, col in (("blue", blue), ("orange", orange)):
+        out.append(f'<pattern id="ws-hatch-{name}" patternUnits="userSpaceOnUse" width="6" height="6" '
+                   f'patternTransform="rotate(45)"><rect width="6" height="6" fill="{col}"/>'
+                   '<line x1="0" y1="0" x2="0" y2="6" stroke="#ffffff" stroke-width="2.6" opacity="0.7"/></pattern>')
+    out.append("</defs>")
+    fill = lambda col, hatch: (f"url(#ws-hatch-{'blue' if col == blue else 'orange'})" if hatch else col)
+    out.append(_text(x0, top - 12, "share of the working set", 11, MUTED))
+    out.append(_text(x1 + 10, top - 12, "total", 11, MUTED))
+    for k, (label, parts) in enumerate(rows):
+        y = top + k * (bar + gap)
+        total = sum(parts)
+        out.append(_text(lab - 12, y + bar / 2 + 4, label, 12, INK2, "end"))
+        cx = x0
+        for i, ((name, col, hatch), b) in enumerate(zip(kinds, parts)):
+            sw = (x1 - x0) * b / total
+            rx = 4 if i in (0, len(parts) - 1) else 0
+            out.append(f'<g><title>{html.escape(label)}: {html.escape(name)} {_dec(b)} ({100 * b / total:.1f}%)</title>'
+                       f'<rect x="{cx:.1f}" y="{y}" width="{max(sw - 2, 0.5):.1f}" height="{bar}" rx="{rx}" '
+                       f'fill="{fill(col, hatch)}"/></g>')
+            cx += sw
+        out.append(_text(x1 + 10, y + bar / 2 + 4, _dec(total), 12, INK, weight=600))
+        experts = parts[0] + parts[1]
+        out.append(_text(x0, y + bar + 15, f"experts {100 * experts / total:.0f}% ({_dec(experts)}), "
+                         f"dense {100 * (total - experts) / total:.0f}% ({_dec(total - experts)})", 11, MUTED))
+    for i, (name, col, hatch) in enumerate(kinds):  # 2 x 2: experts on the left, dense on the right
+        lx, ly = x0 + 260 * (i // 2), h - 30 + 20 * (i % 2)
+        out.append(f'<rect x="{lx}" y="{ly - 10}" width="12" height="12" rx="2" fill="{fill(col, hatch)}"/>')
+        out.append(_text(lx + 17, ly, name, 11, INK2))
+    out.append("</svg>")
+    return "".join(out)
+
+
 def fsdp_ep_parts(ctx: str = "8K", cp: int = 1, tp: int = 1) -> dict:
     """FSDP + EP 64 per GPU with each sequence split over cp x tp GPUs; same
     rules as zero_parts. CP ranks fold into FSDP; TP (with sequence
@@ -2319,6 +2373,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),
                 "zero-ep-table": by_context(lambda c: zero_table(c, ep=True)),
+                "working-set-mix": working_set_mix,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),
