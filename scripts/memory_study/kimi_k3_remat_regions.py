@@ -270,6 +270,9 @@ def remat_perf_8k() -> Trainer.Config:
     config = base.perf_fsdp_ep64_8k()
     config.model = replace(config.model, layers=config.model.layers[:NUM_LAYERS])
     config.activation_remat = _policy()
+    slot = os.environ.get("KIMI_K3_INVENTORY_DM_SLOT")  # DistMoE activation slot factor
+    if slot:
+        config.dist_moe_runtime = replace(config.dist_moe_runtime, activation_slot_capacity_factor=float(slot))
     prof = os.environ.get("KIMI_K3_INVENTORY_PROFILE", "remat_perf_8k")
     config.profiler = replace(config.profiler, save_traces_folder=f"profiling/{prof}",
                               enable_memory_snapshot=False)

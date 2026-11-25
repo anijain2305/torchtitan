@@ -359,13 +359,18 @@ Here is the general recipe I followed:
    so fewer, larger microbatches mean less communication.
 3. **If it does not fit** (our case: a single 8K sequence is already more than a
    GPU), there are two levers:
-    - **Rematerialization and offloading.** Measure the memory-time Pareto
-      frontier of the two together, including the rematerialization knobs built
-      into custom kernels like DistMoE, and take the fastest point within the
-      budget. The memory floor is offloading everything. As in step 2, a point
-      that frees enough memory for a larger microbatch is worth keeping for
-      FSDP configs.
-    - **Context and tensor parallelismg.** They split
+    - **Rematerialization and offloading.** First offload whatever you can
+      for free: copies to CPU memory cost nothing as long as they hide behind
+      compute, up to what the GPU-CPU link can move in a step. That free
+      budget is limited, so spend it on the bytes that are most expensive to
+      recompute. Then, until the config fits, take the next cheapest step,
+      measured in seconds added per byte freed: rematerializing a region
+      (including the knobs built into custom kernels like DistMoE), or
+      offloading past the link's budget. If the last step overshoots, spend
+      the leftover memory in reverse, buying back the most expensive step per
+      byte first. As in step 2, memory that is left over can also buy a larger
+      microbatch for FSDP configs.
+    - **Context and tensor parallelism.** They split
       every sequence across their GPUs and shrink the activations roughly by
       their degree, at the cost of communication on the critical path (and,
       under FSDP, more microbatches per GPU, so more FSDP communication). A
@@ -404,32 +409,35 @@ leaves over.
 
 ::: figure remat-offload-frontier
 
-*8K, FSDP 512 + EP 64, CP 1. Each label says what that setting adds to the one
-before it, starting from the bottom right. The blue line is the Pareto frontier:
-no other setting is both faster and smaller. FF is the feed-forward. The two
-hollow points do not fit, so they were not run at full depth: they are
-estimated from 8-layer runs and from the one-layer DistMoE benchmark.*
+*8K, FSDP 512 + EP 64, CP 1. The blue line follows the recipe from the bottom
+right; each label says what that step adds. Filled points are measured at full
+depth; hollow points do not fit, so they were estimated from the measured steps,
+8-layer runs and the one-layer DistMoE benchmark. Grey points are measured
+settings off the recipe's path. FF is the feed-forward.*
 
-Read the chart from the bottom right, where nothing is recomputed, and walk up
-the line, giving up a little speed for memory at each step:
+Read the chart from the bottom right, where nothing is recomputed, and follow
+the recipe up the line:
 
 - **No remat** is the fastest, and nowhere near fitting.
-- **Let DistMoE recompute first.** It frees the most memory for the least time
-  of any step: DistMoE's built-in recompute is the cheapest recompute in the
-  model. That is why it is DistMoE's default.
-- **Recompute attention.** Recompute only the attention kernels (the cores of
-  KDA and MLA) and keep every other stash. Those kernels stash a lot but
-  are cheap to recompute. This lands right at the budget: it fits, but only
-  just.
-- **Then offload.** Offloading the attention projections, then the
-  feed-forward, frees about half of the remaining memory for under a percent
-  of step time. Past that point the CPU link saturates: offloading everything
-  else saves little more memory and costs about a second.
-- **Full remat is dominated.** It is both slower and bigger than recomputing
-  attention with attention and feed-forward offloaded. On a GB300, there is no
-  reason to use it for this config.
+- **Offload for free.** Offloading the attention projections and the
+  feed-forward frees a lot of memory for almost no time: the copies hide
+  behind compute. These are the right bytes for the free budget, because they
+  are GEMM outputs, expensive to recompute.
+- **Then the cheapest recompute per byte: DistMoE's.** Its built-in recompute
+  frees the most memory per second of any remat in the model, which is why it
+  is DistMoE's default.
+- **Then recompute attention,** the cores of KDA and MLA. Those kernels stash a
+  lot and are cheap to recompute. This step lands well inside the budget: it
+  overshoots.
+- **Spend the leftover in reverse.** The grey point "recompute attention only"
+  undoes the offload and still fits, a little faster. Growing DistMoE's buffer
+  with the same memory is the other way to spend it.
+- **Offloading everything** goes past what the CPU link can hide, and costs
+  about a second.
+- **Full remat is dominated.** It is both slower and bigger than the recipe's
+  pick. On a GB300, there is no reason to use it for this config.
 
-> NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
+> NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute. On a GB300, offloading the attention projections and the feed-forward frees most of the activations that recomputing attention leaves, for under a percent of step time; after that, recompute whatever is cheapest per byte freed. Full remat, which recomputes everything, is beaten on both time and memory.
 
 The settings to the right of the budget line are faster, but do not fit this
 config. That is where context and tensor parallelism come in, next.

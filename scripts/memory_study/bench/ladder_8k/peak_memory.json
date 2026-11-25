@@ -1,10 +1,14 @@
 {
- "note": "Peak reserved memory per GPU (GiB) of the remat + offload ladder runs (8K, FSDP 512 + EP 64, CP 1, 93 layers, CUDA graphs, fake PG on one GB300, DistMoE with the routing-pointer fix), read from the torchtitan run logs on 2026-11-23 (the logs were not kept). Step spans are in the rperf_*.json files next to this one.",
+ "note": "Peak reserved memory per GPU (GiB), the 'memory:' value torchtitan logs at the last step, of the remat + offload ladder runs (8K, FSDP 512 + EP 64, CP 1, 93 layers, CUDA graphs, fake PG on one GB300, DistMoE with the routing-pointer fix), from the run logs in ~/.claude/jobs/194a3a0e/recover/remat2/rperf_*.log. Step spans are in the rperf_*.json files next to this one.",
  "peak_reserved_gib": {
-  "rperf_sel": 268,
-  "rperf_off_attn": 174,
-  "rperf_off_attn_ff": 135,
-  "rperf_off_attn_ff_block": 122,
-  "rperf_full": 139
+  "rperf_sel": 268.48,
+  "rperf_off_attn": 174.16,
+  "rperf_off_attn_ff": 135.43,
+  "rperf_off_attn_ff_block": 122.09,
+  "rperf_sel_off": 122.0,
+  "rperf_full": 138.99,
+  "rperf_off_block": 255.55,
+  "rperf_off_ff": 228.5,
+  "rperf_off_block_ff": 215.18
  }
 }

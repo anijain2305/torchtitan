@@ -372,61 +372,53 @@ def activations_distmoe(ctx: str = "8K") -> str:
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
 
 
-# Remat + offload ladder rungs measured at full depth (bench/ladder_8k): run, label.
-# Labels are cumulative, read from the bottom right (nothing recomputed).
-LADDER_8K = [("rperf_sel", "+ recompute attention"),
-             ("rperf_off_attn", "+ offload attention"),
-             ("rperf_off_attn_ff", "+ offload attention + FF"),
-             ("rperf_off_attn_ff_block", "+ offload everything"),
-             ("rperf_full", "Full remat")]
-
-
 def remat_offload_frontier() -> str:
-    """Step time (forward + backward span) against peak memory per GPU along
-    the remat + offload ladder (8K, FSDP 512 + EP 64, CP 1, 93 layers, CUDA
-    graphs), read from the bottom right: nothing recomputed (DistMoE keeping
-    its intermediates too), then DistMoE recomputing, then the measured rungs
-    (selective remat, then offloading more and more). The Pareto frontier
-    (rungs no other rung beats on both) is joined by a line, dashed past one
-    GPU's 288 GB; dominated rungs are grey; estimated points are hollow."""
+    """Step time (forward + backward span) against memory for activations
+    (peak minus the weight footprint) for FSDP 512 + EP 64 at 8K, following
+    the recipe from the bottom right: no remat, then the free offload
+    (attention projections and feed-forward), then the cheapest recompute per
+    byte (DistMoE's), then recomputing attention, then offloading past the
+    C2C link's budget. Measured points (full depth, CUDA graphs) are filled,
+    estimates hollow; grey points are measured settings off the recipe's path.
+    The dashed line is the budget FSDP + EP 64 leaves for activations."""
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
-    pts = [(label, peaks[run] * 2**30, _bench(f"ladder_8k/{run}.json")["fwd_bwd_span_s"]) for run, label in LADDER_8K]
-    # The two rungs that do not fit were never run at full depth; estimate them
-    # from selective remat's measured point.
-    #  - DistMoE recomputing, no other remat: plus no remat's extra stash over
-    #    selective (both scaled from the 8-layer policy runs), time scaled by the
-    #    8-layer no-remat / selective step ratio.
-    #  - Nothing recomputed: plus DistMoE keeping its intermediates, one MoE
-    #    layer's slots at capacity factor 1.0 and its forward + backward saving
-    #    (bench/dist_moe_slots_8k.json) for each of the 92 MoE layers, times the
-    #    step's microbatches.
-    sel_mem, sel_time = peaks["rperf_sel"] * 2**30, _bench("ladder_8k/rperf_sel.json")["fwd_bwd_span_s"]
-    dm_mem = sel_mem + scaled_stash("remat_policy_8k_none_fixedptrs.json") - scaled_stash(
+    run = lambda r: (peaks[r] * 2**30, _bench(f"ladder_8k/{r}.json")["fwd_bwd_span_s"])
+    sel, att_ff, every, full = run("rperf_sel"), run("rperf_off_attn_ff"), run("rperf_off_attn_ff_block"), run("rperf_full")
+    # steps that were not run at full depth, estimated from measured differences:
+    #  - recomputing attention: no remat's extra stash over selective (8-layer policy
+    #    runs scaled to 93 layers), time from the 8-layer no-remat / selective ratio;
+    #  - DistMoE keeping its intermediates: one MoE layer's slots at capacity
+    #    factor 1.0 and its forward + backward saving (bench/dist_moe_slots_8k.json)
+    #    x 92 MoE layers x the step's microbatches;
+    #  - the free offload: the measured step from selective to + offload attention + FF.
+    att_bytes = scaled_stash("remat_policy_8k_none_fixedptrs.json") - scaled_stash(
         "remat_policy_8k_selective_fixedptrs.json")
-    dm_time = sel_time * (_bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
-                          / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
+    att_time = sel[1] * (1 - _bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
+                         / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
     slots = {r["slot"]: r for r in _bench("dist_moe_slots_8k.json")["rows"]}
-    save_s = ((slots[None]["fwd_ms"] + slots[None]["bwd_ms"]) - (slots[1.0]["fwd_ms"] + slots[1.0]["bwd_ms"])) / 1e3
-    mbs = _data()["global_tokens"] / 8192 / 512
-    pts.append(("+ DistMoE recomputes (est.)", dm_mem, dm_time))
-    pts.append(("No remat (est.)", dm_mem + MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"]),
-                dm_time - MOE_LAYERS * mbs * save_s))
-    # memory for activations: the peak minus this config's weight footprint
-    # (persistent state + working set, as in zero-table), against the budget
-    # the config leaves over
+    dm_bytes = MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"])
+    dm_time = (MOE_LAYERS * _data()["global_tokens"] / 8192 / 512
+               * ((slots[None]["fwd_ms"] + slots[None]["bwd_ms"]) - (slots[1.0]["fwd_ms"] + slots[1.0]["bwd_ms"])) / 1e3)
+    off_bytes, off_time = sel[0] - att_ff[0], att_ff[1] - sel[1]
+    s4 = att_ff  # + recompute attention: the measured "selective + offload attention + FF" run
+    s3 = (s4[0] + att_bytes, s4[1] - att_time)
+    s2 = (s3[0] + dm_bytes, s3[1] - dm_time)
+    s1 = (s2[0] + off_bytes, s2[1] - off_time)
     fsdp = zero_parts("8K")[-1]
     weights = sum(fsdp["persistent"]) + sum(fsdp["working"])
     budget = GPU_BYTES - weights
-    pts = [(label, m - weights, s_) for label, m, s_ in pts]
-    front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
-    front.sort(key=lambda p: p[1])
+    path = [("No remat (est.)", s1, True), ("+ offload projections + FF: free (est.)", s2, True),
+            ("+ DistMoE recomputes (est.)", s3, True), ("+ recompute attention", s4, False),
+            ("+ offload everything", every, False)]
+    off = [("Recompute attention only", sel), ("Full remat (dominated)", full)]
+    act = lambda p: p[0] - weights
     w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
     x0, x1, y0, y1 = 0.0, 750e9, 17.5, 21.5
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     blue, grey = "#2a78d6", "#898781"
-    out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
-           'along the remat and offload ladder at 8K">']
+    out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against memory for '
+           'activations, following the remat and offload recipe at 8K">']
     for gb in range(0, 751, 100):
         out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
         out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
@@ -440,33 +432,30 @@ def remat_offload_frontier() -> str:
     gx = X(budget)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{t}" y2="{h - b}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
-    out.append(_text(gx + 4, h - b - 6, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
-    fit = [p for p in front if p[1] <= budget * 1.001]
-    over = [p for p in front if p[1] > budget * 1.001]
+    out.append(_text(gx + 4, t + 30, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
     out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" points="'
-               + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in fit) + '"/>')
-    if over:  # the frontier past one GPU: dashed
-        out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" stroke-dasharray="5 4" points="'
-                   + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in [fit[-1]] + over) + '"/>')
-    place = {  # label offsets (dx, dy, anchor), tuned so labels clear points and lines
-        "+ recompute attention": (10, -12, "start"), "+ offload attention": (10, 22, "start"),
-        "+ offload attention + FF": (14, -44, "start"), "+ offload everything": (10, -12, "start"),
-        "Full remat": (10, -12, "start"), "+ DistMoE recomputes (est.)": (10, -12, "start"),
-        "No remat (est.)": (-10, 22, "end")}
-    for label, m, s_ in pts:
-        on = (label, m, s_) in front
-        c = blue if on else grey
-        est = "(est.)" in label
-        out.append(f'<g><title>{html.escape(label)}: {s_:.2f} s, {_dec(m)}</title>'
-                   f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{SURFACE if est else c}" stroke="{c}" '
-                   f'stroke-width="2"/></g>')
+               + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for _, p, _ in path) + '"/>')
+    halo = lambda txt: txt.replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1)
+    place = {"No remat (est.)": (10, -16, "end"), "+ offload projections + FF: free (est.)": (0, 26, "middle"),
+             "+ DistMoE recomputes (est.)": (10, -12, "start"), "+ recompute attention": (10, 22, "start"),
+             "+ offload everything": (10, -12, "start"), "Recompute attention only": (10, -12, "start"),
+             "Full remat (dominated)": (10, -12, "start")}
+    for label, p, est in path:
+        x, y = X(act(p)), Y(p[1])
+        out.append(f'<g><title>{html.escape(label)}: {p[1]:.2f} s, {_dec(act(p))} for activations</title>'
+                   f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="{SURFACE if est else blue}" stroke="{blue}" '
+                   'stroke-width="2"/></g>')
         dx, dy, anchor = place[label]
         if abs(dy) > 30:  # lifted label: a leader line back to its point
-            out.append(f'<line x1="{X(m):.1f}" y1="{Y(s_) - 6:.1f}" x2="{X(m) + dx - 2:.1f}" y2="{Y(s_) + dy + 3:.1f}" '
+            out.append(f'<line x1="{x:.1f}" y1="{y - 6:.1f}" x2="{x + dx:.1f}" y2="{y + dy + 3:.1f}" '
                        f'stroke="{MUTED}" stroke-width="1"/>')
-        out.append(_text(X(m) + dx, Y(s_) + dy, label + ("" if on else " (dominated)"), 12, INK if on else MUTED,
-                         anchor, weight=600 if on else 400)
-                   .replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1))
+        out.append(halo(_text(x + dx, y + dy, label, 12, INK, anchor, weight=600)))
+    for label, p in off:
+        x, y = X(act(p)), Y(p[1])
+        out.append(f'<g><title>{html.escape(label)}: {p[1]:.2f} s, {_dec(act(p))} for activations</title>'
+                   f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{grey}" stroke="{SURFACE}" stroke-width="2"/></g>')
+        dx, dy, anchor = place[label]
+        out.append(halo(_text(x + dx, y + dy, label, 12, MUTED, anchor)))
     out.append("</svg>")
     return "".join(out)
 
