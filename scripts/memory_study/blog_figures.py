@@ -703,9 +703,11 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
         weights = MXFP8_WEIGHT_BYTES * (q_all + routed) + 2 * (dense - q_all)
         working = (weights, 0.0)
         dense_deg = f"1/{tp}" if tp > 1 else "whole"
-        notes = ("1/512", _split_note(4 * routed, f"1/{ep}", 4 * dense, dense_deg), "1/512",
+        notes = ("1/512", _split_note(4 * routed, f"1/{ep}", 4 * dense, dense_deg, mark=True), "1/512",
                  _split_note(MXFP8_WEIGHT_BYTES * routed, f"1/{ep}", weights - MXFP8_WEIGHT_BYTES * routed,
-                             dense_deg), "")
+                             dense_deg, mark=True), "")
+        # what TP cannot shrink: master weights, optimizer state, the experts' gradients and weights
+        fixed = master + optim + (4 + MXFP8_WEIGHT_BYTES) * routed
     else:
         blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
         routed = blk["routed"] / ep
@@ -716,12 +718,19 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
         notes = ("1/512", "1/512", "1/512", split, split)
     total = master + grads + optim + sum(working)
     return {"zero": zero, "ep": ep, "tp": tp, "persistent": (master, grads, optim), "working": working,
-            "total": total, "notes": notes}
+            "total": total, "notes": notes, "fixed": fixed if zero == 1 else None}
 
 
-def _split_note(experts: float, experts_deg: str, dense: float, dense_deg: str) -> str:
-    """Cell note: a cell's experts vs dense bytes, each with how it is split."""
-    return f"experts {_dec(experts)} ({experts_deg})<br>dense {_dec(dense)} ({dense_deg})"
+FIXED_TINT = "background: rgba(237, 161, 0, 0.18);"  # marks what TP cannot shrink
+
+
+def _split_note(experts: float, experts_deg: str, dense: float, dense_deg: str, mark: bool = False) -> str:
+    """Cell note: a cell's experts vs dense bytes, each with how it is split;
+    mark: tint the experts' part (TP cannot shrink it)."""
+    e = f"experts {_dec(experts)} ({experts_deg})"
+    if mark:
+        e = f'<span style="{FIXED_TINT} border-radius: 3px; padding: 0 3px; color: var(--text-secondary);">{e}</span>'
+    return f"{e}<br>dense {_dec(dense)} ({dense_deg})"
 
 
 EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
@@ -729,53 +738,64 @@ EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
 
 def ep_tp_table() -> str:
     """Persistent state + working set per GPU for ZeRO-1 with EP and TP (no
-    PP), plus what is left of one GPU for activations; same columns as
-    zero-table. Rows grouped by family; independent of the context length."""
+    PP), plus what is left of one GPU for activations. Amber marks what TP
+    cannot shrink (master weights, optimizer state, the experts' gradients and
+    compute weights); its column sums it and shows the room left for the dense
+    part against what the dense part needs. ZeRO-1 has no working-set
+    gradients, so that column is left out. Independent of the context length."""
     rule = "border-left: 2px solid #898781;"
     tint = "background: rgba(137, 135, 129, 0.10);"
     center = "text-align: center !important;"
     th = lambda h, style="", attrs="": f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
+    ncol = 8
     out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
            + th("Persistent state", rule + tint + center, ' colspan="3"')
-           + th("Working set", rule + tint + center, ' colspan="2"')
+           + th("Working set", rule + tint + center)
+           + th("TP cannot shrink", rule + FIXED_TINT, ' rowspan="2"')
            + th("Persistent + working set", rule, ' rowspan="2"')
            + th("Left for activations", rule, ' rowspan="2"') + "</tr>",
            "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
                             for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
-                                                   "Compute weights", "Gradients (fp32)"))) + "</tr>"]
+                                                   "Compute weights"))) + "</tr>"]
     # reminder rows from the ZeRO table, greyed, so the EP + TP rows read against them
-    out.append(f'<tr><td colspan="8" style="{tint} font-weight: 600;">From the ZeRO table</td></tr>')
+    out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">From the ZeRO table</td></tr>')
     P = _data()["persistent"]["model"]
     g_exp, g_dense = P["grads"]["routed"], sum(P["grads"].values()) - P["grads"]["routed"]
     w_exp = MXFP8_WEIGHT_BYTES * P["weights"]["routed"] / 4
     for zr in zero_parts("8K")[:2]:
-        vals = list(zr["persistent"]) + list(zr["working"])
-        zr = dict(zr, cell_notes=list(zr["cell_notes"]))
-        zr["cell_notes"][1] = _split_note(g_exp, "unsharded", g_dense, "unsharded")
+        vals = list(zr["persistent"]) + [zr["working"][0]]
+        notes = list(zr["cell_notes"])[:4]
+        notes[1] = _split_note(g_exp, "unsharded", g_dense, "unsharded")
         if vals[3]:
-            zr["cell_notes"][3] = _split_note(w_exp, "whole", vals[3] - w_exp, "whole")
+            notes[3] = _split_note(w_exp, "whole", vals[3] - w_exp, "whole")
         cells = "".join((f'<td style="{rule}">' if i in (0, 3) else "<td>")
-                        + ((_dec(v) + (f'<span class="sub">{zr["cell_notes"][i]}</span>' if zr["cell_notes"][i] else ""))
-                           if v else "-") + "</td>" for i, v in enumerate(vals))
-        over = sum(vals) - GPU_BYTES
-        out.append(f'<tr style="opacity: 0.55;"><td>{zr["label"]}</td>{cells}'
+                        + ((_dec(v) + (f'<span class="sub">{notes[i]}</span>' if notes[i] else "")) if v else "-")
+                        + "</td>" for i, v in enumerate(vals))
+        out.append(f'<tr style="opacity: 0.55;"><td>{zr["label"]}</td>{cells}<td style="{rule}">-</td>'
                    f'<td style="{rule}"><b>{_dec(sum(vals))}</b></td>'
-                   f'<td style="{rule}">over by {_dec(over)}</td></tr>')
+                   f'<td style="{rule}">over by {_dec(sum(vals) - GPU_BYTES)}</td></tr>')
     family = None
     for zero, ep, tp in EP_TP_ROWS:
         r = ep_tp_parts(zero, ep, tp)
-        fam = f"{'FSDP' if zero == 3 else 'ZeRO-1'} + EP {ep}"
+        fam = f"ZeRO-1 + EP {ep}"
         if fam != family:
-            out.append(f'<tr><td colspan="8" style="{tint} font-weight: 600;">{fam}</td></tr>')
+            out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">{fam}</td></tr>')
             family = fam
         cells = ""
-        for i, v in enumerate(list(r["persistent"]) + list(r["working"])):
+        for i, v in enumerate(list(r["persistent"]) + [r["working"][0]]):
             note = r["notes"][i]
-            text = (_dec(v) + (f'<span class="sub">{note}</span>' if note else "")) if v else "-"
-            cells += f'<td style="{rule}">{text}</td>' if i in (0, 3) else f"<td>{text}</td>"
+            text = _dec(v) + (f'<span class="sub">{note}</span>' if note else "")
+            style = (rule if i in (0, 3) else "") + (FIXED_TINT if i in (0, 2) else "")
+            cells += f'<td style="{style}">{text}</td>' if style else f"<td>{text}</td>"
+        dense = r["total"] - r["fixed"]
+        room = GPU_BYTES - r["fixed"]
+        need_c = "#008300" if dense <= room else "#c0302f"
+        fixed_cell = (f'<b>{_dec(r["fixed"])}</b><span class="sub">room for dense: {_dec(room)}<br>'
+                      f'<span style="color: {need_c}; font-weight: 600;">dense needs: {_dec(dense)}</span></span>')
         left = GPU_BYTES - r["total"]
         shade = "background: rgba(0, 131, 0, 0.12);" if left > 0 else "background: rgba(227, 73, 72, 0.15);"
         out.append(f'<tr><td>{"TP " + str(tp) if tp > 1 else "no TP"}</td>{cells}'
+                   f'<td style="{rule}">{fixed_cell}</td>'
                    f'<td style="{rule}"><b>{_dec(r["total"])}</b></td>'
                    f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
     out.append("</table>")
