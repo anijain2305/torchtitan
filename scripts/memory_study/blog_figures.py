@@ -671,6 +671,92 @@ def working_set_flip() -> str:
     return "".join(out)
 
 
+# Share of the dense (non-routed-expert) parameters that TP leaves whole on every
+# TP rank: the latent MoE projections, the router and the MLA low-rank
+# projections (5.75B of 56.74B, from the model's TP sharding configs).
+TP_WHOLE_FRACTION = 5.75 / 56.74
+
+
+def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
+    """Per-GPU persistent state and working set over 512 GPUs with EP and TP
+    and no PP; zero = 1 (ZeRO-1) or 3 (FSDP). Mesh: TP takes its own axis, so
+    the FSDP axis is 512 / tp; TP-sharded dense params are 1/tp per TP rank,
+    then 1/(512/tp) of that per GPU (1/512 overall), TP-whole ones only
+    1/(512/tp). The routed experts are not TP-sharded: TP folds into EP, the
+    experts are split ep ways and FSDP-sharded over the remaining 512 / ep.
+    ZeRO-1 holds the whole model's compute weights and unsharded gradients for
+    the GPU's experts and TP slice all step; FSDP holds two layers of each."""
+    d = _data()
+    P = d["persistent"]["model"]
+    pad = expert_padding(NUM_EXPERTS / ep, 512 // ep)
+    dense_frac = lambda tp: (1 - TP_WHOLE_FRACTION) / tp + TP_WHOLE_FRACTION  # dense held per TP rank
+    # persistent: TP-sharded dense over 512, TP-whole dense over 512 / tp, experts padded over 512
+    part = lambda k: ((sum(P[k].values()) - P[k]["routed"]) * ((1 - TP_WHOLE_FRACTION) + TP_WHOLE_FRACTION * tp)
+                      + pad * P[k]["routed"]) / 512
+    master, grads, optim = part("weights"), part("grads"), part("state")
+    q = dense_quantized_params()
+    if zero == 1:
+        routed = P["weights"]["routed"] / 4 / ep  # params of the GPU's experts, whole model
+        dense = (sum(P["weights"].values()) - P["weights"]["routed"]) / 4 * dense_frac(tp)
+        q_all = d["mxfp8_linear_params"]["model"] * DENSE_MXFP8 * dense_frac(tp)
+        grads = 4 * (routed + dense)  # unsharded across the FSDP axis until the end of the step
+        weights = MXFP8_WEIGHT_BYTES * (q_all + routed) + 2 * (dense - q_all)
+        working = (weights, 0.0)
+        split = f"experts 1/{ep}, dense " + (f"1/{tp}" if tp > 1 else "whole")
+        notes = ("1/512", "unsharded: " + split, "1/512", "whole model: " + split, "")
+    else:
+        blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
+        routed = blk["routed"] / ep
+        dense = (sum(blk.values()) - blk["routed"]) * dense_frac(tp)
+        qb = q * dense_frac(tp)
+        working = (2 * (MXFP8_WEIGHT_BYTES * (qb + routed) + 2 * (dense - qb)), 2 * 4 * (dense + routed))
+        split = f"2 layers, dense " + (f"1/{tp}" if tp > 1 else "whole")
+        notes = ("1/512", "1/512", "1/512", split, split)
+    total = master + grads + optim + sum(working)
+    return {"zero": zero, "ep": ep, "tp": tp, "persistent": (master, grads, optim), "working": working,
+            "total": total, "notes": notes}
+
+
+EP_TP_ROWS = [(3, 64, t) for t in (1, 2, 4, 8)] + [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
+
+
+def ep_tp_table() -> str:
+    """Persistent state + working set per GPU for FSDP and ZeRO-1 with EP and
+    TP (no PP), plus what is left of one GPU for activations; same columns as
+    zero-table. Rows grouped by family; independent of the context length."""
+    rule = "border-left: 2px solid #898781;"
+    tint = "background: rgba(137, 135, 129, 0.10);"
+    center = "text-align: center !important;"
+    th = lambda h, style="", attrs="": f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
+    out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
+           + th("Persistent state", rule + tint + center, ' colspan="3"')
+           + th("Working set", rule + tint + center, ' colspan="2"')
+           + th("Persistent + working set", rule, ' rowspan="2"')
+           + th("Left for activations", rule, ' rowspan="2"') + "</tr>",
+           "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
+                            for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
+                                                   "Compute weights", "Gradients (fp32)"))) + "</tr>"]
+    family = None
+    for zero, ep, tp in EP_TP_ROWS:
+        r = ep_tp_parts(zero, ep, tp)
+        fam = f"{'FSDP' if zero == 3 else 'ZeRO-1'} + EP {ep}"
+        if fam != family:
+            out.append(f'<tr><td colspan="8" style="{tint} font-weight: 600;">{fam}</td></tr>')
+            family = fam
+        cells = ""
+        for i, v in enumerate(list(r["persistent"]) + list(r["working"])):
+            note = r["notes"][i]
+            text = (_dec(v) + (f'<span class="sub">{note}</span>' if note else "")) if v else "-"
+            cells += f'<td style="{rule}">{text}</td>' if i in (0, 3) else f"<td>{text}</td>"
+        left = GPU_BYTES - r["total"]
+        shade = "background: rgba(0, 131, 0, 0.12);" if left > 0 else "background: rgba(227, 73, 72, 0.15);"
+        out.append(f'<tr><td>{"TP " + str(tp) if tp > 1 else "no TP"}</td>{cells}'
+                   f'<td style="{rule}"><b>{_dec(r["total"])}</b></td>'
+                   f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
+    out.append("</table>")
+    return "".join(out)
+
+
 def fsdp_ep_parts(ctx: str = "8K", cp: int = 1, tp: int = 1) -> dict:
     """FSDP + EP 64 per GPU with each sequence split over cp x tp GPUs; same
     rules as zero_parts. CP ranks fold into FSDP; TP (with sequence
@@ -2367,6 +2453,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),
                 "zero-ep-table": by_context(lambda c: zero_table(c, ep=True)),
                 "working-set-flip": working_set_flip,
+                "ep-tp-table": ep_tp_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

@@ -171,7 +171,70 @@ This flip is what Tianyu was pointing at. TP shards the dense layers. Before
 EP they were 3% of the working set, so TP had little to gain; after EP they are
 the larger part, and TP can go after them.
 
-> NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, and today nothing hides it, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
+> NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
+
+### Tensor parallelism
+
+**Where does TP go?** Every parallelism is an axis of the device mesh, and
+the axes multiply to the 512 GPUs. So far we had one axis: FSDP over 512. TP
+cannot share FSDP's axis, because the two split the model in different ways.
+The GPUs of a TP group split every dense matrix between them (each holds some
+of its rows or columns) and compute each layer together, on the same tokens.
+FSDP then shards each GPU's slice further, over the GPUs of the FSDP axis. So
+TP takes an axis of its own, and FSDP gets what is left: with TP 2, the mesh is
+256 (FSDP) x 2 (TP).
+
+Two things follow. First, the persistent state per GPU barely moves: a
+TP-sharded parameter is split 2 x 256 = 512 ways, exactly as before. The
+exceptions are the 10% of the dense parameters that TP leaves whole on every
+TP rank (the latent MoE projections, the router and MLA's low-rank
+projections), which are now split only 256 ways. Second, the GPUs of a TP group
+work on the same microbatch, so there are 512 / TP data-parallel replicas
+instead of 512, each running more microbatches per step.
+
+**How TP interacts with EP.** TP does not split the routed experts:
+torchtitan has no expert TP. Instead, in the MoE layers, the TP ranks become
+extra EP ranks. EP is carved out of the FSDP and TP axes together (EP must
+divide FSDP x TP = 512), and each group of experts is FSDP-sharded over the
+remaining 512 / EP GPUs, with or without TP. With EP 64 and TP 2, an EP group
+of 64 GPUs spans 32 positions on the FSDP axis times the 2 TP ranks, and each
+group of 14 experts is still sharded over 8 GPUs. So TP changes nothing for the
+experts: it only shrinks the dense part.
+
+**What TP buys.** Here is the persistent state and working set with EP and TP,
+for FSDP and for ZeRO-1 (back from the dead), along with what is left of the
+288 GB for activations:
+
+::: figure ep-tp-table
+
+*Without PP. EP 64 and EP 128 are the EP degrees that divide both the 896
+experts and the 512 GPUs; EP 128 pads 7 experts per group to 8 over 4 GPUs.*
+
+**Under FSDP, TP barely helps.** 86.5 GB at TP 1, 81.5 GB at TP 8. FSDP + EP
+had already cut the working set to 12.2 GB, of which only 7.6 GB is dense, and
+TP cannot touch the persistent state, which stays at 1/512. Under FSDP, TP's
+memory payoff is in the activations (with sequence parallelism, which we get to
+later), not in the weights.
+
+**Under ZeRO-1, TP is what makes it fit.** ZeRO-1 holds the whole model's
+compute weights and unsharded gradients all step, but only for the GPU's
+experts (1/EP of them) and its TP slice of the dense layers. Without TP, the
+dense part alone is 56.7B parameters x (2 bytes of bf16 weights + 4 bytes of
+fp32 gradients) = 340 GB. This is where the flip matters: once EP has shrunk the
+experts, the dense layers are the bulk of what ZeRO-1 holds, and TP divides
+them. ZeRO-1 + EP 128 fits with TP 4 (21 GB left for activations) and TP 8
+(59 GB left).
+
+Why bother with ZeRO-1 when FSDP + EP fits so easily? Communication. FSDP
+all-gathers every layer's weights and reduce-scatters its gradients for every
+microbatch; ZeRO-1 gathers the weights once per step and reduce-scatters the
+gradients once per step. ZeRO-1 trades memory for communication, and EP + TP is
+what makes that memory affordable.
+
+**What is left.** At ZeRO-1 + EP 128 + TP 8, the gradients are 134 GB, 85 GB of
+them the experts', which TP cannot shrink. Gradients, not weights, are what
+keep ZeRO-1 big, and the 10% of the dense parameters that TP leaves whole set a
+floor on the dense part.
 
 ## Using Parallelism to Fit the Model
 
