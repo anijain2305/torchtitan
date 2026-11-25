@@ -150,11 +150,11 @@ become the larger part, at 62%. Keep this flip in mind: it is what makes
 tensor parallelism worth reaching for, because TP shards the dense layers. We
 will come back to it very soon.
 
-::: figure working-set-mix
+::: figure working-set-flip
 
-*EP shrinks the working set 25x, from 304 GB to 12.2 GB, and flips its makeup:
-the experts drop from 97% to 38%, and the dense layers, untouched at 7.6 GB,
-become the larger part.*
+*EP shrinks the experts' part of the working set 64x, from 296 GB to 4.6 GB,
+while the dense layers stay at 7.6 GB, so the dense layers become the larger
+part.*
 
 The working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing
 the persistent state plus working set down to 86.5 GB, way under our 288 GB
