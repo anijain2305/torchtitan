@@ -253,12 +253,26 @@ Where do they go? At 8K:
 | **Total** | **746** |  |
 
 More than half of it is the routed experts. Each token goes to 16 experts, so each of its
-expert intermediates is stashed 16 times over. That is also why the
-routed experts are not stashed this way in practice: DistMoE, which runs them,
-keeps only their inputs and recomputes the rest in backward, inside its own
-scratch memory. With DistMoE on FSDP + EP 64, one 8K sequence stashes about
-346 GB without any rematerialization (measured on 8 layers and scaled to all
-93): less than half of 746 GB, but still more than a whole GPU.
+expert intermediates is stashed 16 times over.
+
+In practice the routed experts run in DistMoE, which manages their activations
+itself, in preallocated slot buffers, and has its own rematerialization knob:
+how big those buffers are. Big enough for every layer's expert intermediates,
+nothing is recomputed. With no buffers, DistMoE keeps only the expert inputs
+and recomputes the rest in backward (today's default). Per 8K sequence on
+FSDP + EP 64, with nothing else rematerialized:
+
+| DistMoE | Stashed | DistMoE's backward |
+|---|---|---|
+| Keeps its intermediates (buffers sized for balanced routing) | about 660 GB | no recompute |
+| Recomputes them (default) | about 346 GB | 1.5 ms more per MoE layer |
+
+*Measured on 8 layers (and one MoE layer for the buffers), scaled to all 93.*
+
+Either way, one sequence is more than a whole GPU. That is what we are dealing
+with; the next section shrinks it. DistMoE's buffer size is one of the knobs:
+if a config has memory to spare, growing the buffers so DistMoE stops
+recomputing is one way to spend it.
 
 This is deliberately simple again. Tensor parallelism (with sequence
 parallelism) and context parallelism split each sequence across GPUs and shrink
@@ -283,7 +297,8 @@ budget for activations. Here is the recipe for spending it:
 3. **If it does not fit** (our case: a single 8K sequence is already more than
    a GPU), find the fastest mix of rematerialization and offloading that fits.
    Measure the memory-time Pareto frontier of the two together and take the
-   fastest point within the budget. The memory floor is offloading everything,
+   fastest point within the budget, counting DistMoE's buffer size as one more
+   knob. The memory floor is offloading everything,
    not full rematerialization, which turns out to be neither the smallest nor
    the fastest option. As in step 2, a point that frees enough memory for a
    larger microbatch is worth keeping for FSDP configs.
