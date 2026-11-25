@@ -340,28 +340,38 @@ shrink the activations to fit.
 
 ## Use the leftover memory for activations effectively
 
-Here is the general recipe that I followed
+Here is the general recipe I followed:
 
 1. **Start simple:** no rematerialization, no offloading, one sequence per
    microbatch. Check whether it fits the budget.
-2. **If it fits** (rare for LLMs of this size), increase the microbatch size as long as it still fits (while keeping it below the local batch size). This seems counterintuive at this point, but you will see later in rankings that it pays off with FSDP. FSDP
+2. **If it fits** (rare for LLMs of this size), increase the microbatch size as
+   long as it still fits, up to the GPU's share of the batch. This may seem
+   pointless now, but the rankings will show it pays off under FSDP: FSDP
    gathers the weights and reduce-scatters the gradients for every microbatch,
    so fewer, larger microbatches mean less communication.
-3. **If it does not fit** (our case: a single 8K sequence is already more than a GPU)
-  3a. **Use Remat and offload** Find the fastest mix of rematerialization and offloading that fits.
-   Measure the memory-time Pareto frontier of the two together and take the
-   fastest point within the budget. This should also include the rematerialization knobs built in the custom kernels like DistMoE. The memory floor is offloading everything. As in step 2, a point that frees enough memory by remat/offload so that a larger microbatch can fit is worth keeping for FSDP configs.
-  3b. **Use Context and/or Tensor parallelism are part of the config.** They split every sequence across its GPUs and shrinks the
-   activations roughly by its degree, at the cost of communication on the
-   critical path and increaseing the number of microbatches (more FSDP comms). A high enough degree can remove the need for rematerialization
-   altogether, e.g, CP 1 with full remat vs CP 4 with no remat. So as a recipe, after applying TP/CP, do something similar to 3a to find the best setting for that config.
-
-5. **Pipeline parallelism** is the last lever: it shrinks the weights to one
-   stage, but multiplies the activations by the microbatches in flight.
+3. **If it does not fit** (our case: a single 8K sequence is already more than a
+   GPU), there are two levers:
+    - **Rematerialization and offloading.** Measure the memory-time Pareto
+      frontier of the two together, including the rematerialization knobs built
+      into custom kernels like DistMoE, and take the fastest point within the
+      budget. The memory floor is offloading everything. As in step 2, a point
+      that frees enough memory for a larger microbatch is worth keeping for
+      FSDP configs.
+    - **Context and tensor parallelism, as part of the config.** They split
+      every sequence across their GPUs and shrink the activations roughly by
+      their degree, at the cost of communication on the critical path (and,
+      under FSDP, more microbatches per GPU, so more FSDP communication). A
+      high enough degree can remove the need for rematerialization altogether:
+      CP 1 with full remat versus CP 4 with none is a real trade. So for each
+      CP or TP degree, find its best remat and offload setting as above, and
+      let the ranking pick.
+4. **Pipeline parallelism costs activations.** PP is there for the weights and
+   the communication (3.2.4), but the first stage holds several microbatches
+   in flight, so a PP config needs more of step 3 to fit.
 
 The rest of this section follows the recipe: the remat and offload frontier,
-then context and tensor parallelism, then pipeline parallelism.
-
+then context and tensor parallelism, then what pipeline parallelism does to
+the activations.
 
 <!--
 ## Rematerialization
