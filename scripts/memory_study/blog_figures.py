@@ -868,9 +868,81 @@ def ep_tp_table() -> str:
     return "".join(out)
 
 
+def pp_weight_parts(P: int) -> dict:
+    """ZeRO-1 + PP P (EP = the stage's 512 / P GPUs, no TP), first stage: the
+    weight footprint split as in ep-tp-table. From pp_parts' rules: each stage
+    holds ceil(93 / P) layers; master weights + optimizer state are 8 B/param
+    over the stage's GPUs (4 + 4: fp32 master, Muon's fp32 momentum); ZeRO-1
+    keeps the stage's gradients unsharded (fp32) and its compute weights
+    gathered (MXFP8 experts, bf16 dense) all step."""
+    d = _data()
+    lay = {r["key"]: r["numel"] for r in d["layers"][0]["scope"]["stored"]}
+    routed_n = lay["routed"]
+    dense_n = sum(lay.values()) - routed_n
+    q = dense_quantized_params()
+    g, ls = 512 // P, -(-93 // P)
+    mo = 8 * ls * (routed_n + dense_n) / g
+    exp_g, dense_g = 4 * ls * routed_n / g, 4 * ls * dense_n
+    exp_w = MXFP8_WEIGHT_BYTES * ls * routed_n / g
+    dense_w = ls * (MXFP8_WEIGHT_BYTES * q + 2 * (dense_n - q))
+    return {"P": P, "layers": ls, "gpus": g, "master": mo / 2, "optim": mo / 2, "exp_g": exp_g, "dense_g": dense_g,
+            "exp_w": exp_w, "dense_w": dense_w, "total": mo + exp_g + dense_g + exp_w + dense_w}
+
+
+def pp_weight_table() -> str:
+    """Weight footprint (persistent state + working set) per GPU on the first
+    stage for ZeRO-1 + PP 4 / 8 / 16 with EP = the stage, next to 3.2.3's
+    ZeRO-1 + EP 128 + TP 8 (greyed); same columns as ep-tp-table.
+    Independent of the context length."""
+    rule = "border-left: 2px solid #898781;"
+    tint = "background: rgba(137, 135, 129, 0.10);"
+    center = "text-align: center !important;"
+    th = lambda h, style="", attrs="": f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
+    ncol = 7
+    out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
+           + th("Persistent state", rule + tint + center, ' colspan="3"')
+           + th("Working set", rule + tint + center)
+           + th("Persistent + working set", rule, ' rowspan="2"')
+           + th("Left for activations", rule, ' rowspan="2"') + "</tr>",
+           "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
+                            for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
+                                                   "Compute weights"))) + "</tr>"]
+    sub = lambda t: f'<span class="sub">{t}</span>'
+
+    def row(label, cells, total, dim=False):
+        left = GPU_BYTES - total
+        shade = "" if dim else ("background: rgba(0, 131, 0, 0.12);" if left > 0
+                                else "background: rgba(227, 73, 72, 0.15);")
+        tds = "".join(f'<td style="{rule}">{c}</td>' if i in (0, 3) else f"<td>{c}</td>" for i, c in enumerate(cells))
+        out.append(f'<tr{" style=\"opacity: 0.55;\"" if dim else ""}><td>{label}</td>{tds}'
+                   f'<td style="{rule}"><b>{_dec(total)}</b></td>'
+                   f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
+
+    out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">From 3.2.3</td></tr>')
+    r = ep_tp_parts(1, 128, 8)
+    m, gr, o = r["persistent"]
+    row("ZeRO-1 + EP 128 + TP 8", [_dec(m) + sub(r["notes"][0]), _dec(gr) + sub(r["notes"][1]),
+                                   _dec(o) + sub(r["notes"][2]), _dec(r["working"][0]) + sub(r["notes"][3])],
+        r["total"], dim=True)
+    out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">ZeRO-1 + PP, EP = the stage\'s GPUs, '
+               "first stage</td></tr>")
+    for P in (4, 8, 16):
+        q = pp_weight_parts(P)
+        frac = f"1/{512 // P * 1}"
+        split = lambda e, dn: f"dense {_dec(dn)}<br>experts {_dec(e)} (1/{q['gpus']})"
+        row(f"PP {P}" + sub(f"{q['layers']} layers on {q['gpus']} GPUs"),
+            [_dec(q["master"]) + sub(f"stage, 1/{q['gpus']}"),
+             _dec(q["exp_g"] + q["dense_g"]) + sub(split(q["exp_g"], q["dense_g"])),
+             _dec(q["optim"]) + sub(f"stage, 1/{q['gpus']}"),
+             _dec(q["exp_w"] + q["dense_w"]) + sub(split(q["exp_w"], q["dense_w"]))],
+            q["total"])
+    out.append("</table>")
+    return "".join(out)
+
+
 # Steps of the fit tree, in the order the post reaches them; each `::: tree-step
 # <name>` marker in blog/*.md switches the tree to that step.
-TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp"]
+TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp", "pp"]
 
 
 def _tree_rows() -> list[dict]:
@@ -879,11 +951,13 @@ def _tree_rows() -> list[dict]:
     either one value or a set of TP-degree dots."""
     z = {r["label"]: sum(r["persistent"]) + sum(r["working"]) for r in zero_parts("8K")}
     tp_dots = lambda zero, ep: [(t, ep_tp_parts(zero, ep, t)["total"]) for t in (1, 2, 4, 8)]
+    pp_dots = [(P, pp_weight_parts(P)["total"]) for P in (4, 8, 16)]
     return [
         {"label": "Data parallel", "depth": 0, "step": "dp", "value": z["No sharding"]},
         {"label": "ZeRO-1", "depth": 1, "step": "zero1", "value": z["ZeRO-1"]},
         {"label": "+ EP 64 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 64)},
         {"label": "+ EP 128 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 128)},
+        {"label": "+ PP", "depth": 2, "step": "pp", "dots": pp_dots},
         {"label": "ZeRO-2", "depth": 1, "step": "zero2", "value": z["ZeRO-2"]},
         {"label": "ZeRO-3 / FSDP", "depth": 1, "step": "zero3", "value": z["ZeRO-3 / FSDP"]},
         {"label": "+ EP 64", "depth": 2, "step": "ep", "value": z["FSDP + EP 64"]},
@@ -953,7 +1027,7 @@ def fit_tree(cur: str | None = None) -> str:
     out.append(f'<circle cx="6" cy="{ly - 4}" r="5" fill="{fit_c}"/>')
     out.append(_text(15, ly, "fits", 11, INK2))
     out.append(f'<circle cx="52" cy="{ly - 4}" r="5" fill="{SURFACE}" stroke="{over_c}" stroke-width="1.5"/>')
-    out.append(_text(61, ly, "over (dots: TP degree)", 11, INK2))
+    out.append(_text(61, ly, "over (dots: TP or PP degree)", 11, INK2))
     out.append("</svg>")
     return "".join(out)
 
@@ -2655,6 +2729,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "zero-ep-table": by_context(lambda c: zero_table(c, ep=True)),
                 "working-set-flip": working_set_flip,
                 "ep-tp-table": ep_tp_table,
+                "pp-weight-table": pp_weight_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

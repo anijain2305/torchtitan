@@ -13,7 +13,7 @@ state is, and the discussion grows from there into the sharding needed to fit
 it on our cluster; then we turn to activations:
 
 - [What is the memory footprint we are dealing with?](#sec-memory-1)
-- [Shrinking the weight footprint: ZeRO/FSDP, EP and TP](#sec-memory-2)
+- [Shrinking the weight footprint: ZeRO/FSDP, EP, TP and PP](#sec-memory-2)
 - [How big are the activations?](#sec-memory-3)
 - [Use the leftover memory for activations effectively](#sec-memory-4)
 
@@ -65,7 +65,7 @@ the persistent state alone fills a quarter of it. The stashed activations of a
 single 8K sequence, 746 GB, are 2.6 times one GPU. It is an understatement to
 call this model memory hungry!
 
-## Shrinking the weight footprint: ZeRO/FSDP, EP and TP
+## Shrinking the weight footprint: ZeRO/FSDP, EP, TP and PP
 
 Alright, time to roll up our sleeves! Let's shard the persistent state and fit
 it on our cluster.
@@ -222,9 +222,47 @@ enough for the dense part at any TP degree, not even TP 8.
 So we raise EP to 128. The part TP cannot touch drops to 156 GB, and now TP has
 room: TP 4 and TP 8 both fit.
 
-That wraps up the weights. The tree that has been growing alongside the text
-tracks which parallelism configs fit so far, and how much of each GPU their
-weights take. Whatever is left is each config's budget for activations, and
+### Shrinking the weights with PP
+
+TP is one way to make ZeRO-1 affordable. Pipeline parallelism (PP) is the
+other, and it is the more common one.
+
+**How PP shards.** PP splits the layers into stages and gives each stage its
+own slice of the GPUs: with PP 8, each stage holds 12 of the 93 layers on 64
+GPUs. Everything we have seen so far then happens *inside* a stage: ZeRO-1
+shards the stage's master weights and optimizer state over its GPUs, and EP
+spreads the stage's experts over them, so EP equals the stage's GPU count. Each
+GPU now holds the whole-step copies ZeRO-1 needs, the compute weights and the
+unsharded gradients, for its stage only.
+
+**Why reach for it?** Not for the activations: PP does nothing to shrink them,
+as we will see. PP is about communication. FSDP gathers each layer's weights
+and reduce-scatters its gradients for every microbatch; ZeRO-1 within a stage
+does both once per step. PP is what makes that affordable:
+
+::: tree-step pp snapshot
+
+::: figure pp-weight-table
+
+*First stage, no TP. Master weights and optimizer state are split 8 bytes per
+parameter, fp32 each.*
+
+Every PP degree fits the weights, even PP 4, with no TP at all. But look at
+what doubling PP actually shrinks. The master weights and optimizer state do
+not move: they are still 1/512 of the model. Neither do the experts: each stage
+has half the layers, but also half the GPUs, so EP halves and every GPU keeps
+the same share of experts. Only the dense part halves. Like TP, PP mostly
+shrinks the dense weights, which is why PP 16 saves little over PP 8.
+
+What separates PP 8 from PP 16 is not memory but latency: more stages mean a
+bigger pipeline bubble and more hops between stages, and a smaller EP group per
+stage. That is for the ranking to decide.
+
+That wraps up the weights. Three families fit: FSDP + EP, which communicates
+every microbatch, and two ways of affording ZeRO-1, which communicates once per
+step: ZeRO-1 + EP + TP and ZeRO-1 + PP. The tree that has been growing
+alongside the text tracks which configs fit so far, and how much of each GPU
+their weights take. Whatever is left is each config's budget for activations, and
 that is where we go next.
 
 ::: tree-end
@@ -302,31 +340,22 @@ shrink the activations to fit.
 
 ## Use the leftover memory for activations effectively
 
-Each config that fits its weights leaves some memory over, and that is its
-budget for activations. Here is the recipe for spending it:
+Here is the general recipe that I followed
 
 1. **Start simple:** no rematerialization, no offloading, one sequence per
    microbatch. Check whether it fits the budget.
-2. **If it fits** (rare for LLMs), grow the microbatch as long as it still fits
-   and stays within the GPU's share of the batch. Under FSDP this pays: FSDP
+2. **If it fits** (rare for LLMs of this size), increase the microbatch size as long as it still fits (while keeping it below the local batch size). This seems counterintuive at this point, but you will see later in rankings that it pays off with FSDP. FSDP
    gathers the weights and reduce-scatters the gradients for every microbatch,
-   so fewer, larger microbatches mean less communication. (ZeRO-1 communicates
-   once per step either way.)
-3. **If it does not fit** (our case: a single 8K sequence is already more than
-   a GPU), find the fastest mix of rematerialization and offloading that fits.
+   so fewer, larger microbatches mean less communication.
+3. **If it does not fit** (our case: a single 8K sequence is already more than a GPU)
+  3a. **Use Remat and offload** Find the fastest mix of rematerialization and offloading that fits.
    Measure the memory-time Pareto frontier of the two together and take the
-   fastest point within the budget, counting DistMoE's buffer size as one more
-   knob. The memory floor is offloading everything,
-   not full rematerialization, which turns out to be neither the smallest nor
-   the fastest option. As in step 2, a point that frees enough memory for a
-   larger microbatch is worth keeping for FSDP configs.
-4. **Context and tensor parallelism are part of the config, not a last
-   resort.** Each splits every sequence across its GPUs and shrinks the
+   fastest point within the budget. This should also include the rematerialization knobs built in the custom kernels like DistMoE. The memory floor is offloading everything. As in step 2, a point that frees enough memory by remat/offload so that a larger microbatch can fit is worth keeping for FSDP configs.
+  3b. **Use Context and/or Tensor parallelism are part of the config.** They split every sequence across its GPUs and shrinks the
    activations roughly by its degree, at the cost of communication on the
-   critical path (and, with fewer data-parallel replicas, more microbatches
-   per GPU). A high enough degree can remove the need for rematerialization
-   altogether, so whether CP 4 without remat beats CP 1 with full remat is for
-   the ranking to decide, not a fixed order.
+   critical path and increaseing the number of microbatches (more FSDP comms). A high enough degree can remove the need for rematerialization
+   altogether, e.g, CP 1 with full remat vs CP 4 with no remat. So as a recipe, after applying TP/CP, do something similar to 3a to find the best setting for that config.
+
 5. **Pipeline parallelism** is the last lever: it shrinks the weights to one
    stage, but multiplies the activations by the microbatches in flight.
 
