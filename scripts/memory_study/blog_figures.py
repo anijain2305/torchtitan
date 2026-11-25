@@ -717,12 +717,12 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
             "total": total, "notes": notes}
 
 
-EP_TP_ROWS = [(3, 64, t) for t in (1, 2, 4, 8)] + [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
+EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
 
 
 def ep_tp_table() -> str:
-    """Persistent state + working set per GPU for FSDP and ZeRO-1 with EP and
-    TP (no PP), plus what is left of one GPU for activations; same columns as
+    """Persistent state + working set per GPU for ZeRO-1 with EP and TP (no
+    PP), plus what is left of one GPU for activations; same columns as
     zero-table. Rows grouped by family; independent of the context length."""
     rule = "border-left: 2px solid #898781;"
     tint = "background: rgba(137, 135, 129, 0.10);"
