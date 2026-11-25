@@ -230,7 +230,7 @@ that is where we go next.
 
 ::: tree-end
 
-## Stashed Activations
+## How big are the activations?
 
 The forward pass keeps some tensors around for the backward pass. We call them
 *stashed activations*, to avoid the word "saved", which is easily confused with
@@ -253,8 +253,12 @@ Where do they go? At 8K:
 | **Total** | **746** |  |
 
 More than half of it is the routed experts. Each token goes to 16 experts, so each of its
-expert intermediates is stashed 16 times over. That is what rematerialization
-goes after next.
+expert intermediates is stashed 16 times over. That is also why the
+routed experts are not stashed this way in practice: DistMoE, which runs them,
+keeps only their inputs and recomputes the rest in backward, inside its own
+scratch memory. With DistMoE on FSDP + EP 64, one 8K sequence stashes about
+346 GB without any rematerialization (measured on 8 layers and scaled to all
+93): less than half of 746 GB, but still more than a whole GPU.
 
 This is deliberately simple again. Tensor parallelism (with sequence
 parallelism) and context parallelism split each sequence across GPUs and shrink
@@ -264,11 +268,39 @@ The attention residuals run on TorchTitan's fused Triton kernel (an opt-in
 override adapted from Flash Linear Attention). It reads the block stack and the
 current partial sum directly, so it stashes no concatenated copies of them.
 
-Before tackling the persistent state, the next three subsections deal with
-activations:
-rematerialization, which shrinks them; DistMoE, which does not shrink them but
-is how we run the routed experts, so its own memory has to be part of the
-picture; and MXFP8, which shrinks matmul operands to 8 bits. -->
+## Use the leftover memory for activations effectively
+
+Each config that fits its weights leaves some memory over, and that is its
+budget for activations. Here is the recipe for spending it:
+
+1. **Start simple:** no rematerialization, no offloading, one sequence per
+   microbatch. Check whether it fits the budget.
+2. **If it fits** (rare for LLMs), grow the microbatch as long as it still fits
+   and stays within the GPU's share of the batch. Under FSDP this pays: FSDP
+   gathers the weights and reduce-scatters the gradients for every microbatch,
+   so fewer, larger microbatches mean less communication. (ZeRO-1 communicates
+   once per step either way.)
+3. **If it does not fit** (our case: a single 8K sequence is already more than
+   a GPU), find the fastest mix of rematerialization and offloading that fits.
+   Measure the memory-time Pareto frontier of the two together and take the
+   fastest point within the budget. The memory floor is offloading everything,
+   not full rematerialization, which turns out to be neither the smallest nor
+   the fastest option. As in step 2, a point that frees enough memory for a
+   larger microbatch is worth keeping for FSDP configs.
+4. **Context and tensor parallelism are part of the config, not a last
+   resort.** Each splits every sequence across its GPUs and shrinks the
+   activations roughly by its degree, at the cost of communication on the
+   critical path (and, with fewer data-parallel replicas, more microbatches
+   per GPU). A high enough degree can remove the need for rematerialization
+   altogether, so whether CP 4 without remat beats CP 1 with full remat is for
+   the ranking to decide, not a fixed order.
+5. **Pipeline parallelism** is the last lever: it shrinks the weights to one
+   stage, but multiplies the activations by the microbatches in flight.
+
+The rest of this section follows the recipe: the remat and offload frontier,
+then context and tensor parallelism, then pipeline parallelism.
+
+
 <!--
 ## Rematerialization
 
@@ -352,7 +384,7 @@ post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
 Rematerialization brought the activations down to 56 GB per 8K sequence, well
 under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
 whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.3.1]], [[memory.3.2]]). The persistent state has
+tensor parallelism ([[memory.4.1]], [[memory.4.2]]). The persistent state has
 not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
 to be split across many GPUs. -->
 
@@ -496,7 +528,7 @@ split, so the two contexts give the same numbers:
 Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
 smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
 still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
-at every `v` ([[memory.3.5]]).
+at every `v` ([[memory.4.5]]).
 
 > NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
 
