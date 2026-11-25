@@ -296,6 +296,11 @@ imbalance than 4; for now we keep 4.
 
 > NOTE: The meta point here is that a roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, the most expensive and most dynamic part of the model. Leave it out early on, and your roofline can be way off.
 
+That sets up the problem. With no recompute at all, one 8K sequence needs
+683 GB of activations, far more than what is left of a GPU's 288 GB once the
+weights' persistent state and working set are in place. Next, let's see how to
+shrink the activations to fit.
+
 ## Use the leftover memory for activations effectively
 
 Each config that fits its weights leaves some memory over, and that is its
