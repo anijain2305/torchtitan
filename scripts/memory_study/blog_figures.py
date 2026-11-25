@@ -412,7 +412,8 @@ def remat_offload_frontier() -> str:
     blue, orange, green = "#2a78d6", "#eb6834", "#1baf7a"
     paths = [  # name, color, [(point, estimated)], legend text
         ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False), (undo, False)],
-         "free offload, DistMoE recomputes, recompute attention, then undo: a quarter of DistMoE's buffer back"),
+         "(1) free offload, (2) DistMoE recomputes, (3) recompute attention, (4) undo: a quarter of DistMoE's "
+         "buffer back"),
         ("Remat only", orange, [(none, True), (dm_only, True), (sel, False)],
          "DistMoE recomputes, then recompute attention"),
         ("Full remat", green, [(none, True), (full, False)], "recompute every layer"),
@@ -452,6 +453,11 @@ def remat_offload_frontier() -> str:
             out.append(f'<g><title>{html.escape(name)}: {p[1]:.2f} s, {_dec(act(p))} for activations'
                        f'{" (estimated)" if est else ""}</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '
                        f'r="{4 if est else 6}" fill="{SURFACE if est else c}" stroke="{c}" stroke-width="2"/></g>')
+        if name == "Greedy":  # numbered badges: the order of the greedy steps
+            for k, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (15, 10))), 1):
+                cx, cy = X(act(p)) + bx, Y(p[1]) + by
+                out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="{c}"/>')
+                out.append(_text(cx, cy + 4, str(k), 11, "#ffffff", "middle", weight=700))
         p = pts[-1][0]
         dx, dy, anchor = end_place[name]
         out.append(halo(_text(X(act(p)) + dx, Y(p[1]) + dy, f"{name}: {p[1]:.2f} s", 12, INK, anchor, weight=600)))
