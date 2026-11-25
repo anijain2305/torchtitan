@@ -26,6 +26,7 @@ Usage:
 import argparse
 import html
 import importlib
+import json
 import os
 import re
 import subprocess
@@ -159,10 +160,32 @@ EXTRA_CSS = """
 .toc a:hover { text-decoration: underline; }
 .section-sep { border: 0; border-top: 1px solid var(--grid); margin: 40px 0; }
 .foot { color: var(--muted); font-size: 12px; margin: 40px 0; }
+/* fit tree: a sidebar that grows as the reader scrolls past `::: tree-step` markers
+   (wide screens); narrow screens get inline snapshots instead */
+.fit-tree { display: none; }
+.ft-row { transition: opacity 0.4s; }
+.ft-future { opacity: 0; }
+.ft-past.ft-over { opacity: 0.5; }
+.ft-new .ft-hl { fill: #eef4fc; }
+.tree-inline { margin: 18px 0; }
+@media (min-width: 1400px) {
+  .wrap { max-width: none; }
+  .blog { margin-left: max(0px, calc((100vw - 1300px) / 2 - 24px)); }
+  .fit-tree { display: block; position: fixed; top: 64px; width: 300px; z-index: 4;
+              right: max(24px, calc((100vw - 1300px) / 2)); opacity: 0; transition: opacity 0.3s;
+              pointer-events: none; }
+  .fit-tree.on { opacity: 1; pointer-events: auto; }
+  .tree-inline { display: none; }
+}
 """
 
 PLACEHOLDER = re.compile(r"^:::\s*(chart|table)\s+(\S+)\s*$", re.M)
 FIGURE = re.compile(r"^:::\s*figure\s+(\S+)\s*$", re.M)
+# `::: tree-step <step> [snapshot]` switches the fit tree to <step> as the reader
+# scrolls past it (snapshot: also an inline copy for narrow screens);
+# `::: tree-end` hides the tree again
+TREE_STEP = re.compile(r"^:::\s*tree-step\s+(\S+)(\s+snapshot)?\s*$", re.M)
+TREE_END = re.compile(r"^:::\s*tree-end\s*$", re.M)
 
 
 SECTION_KEY = re.compile(r"^(?:\d+[a-z]?_|appendix_|zz_)")
@@ -352,6 +375,12 @@ def render_section(
         else f'<div class="placeholder">figure: {m.group(1)} (unknown)</div>',
         body,
     )
+    body = TREE_STEP.sub(
+        lambda m: f'\n<div class="tree-step" data-step="{m.group(1)}"></div>\n'
+        + (f'<div class="figure tree-inline">{blog_figures.fit_tree(m.group(1))}</div>\n' if m.group(2) else ""),
+        body,
+    )
+    body = TREE_END.sub('\n<div class="tree-end"></div>\n', body)
     body = PLACEHOLDER.sub(
         lambda m: f'<div class="placeholder">{m.group(1)}: {html.escape(m.group(2))} (to come)</div>',
         body,
@@ -392,6 +421,8 @@ def build() -> None:
     ]
     parts += [r[1] for r in rendered[1:]]
     sections = '\n<hr class="section-sep">\n'.join(parts)
+    tree = (f'<aside class="fit-tree" aria-hidden="true">{blog_figures.fit_tree()}</aside>'
+            if 'class="tree-step"' in sections else "")
     OUT.write_text(
         f"""<!doctype html>
 <html lang="en">
@@ -408,6 +439,7 @@ def build() -> None:
 <div class="viz-root"><div class="wrap"><div class="blog">
 <div class="ctx-toggle">Charts at <button data-ctx="8K" class="on">8K</button><button data-ctx="32K">32K</button></div>
 {sections}
+{tree}
 <p class="foot">Draft built {time.strftime("%Y-%m-%d %H:%M")} by scripts/memory_study/kimi_k3_blog.py from blog/*.md.</p>
 </div></div></div>
 <script>
@@ -417,6 +449,32 @@ for (const btn of document.querySelectorAll(".ctx-toggle button"))
     for (const b of document.querySelectorAll(".ctx-toggle button")) b.classList.toggle("on", b === btn);
     for (const f of document.querySelectorAll(".ctx-fig")) f.hidden = f.dataset.ctx !== btn.dataset.ctx;
   }});
+// fit tree: the step is the last marker above the middle of the screen; rows of
+// later steps stay hidden, the current step's rows are highlighted
+const treeBox = document.querySelector(".fit-tree");
+if (treeBox) {{
+  const order = {json.dumps(blog_figures.TREE_STEPS)};
+  const markers = [...document.querySelectorAll(".tree-step")], end = document.querySelector(".tree-end");
+  const update = () => {{
+    const mid = window.innerHeight * 0.5;
+    const passed = markers.filter(m => m.getBoundingClientRect().top < mid);
+    const done = end && end.getBoundingClientRect().top < mid;
+    treeBox.classList.toggle("on", passed.length > 0 && !done);
+    if (!passed.length) return;
+    const cur = order.indexOf(passed[passed.length - 1].dataset.step);
+    for (const row of treeBox.querySelectorAll(".ft-row")) {{
+      const k = order.indexOf(row.dataset.step);
+      row.classList.toggle("ft-future", k > cur);
+      row.classList.toggle("ft-new", k === cur);
+      row.classList.toggle("ft-past", k < cur);
+    }}
+  }};
+  let queued = false;
+  window.addEventListener("scroll", () => {{
+    if (!queued) {{ queued = true; requestAnimationFrame(() => {{ queued = false; update(); }}); }}
+  }});
+  update();
+}}
 // ranking chart: hover tooltip and filters (FSDP rows follow the family filter only)
 const tip = document.createElement("div");
 tip.id = "rk-tip"; tip.hidden = true; document.body.append(tip);

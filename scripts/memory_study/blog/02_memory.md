@@ -71,6 +71,8 @@ call this model memory hungry!
 Alright, time to roll up our sleeves! Let's shard the persistent state and fit
 it on our cluster.
 
+::: tree-step dp
+
 We start with plain data parallelism over all 512 GPUs. On its own, data
 parallelism only multiplies the problem: every GPU holds the whole model. What shards the
 persistent state across those 512 copies is [ZeRO](https://arxiv.org/abs/1910.02054).
@@ -94,6 +96,8 @@ Let's apply them one at a time and watch what happens to the memory per GPU
 **No sharding.** Our problem statement: every GPU holds all 33.4 TB of
 persistent state.
 
+::: tree-step zero1
+
 **ZeRO-1.** Sharding the master weights and the optimizer state divides both by
 512: the two green cells under persistent state. A big improvement! But what is
 going on with the working set? This is where working from first principles pays
@@ -105,12 +109,16 @@ weights take 1 byte per parameter, which is why the it is close to 2.78T, number
 of parameters. Keep an eye on the working set; it matters a lot in a roofline
 study. Overall, ZeRO-1 takes us from 33.4 TB per GPU to 14.0 TB.
 
+::: tree-step zero2
+
 **ZeRO-2.** Now the gradients are sharded too, so the persistent gradients
 divide by 512. All good! But again the working set takes a hit. Backward
 produces each layer's full gradient before reduce-scattering it to the shards,
 and to hide that communication, the reduce-scatter of the previous layer runs
 while the current layer computes. So at the peak a GPU holds two layers' full
 gradients, in fp32: 242 GB. Still, we keep going down, to 3.15 TB per GPU.
+
+::: tree-step zero3 snapshot
 
 **ZeRO-3.** Finally, our very own PyTorch FSDP shards the compute weights as
 well. The trick mirrors the reduce-scatter: FSDP all-gathers the next layer's
@@ -140,6 +148,8 @@ same 512 GPUs that FSDP shards over. Let's take EP 64 as an example. Each
 layer's 896 experts are divided into 64 groups of 14, and each group is then
 FSDP-sharded over the remaining 512 / 64 = 8 GPUs. The dense layers do not
 take part in EP: they stay FSDP-sharded over all 512 GPUs.
+
+::: tree-step ep snapshot
 
 So for the persistent state, nothing changes compared to FSDP (ZeRO-3): each
 GPU still holds a 1/512 shard. What changes is what each GPU **gathers** for a
@@ -205,6 +215,8 @@ of 64 GPUs spans 32 positions on the FSDP axis times the 2 TP ranks, and each
 group of 14 experts is still sharded over 8 GPUs. So TP changes nothing for the
 experts: it only shrinks the dense part.
 
+::: tree-step tp snapshot
+
 **What TP buys.** Here is the persistent state and working set with EP and TP,
 for FSDP and for ZeRO-1 (back from the dead), along with what is left of the
 288 GB for activations:
@@ -239,6 +251,8 @@ what makes that memory affordable.
 them the experts', which TP cannot shrink. Gradients, not weights, are what
 keep ZeRO-1 big, and the 10% of the dense parameters that TP leaves whole set a
 floor on the dense part.
+
+::: tree-end
 
 ## Using Parallelism to Fit the Model
 

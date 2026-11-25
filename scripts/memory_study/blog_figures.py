@@ -703,7 +703,7 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
         weights = MXFP8_WEIGHT_BYTES * (q_all + routed) + 2 * (dense - q_all)
         working = (weights, 0.0)
         split = f"experts 1/{ep}, dense " + (f"1/{tp}" if tp > 1 else "whole")
-        notes = ("1/512", "unsharded: " + split, "1/512", "whole model: " + split, "")
+        notes = ("1/512", split, "1/512", split, "")
     else:
         blk = {r["key"]: r["numel"] for r in d["scopes"]["kda_layer"]["stored"]}
         routed = blk["routed"] / ep
@@ -754,6 +754,97 @@ def ep_tp_table() -> str:
                    f'<td style="{rule}"><b>{_dec(r["total"])}</b></td>'
                    f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
     out.append("</table>")
+    return "".join(out)
+
+
+# Steps of the fit tree, in the order the post reaches them; each `::: tree-step
+# <name>` marker in blog/*.md switches the tree to that step.
+TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp"]
+
+
+def _tree_rows() -> list[dict]:
+    """Rows of the fit tree (weight footprint = persistent state + working set
+    per GPU, against one GPU's 288 GB): label, depth, step that adds it, and
+    either one value or a set of TP-degree dots."""
+    z = {r["label"]: sum(r["persistent"]) + sum(r["working"]) for r in zero_parts("8K")}
+    tp_dots = lambda zero, ep: [(t, ep_tp_parts(zero, ep, t)["total"]) for t in (1, 2, 4, 8)]
+    return [
+        {"label": "Data parallel", "depth": 0, "step": "dp", "value": z["No sharding"]},
+        {"label": "ZeRO-1", "depth": 1, "step": "zero1", "value": z["ZeRO-1"]},
+        {"label": "+ EP 64 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 64)},
+        {"label": "+ EP 128 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 128)},
+        {"label": "ZeRO-2", "depth": 1, "step": "zero2", "value": z["ZeRO-2"]},
+        {"label": "ZeRO-3 / FSDP", "depth": 1, "step": "zero3", "value": z["ZeRO-3 / FSDP"]},
+        {"label": "+ EP 64", "depth": 2, "step": "ep", "value": z["FSDP + EP 64"]},
+        {"label": "+ TP", "depth": 3, "step": "tp", "dots": tp_dots(3, 64)},
+    ]
+
+
+def fit_tree(cur: str | None = None) -> str:
+    """The fit tree as an SVG. cur=None: every row carries data-step and the
+    page script sets each row's class (future / new / past) while scrolling;
+    cur=<step>: a static snapshot at that step (the inline fallback on narrow
+    screens). A row that does not fit is muted once a later step has passed."""
+    rows = _tree_rows()
+    order = {s: i for i, s in enumerate(TREE_STEPS)}
+    w, rh, top, indent = 300, 30, 34, 16
+    gx, gw = 214, 56  # gauge: x, width (288 GB = full)
+    fit_c, over_c = "#008300", "#e34948"
+    h = top + rh * len(rows) + 30
+    out = [f'<svg class="fit-tree-svg" viewBox="0 0 {w} {h}" width="{w}" role="img" '
+           'aria-label="which configs fit their weight footprint in one GPU so far">',
+           _text(0, 14, "What fits so far", 13, INK, weight=700),
+           _text(0, 28, "weight footprint per GPU vs 288 GB", 11, MUTED)]
+    # branch lines: from each row up to its parent (the nearest row above with depth - 1)
+    for i, r in enumerate(rows):
+        if r["depth"] == 0:
+            continue
+        j = max(k for k in range(i) if rows[k]["depth"] == r["depth"] - 1)
+        x = 4 + (r["depth"] - 1) * indent
+        y0, y1 = top + rh * j + 18, top + rh * i + 12
+        r["branch"] = (f'<path d="M{x} {y0} V{y1} H{x + indent - 4}" fill="none" stroke="{GRID}" '
+                       'stroke-width="1.5"/>')
+    for i, r in enumerate(rows):
+        y = top + rh * i
+        if cur is None:
+            cls = "ft-row"
+        else:
+            st = order[r["step"]] - order[cur]
+            cls = "ft-row " + ("ft-future" if st > 0 else "ft-new" if st == 0 else "ft-past")
+        fits = r["value"] <= GPU_BYTES if "value" in r else any(v <= GPU_BYTES for _, v in r["dots"])
+        cls += " ft-fit" if fits else " ft-over"
+        out.append(f'<g class="{cls}" data-step="{r["step"]}">')
+        out.append(f'<rect class="ft-hl" x="-4" y="{y - 2}" width="{w + 8}" height="{rh - 4}" rx="5" fill="transparent"/>')
+        out.append(r.get("branch", ""))
+        x = 4 + r["depth"] * indent
+        out.append(_text(x, y + 16, r["label"], 12, INK, weight=600))
+        if "value" in r:
+            v = r["value"]
+            out.append(f"<title>{html.escape(r['label'])}: {_dec(v)} per GPU, "
+                       f"{'fits' if fits else 'over'} 288 GB</title>")
+            out.append(_text(gx - 8, y + 16, ("\u2713 " if fits else "\u2717 ") + _dec(v), 12,
+                             fit_c if fits else over_c, "end", weight=600))
+            out.append(f'<rect x="{gx}" y="{y + 7}" width="{gw}" height="8" rx="4" fill="{GRID}"/>')
+            out.append(f'<rect x="{gx}" y="{y + 7}" width="{gw * min(v / GPU_BYTES, 1):.1f}" height="8" rx="4" '
+                       f'fill="{fit_c if fits else over_c}"/>')
+            if not fits:
+                out.append(_text(gx + gw + 4, y + 16, "\u00bb", 12, over_c, weight=700))
+        else:
+            out.append(f"<title>{html.escape(r['label'])}: "
+                       + "; ".join(f"TP {t} {_dec(v)}" for t, v in r["dots"]) + "</title>")
+            for k, (t, v) in enumerate(r["dots"]):
+                cx = gx - 50 + 26 * k
+                ok = v <= GPU_BYTES
+                out.append(f'<circle cx="{cx}" cy="{y + 11}" r="7" fill="{fit_c if ok else SURFACE}" '
+                           f'stroke="{fit_c if ok else over_c}" stroke-width="1.5"/>')
+                out.append(_text(cx, y + 15, str(t), 9, "#ffffff" if ok else over_c, "middle", weight=700))
+        out.append("</g>")
+    ly = top + rh * len(rows) + 14
+    out.append(f'<circle cx="6" cy="{ly - 4}" r="5" fill="{fit_c}"/>')
+    out.append(_text(15, ly, "fits", 11, INK2))
+    out.append(f'<circle cx="52" cy="{ly - 4}" r="5" fill="{SURFACE}" stroke="{over_c}" stroke-width="1.5"/>')
+    out.append(_text(61, ly, "over (dots: TP degree)", 11, INK2))
+    out.append("</svg>")
     return "".join(out)
 
 
