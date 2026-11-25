@@ -736,6 +736,17 @@ def ep_tp_table() -> str:
            "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
                             for i, h in enumerate(("Master weights", "Gradients", "Optimizer state",
                                                    "Compute weights", "Gradients (fp32)"))) + "</tr>"]
+    # reminder rows from the ZeRO table, greyed, so the EP + TP rows read against them
+    out.append(f'<tr><td colspan="8" style="{tint} font-weight: 600;">From the ZeRO table</td></tr>')
+    for zr in zero_parts("8K")[:2]:
+        vals = list(zr["persistent"]) + list(zr["working"])
+        cells = "".join((f'<td style="{rule}">' if i in (0, 3) else "<td>")
+                        + ((_dec(v) + (f'<span class="sub">{zr["cell_notes"][i]}</span>' if zr["cell_notes"][i] else ""))
+                           if v else "-") + "</td>" for i, v in enumerate(vals))
+        over = sum(vals) - GPU_BYTES
+        out.append(f'<tr style="opacity: 0.55;"><td>{zr["label"]}</td>{cells}'
+                   f'<td style="{rule}"><b>{_dec(sum(vals))}</b></td>'
+                   f'<td style="{rule}">over by {_dec(over)}</td></tr>')
     family = None
     for zero, ep, tp in EP_TP_ROWS:
         r = ep_tp_parts(zero, ep, tp)
