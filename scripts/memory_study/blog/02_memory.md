@@ -223,11 +223,10 @@ enough for the dense part at any TP degree, not even TP 8.
 So we raise EP to 128. The part TP cannot touch drops to 156 GB, and now TP has
 room: TP 4 and TP 8 both fit.
 
-That wraps up the weights. Two families fit: FSDP + EP 64 with room to spare,
-and ZeRO-1 + EP 128 with TP 4 or TP 8 with much less. (Pipeline parallelism
-shrinks the weights too, but it also multiplies the activations, so it waits
-until we have counted them.) Whatever memory each config has left is its
-budget for activations, and that is where we go next.
+That wraps up the weights. The tree that has been growing alongside the text
+tracks which parallelism configs fit so far, and how much of each GPU their
+weights take. Whatever is left is each config's budget for activations, and
+that is where we go next.
 
 ::: tree-end
 
