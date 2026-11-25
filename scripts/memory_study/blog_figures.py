@@ -396,17 +396,27 @@ def remat_offload_frontier() -> str:
         "remat_policy_8k_selective_fixedptrs.json")
     none_time = sel_time * (_bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
                             / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
-    pts.append(("No remat (estimated)", none_mem, none_time))
+    pts.append(("No remat (est.)", none_mem, none_time))
+    # DistMoE keeping its intermediates (every measured point recomputes them, the
+    # default), on top of selective remat: one MoE layer's slots at capacity
+    # factor 1.0 and its forward + backward saving (bench/dist_moe_slots_8k.json)
+    # for each of the 92 MoE layers, times the step's microbatches.
+    slots = {r["slot"]: r for r in _bench("dist_moe_slots_8k.json")["rows"]}
+    save_s = ((slots[None]["fwd_ms"] + slots[None]["bwd_ms"]) - (slots[1.0]["fwd_ms"] + slots[1.0]["bwd_ms"])) / 1e3
+    mbs = _data()["global_tokens"] / 8192 / 512
+    pts.append(("DistMoE keeps all (est.)",
+                sel_mem + MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"]),
+                sel_time - MOE_LAYERS * mbs * save_s))
     front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
     front.sort(key=lambda p: p[1])
     w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
-    x0, x1, y0, y1 = 100e9, 500e9, 18.0, 21.5
+    x0, x1, y0, y1 = 100e9, 650e9, 18.0, 21.5
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     blue, grey = "#2a78d6", "#898781"
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
            'for remat and offload settings at 8K">']
-    for gb in range(100, 501, 50):
+    for gb in range(100, 651, 50):
         out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
         out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
     for s_ in (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5):
@@ -428,13 +438,13 @@ def remat_offload_frontier() -> str:
     for label, m, s_ in pts:
         on = (label, m, s_) in front
         c = blue if on else grey
-        est = "estimated" in label
+        est = "(est.)" in label
         out.append(f'<g><title>{html.escape(label)}: {s_:.2f} s, {_dec(m)}</title>'
                    f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{SURFACE if est else c}" stroke="{c}" '
                    f'stroke-width="2"/></g>')
-        anchor_end = "estimated" in label
+        anchor_end = "(est.)" in label
         dx = -10 if anchor_end else 10
-        dy = 22 if label == "+ offload attention" or "estimated" in label else -8  # below: crowded or on the line
+        dy = 22 if label in ("+ offload attention", "No remat (est.)") else -12  # below: crowded or on the line
         out.append(_text(X(m) + dx, Y(s_) + dy, label + ("" if on else " (dominated)"), 12, INK if on else MUTED,
                          "end" if anchor_end else "start", weight=600 if on else 400))
     out.append("</svg>")

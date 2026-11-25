@@ -404,10 +404,13 @@ activations and DistMoE.
 ::: figure remat-offload-frontier
 
 *8K, FSDP 512 + EP 64, CP 1. The blue line is the Pareto frontier: no other
-setting is both faster and smaller. FF is the feed-forward. No remat does not
-fit, so it was not run at full depth; its point is estimated from 8-layer runs.*
+setting is both faster and smaller. FF is the feed-forward. Every measured
+point runs DistMoE recomputing its intermediates (its default). The two hollow
+points are estimates: no remat, from 8-layer runs (it does not fit, so it was
+not run at full depth), and selective remat with DistMoE keeping all of its
+intermediates, from the one-layer DistMoE benchmark.*
 
-Three things stand out:
+Four things stand out:
 
 - **Selective remat fits, but only just.** It recomputes only the attention
   kernels (the cores of KDA and MLA) and keeps every other stash. Those kernels
@@ -422,6 +425,10 @@ Three things stand out:
 - **Full remat is dominated.** It is both slower and bigger than selective
   remat with attention and feed-forward offloaded. On a GB300, there is no
   reason to use it for this config.
+- **DistMoE's recompute is the last thing to buy back.** Letting DistMoE keep
+  its intermediates costs more memory than dropping remat altogether, and saves
+  less time. Its built-in recompute is the cheapest recompute in the model, so
+  keep it on unless memory is truly spare.
 
 > NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
 
