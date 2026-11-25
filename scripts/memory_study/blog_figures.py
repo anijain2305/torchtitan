@@ -366,6 +366,58 @@ def activations_distmoe(ctx: str = "8K") -> str:
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
 
 
+# Remat + offload ladder rungs measured at full depth (bench/ladder_8k): run, label.
+LADDER_8K = [("rperf_sel", "Selective remat"),
+             ("rperf_off_attn", "+ offload attention projections"),
+             ("rperf_off_attn_ff", "+ offload attention and feed-forward"),
+             ("rperf_off_attn_ff_block", "+ offload everything"),
+             ("rperf_full", "Full remat")]
+
+
+def remat_offload_frontier() -> str:
+    """Step time (forward + backward span) against peak memory per GPU for the
+    measured remat + offload rungs (8K, FSDP 512 + EP 64, CP 1, 93 layers,
+    CUDA graphs), with the Pareto frontier (rungs no other rung beats on both)
+    joined by a line, dominated rungs in grey, and one GPU's 288 GB."""
+    peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
+    pts = [(label, peaks[run] * 2**30, _bench(f"ladder_8k/{run}.json")["fwd_bwd_span_s"]) for run, label in LADDER_8K]
+    front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
+    front.sort(key=lambda p: p[1])
+    w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
+    x0, x1, y0, y1 = 100e9, 320e9, 19.0, 21.5
+    X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
+    Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
+    blue, grey = "#2a78d6", "#898781"
+    out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
+           'for remat and offload settings at 8K">']
+    for gb in range(100, 321, 50):
+        out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
+        out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
+    for s_ in (19.0, 19.5, 20.0, 20.5, 21.0, 21.5):
+        out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(s_):.1f}" y2="{Y(s_):.1f}" stroke="{GRID}"/>')
+        out.append(_text(l - 8, Y(s_) + 4, f"{s_:.1f} s", 11, MUTED, "end"))
+    out.append(_text(l + (w - l - r) / 2, h - 8, "peak memory per GPU", 11, MUTED, "middle"))
+    out.append(_text(l - 8, t - 12, "step time (forward + backward)", 11, MUTED, "start"))
+    gx = X(GPU_BYTES)
+    out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{t}" y2="{h - b}" stroke="{INK}" stroke-width="1.5" '
+               'stroke-dasharray="4 3"/>')
+    out.append(_text(gx - 4, t + 12, "one GB300: 288 GB", 11, INK, "end"))
+    out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" points="'
+               + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in front) + '"/>')
+    for label, m, s_ in pts:
+        on = (label, m, s_) in front
+        c = blue if on else grey
+        out.append(f'<g><title>{html.escape(label)}: {s_:.2f} s, {_dec(m)}</title>'
+                   f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{c}" stroke="{SURFACE}" stroke-width="2"/></g>')
+        anchor_end = m > 250e9
+        dx = -10 if anchor_end else 10
+        dy = 22 if "projections" in label else -8  # below: the bottom rungs crowd
+        out.append(_text(X(m) + dx, Y(s_) + dy, label + ("" if on else " (dominated)"), 12, INK if on else MUTED,
+                         "end" if anchor_end else "start", weight=600 if on else 400))
+    out.append("</svg>")
+    return "".join(out)
+
+
 def memory_remat(ctx: str = "8K") -> str:
     """Saved activations of one sequence at each remat level; full remat as its
     stash plus the recompute working set at the backward peak."""
@@ -2739,7 +2791,7 @@ def by_context(fn):
     return render
 
 
-FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": by_context(activations_distmoe),
+FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": by_context(activations_distmoe), "remat-offload-frontier": remat_offload_frontier,
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),

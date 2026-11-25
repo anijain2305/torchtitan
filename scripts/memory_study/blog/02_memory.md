@@ -365,7 +365,7 @@ Here is the general recipe I followed:
       budget. The memory floor is offloading everything. As in step 2, a point
       that frees enough memory for a larger microbatch is worth keeping for
       FSDP configs.
-    - **Context and tensor parallelism, as part of the config.** They split
+    - **Context and tensor parallelismg.** They split
       every sequence across their GPUs and shrink the activations roughly by
       their degree, at the cost of communication on the critical path (and,
       under FSDP, more microbatches per GPU, so more FSDP communication). A
@@ -373,9 +373,65 @@ Here is the general recipe I followed:
       CP 1 with full remat versus CP 4 with none is a real trade. So for each
       CP or TP degree, find its best remat and offload setting as above, and
       let the ranking pick.
+
+
 The rest of this section follows the recipe: the remat and offload frontier,
-then context and tensor parallelism. A last subsection looks at what pipeline
-parallelism does to the activations a config has to fit.
+then context and tensor parallelism. At the last, we also look at how pipeline
+parallelism schedules affects activation footprint.
+
+### Rematerialization and offloading
+
+There are two ways to stash less, and both trade something for memory:
+
+- **Rematerialization** (with [torch_remat](https://github.com/meta-pytorch/remat))
+  does not stash a region's tensors at all; backward recomputes them. It costs
+  compute.
+- **Offloading** stashes them in CPU memory instead: forward copies them out,
+  backward copies them back, over the link between the GPU and its CPU (on a
+  GB300, the C2C link to the Grace CPU). It costs bandwidth, and it is free as
+  long as the copies hide behind compute.
+
+On top of these sits DistMoE's own knob from 3.3, the size of its buffers. A
+policy picks, region by region, what to stash, what to recompute and what to
+offload. Rather than search every combination, we measured a ladder: start
+from the cheapest bytes to give up, and add one region at a time.
+
+We measured one config, FSDP + EP 64 at 8K, with all 93 layers on one GB300
+(the other GPUs faked) and CUDA graphs on. Time is the forward and backward of
+a step; memory is the peak per GPU, everything included: weights, working set,
+activations and DistMoE.
+
+::: figure remat-offload-frontier
+
+*8K, FSDP 512 + EP 64, CP 1. The blue line is the Pareto frontier: no other
+setting is both faster and smaller.*
+
+Three things stand out:
+
+- **Selective remat fits, but only just.** Recomputing only the attention
+  kernels (KDA and MLA) is the fastest setting, and it lands right at the
+  GPU's limit.
+- **Offloading is almost free, up to a point.** Offloading the attention
+  projections, then the feed-forward, frees about half of that memory for
+  under a percent of step time. Past that point the CPU link saturates:
+  offloading everything else saves little more memory and costs about a
+  second.
+- **Full remat is dominated.** It is both slower and bigger than selective
+  remat with attention and feed-forward offloaded. On a GB300, there is no
+  reason to use it for this config.
+
+> NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
+
+And no remat at all? For this config it does not fit: the activations alone
+are more than what the weights leave over. That is where context and tensor
+parallelism come in, next.
+
+This is one config at one context length. Others land differently. How much
+can be offloaded for free scales with the forward time it hides behind. CP and
+TP shrink both the activations and the forward time, so the ladder carries over
+roughly. PP multiplies the activations without adding forward time per
+microbatch, so PP configs land lower on the ladder. In [[memory.4.6]], each
+config gets its own rung.
 
 <!--
 ## Rematerialization
@@ -460,7 +516,7 @@ post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
 Rematerialization brought the activations down to 56 GB per 8K sequence, well
 under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
 whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.4.1]], [[memory.4.2]]). The persistent state has
+tensor parallelism ([[memory.4.2]], [[memory.4.3]]). The persistent state has
 not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
 to be split across many GPUs. -->
 
@@ -604,7 +660,7 @@ split, so the two contexts give the same numbers:
 Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
 smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
 still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
-at every `v` ([[memory.4.5]]).
+at every `v` ([[memory.4.6]]).
 
 > NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
 
