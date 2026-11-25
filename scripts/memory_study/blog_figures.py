@@ -824,7 +824,6 @@ def _tree_rows() -> list[dict]:
         {"label": "ZeRO-2", "depth": 1, "step": "zero2", "value": z["ZeRO-2"]},
         {"label": "ZeRO-3 / FSDP", "depth": 1, "step": "zero3", "value": z["ZeRO-3 / FSDP"]},
         {"label": "+ EP 64", "depth": 2, "step": "ep", "value": z["FSDP + EP 64"]},
-        {"label": "+ TP", "depth": 3, "step": "tp", "dots": tp_dots(3, 64)},
     ]
 
 
