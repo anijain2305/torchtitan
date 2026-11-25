@@ -1,0 +1,22 @@
+{
+ "gpu": "NVIDIA GB300",
+ "process_group": "real",
+ "rows": [
+  {
+   "tokens": 8192,
+   "ep": 4,
+   "slot": null,
+   "context_bytes": 23404948480,
+   "fwd_ms": 14.611903667449951,
+   "bwd_ms": 16.518144607543945
+  },
+  {
+   "tokens": 8192,
+   "ep": 4,
+   "slot": 1.0,
+   "context_bytes": 27340580352,
+   "fwd_ms": 14.729055881500244,
+   "bwd_ms": 11.064208030700684
+  }
+ ]
+}

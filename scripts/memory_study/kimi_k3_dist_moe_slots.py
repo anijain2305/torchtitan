@@ -19,7 +19,15 @@ after --warmup) and the bytes the context allocates up front (slots + scratch).
 Usage:
   CUDA_VISIBLE_DEVICES=2 PYTHONPATH=<dist_moe> python kimi_k3_dist_moe_slots.py \\
     --tokens 8192 --slots none 0.5 1.25 --out bench/dist_moe_slots_8k.json
+
+With --real, run under torchrun with a real process group (EP = the world
+size), so dispatch and combine move data between GPUs instead of aliasing
+fake peers:
+  PYTHONPATH=<dist_moe> torchrun --nproc-per-node=4 kimi_k3_dist_moe_slots.py \\
+    --real --tokens 8192 --slots none 1.0 --out bench/dist_moe_slots_8k_real_ep4.json
 """
+
+import os
 
 import argparse
 import json
@@ -34,7 +42,7 @@ NUM_EXPERTS, TOP_K, DIM, INTER = 896, 16, 3584, 3072  # Kimi K3 latent MoE
 
 
 def run(tokens: int, ep: int, slot: float | None, iters: int, warmup: int) -> dict:
-    dev = torch.device("cuda")
+    dev = torch.device("cuda", torch.cuda.current_device())
     local = NUM_EXPERTS // ep
     torch.manual_seed(0)
     x = torch.randn(tokens, DIM, dtype=torch.bfloat16, device=dev, requires_grad=True)
@@ -74,6 +82,7 @@ def run(tokens: int, ep: int, slot: float | None, iters: int, warmup: int) -> di
             out.backward(grad_out)
             e[2].record()
             torch.cuda.synchronize()
+            dist.barrier()
             if i >= warmup:
                 fwd.append(e[0].elapsed_time(e[1]))
                 bwd.append(e[1].elapsed_time(e[2]))
@@ -91,19 +100,28 @@ def main() -> None:
     p.add_argument("--iters", type=int, default=10)
     p.add_argument("--warmup", type=int, default=3)
     p.add_argument("--out")
+    p.add_argument("--real", action="store_true", help="real process group under torchrun; EP = world size")
     a = p.parse_args()
-    dist.init_process_group("fake", rank=0, world_size=a.ep, store=FakeStore())
+    if a.real:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        dist.init_process_group("nccl", device_id=torch.device("cuda", int(os.environ["LOCAL_RANK"])))
+        a.ep = dist.get_world_size()
+    else:
+        dist.init_process_group("fake", rank=0, world_size=a.ep, store=FakeStore())
+    rank0 = dist.get_rank() == 0
     rows = []
     for s in a.slots:
         slot = None if s == "none" else float(s)
         r = run(a.tokens, a.ep, slot, a.iters, a.warmup)
         rows.append(r)
-        print(f"tokens {r['tokens']} slot {str(slot):5s}: fwd {r['fwd_ms']:7.2f} ms, bwd {r['bwd_ms']:7.2f} ms, "
-              f"context {r['context_bytes'] / 2**30:6.2f} GiB", flush=True)
+        if rank0:
+            print(f"tokens {r['tokens']} slot {str(slot):5s}: fwd {r['fwd_ms']:7.2f} ms, bwd {r['bwd_ms']:7.2f} ms, "
+                  f"context {r['context_bytes'] / 2**30:6.2f} GiB", flush=True)
     dist.destroy_process_group()
-    if a.out:
+    if a.out and rank0:
         with open(a.out, "w") as f:
-            json.dump({"gpu": torch.cuda.get_device_name(), "rows": rows}, f, indent=1)
+            json.dump({"gpu": torch.cuda.get_device_name(), "process_group": "real" if a.real else "fake",
+                       "rows": rows}, f, indent=1)
 
 
 if __name__ == "__main__":

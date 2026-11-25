@@ -1,0 +1,22 @@
+{
+ "gpu": "NVIDIA GB300",
+ "process_group": "fake",
+ "rows": [
+  {
+   "tokens": 8192,
+   "ep": 4,
+   "slot": null,
+   "context_bytes": 23404975104,
+   "fwd_ms": 14.626976013183594,
+   "bwd_ms": 16.178175926208496
+  },
+  {
+   "tokens": 8192,
+   "ep": 4,
+   "slot": 1.0,
+   "context_bytes": 27340608000,
+   "fwd_ms": 14.73462438583374,
+   "bwd_ms": 10.805391788482666
+  }
+ ]
+}
