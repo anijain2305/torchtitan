@@ -188,42 +188,40 @@ the larger part, and TP can go after them. So, lets take a step back from FSDP a
 Spoiler alert: TP shows up again later, to shrink the activations. For now,
 let's carry on shrinking the weights.
 
-**Where does TP go?** EP was carved out of the FSDP axis. TP instead gets an
-axis of its own, because it splits the model in a different way. Conceptually,
-though, its weight sharding is much like EP's: TP first splits the dense
-weights, and each TP shard is then FSDP-sharded over the FSDP axis. With TP 2,
-the mesh is 256 (FSDP) x 2 (TP), and a TP-sharded parameter is still split
-2 x 256 = 512 ways, so the persistent state per GPU does not move.
+**How does TP sharding work?** EP was carved out of the FSDP axis. TP instead
+gets an axis of its own, because it splits the model in a different way.
+Conceptually, though, its weight sharding is much like EP's: TP first splits
+the dense weights, and each TP shard is then FSDP-sharded over the FSDP axis.
+With TP 2, the mesh is 256 (FSDP) x 2 (TP), and a TP-sharded parameter is still
+split 2 x 256 = 512 ways, so the persistent state per GPU does not move.
 
-The interesting question is how TP works inside MoE. Torchtitan has no expert TP. Instead, in the
-MoE layers, the TP ranks become EP ranks: EP is carved out of the FSDP and TP
-axes together. With EP 64 and TP 2, an EP group of 64 GPUs spans 32 positions
-on the FSDP axis times the 2 TP ranks, and each group of 14 experts is still
-sharded over 8 GPUs. So TP changes nothing for the experts; it only shrinks the
-dense part.
+The interesting question is how TP works inside the MoE layers. torchtitan has
+no expert TP. Instead, the TP ranks become EP ranks: EP is carved out of the
+FSDP and TP axes together. With EP 64 and TP 2, an EP group of 64 GPUs spans 32
+positions on the FSDP axis times the 2 TP ranks, and each group of 14 experts
+is still sharded over 8 GPUs. So TP changes nothing for the experts; it only
+shrinks the dense part.
 
 ::: tree-step tp snapshot
 
 **What TP buys.** Under FSDP + EP, not much: the dense part of the working set
-is only 7.6 GB, so TP 8 takes the total from 86.5 GB to just 81.5 GB. So let's
-go back to a clean slate and start from ZeRO-1.
+is already small. So let's go back to a clean slate and start from ZeRO-1,
+which we discarded earlier.
 
 ::: figure ep-tp-table
 
-There is a lot to unpack, so let's start with the ZeRO-1 + EP 64 row without
-TP to get our bearings. The gradients show the flip we saw earlier: the
-experts' part is 170 GB, while the dense part is 227 GB. The compute weights
-show it too: 42.6 GB of experts against 113 GB of dense. So TP has plenty to
-shrink. The problem is what it cannot touch: the experts' 170 GB of gradients
-and 42.6 GB of compute weights, plus about 50 GB of sharded master weights and
-optimizer state. That is 262 GB that TP cannot shrink, leaving only 26 GB of
-the 288 GB for the dense part. Even TP 8 needs 73 GB for it, so no TP degree
-fits.
+Let's get our bearings with two rows: plain ZeRO-1, and ZeRO-1 + EP 64 without
+TP. Here is the flip again. Under plain ZeRO-1, the experts are 98% of the
+gradients. Add EP 64 and their gradients drop to 170 GB, while the dense
+gradients stay at 227 GB. The compute weights flip the same way. Now TP has
+something to go after: the dense part.
 
-So we go to EP 128, which halves the experts' part: the part TP cannot touch
-drops from 262 GB to 156 GB, leaving 132 GB for the dense part. Now there is
-room: TP 4 just fits, with 21 GB to spare, and TP 8 fits with 59 GB left for
-activations.
+But with EP 64 there is little room for it. The boxed parts are what TP cannot
+touch, and they add up to 262 GB, leaving only 25.7 GB of margin. That is not
+enough for the dense part at any TP degree, not even TP 8.
+
+So we raise EP to 128. The part TP cannot touch drops to 156 GB, and now TP has
+room: TP 4 and TP 8 both fit.
 
 ::: tree-end
 
