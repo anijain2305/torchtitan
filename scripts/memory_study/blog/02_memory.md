@@ -195,7 +195,7 @@ weights, and each TP shard is then FSDP-sharded over the FSDP axis. With TP 2,
 the mesh is 256 (FSDP) x 2 (TP), and a TP-sharded parameter is still split
 2 x 256 = 512 ways, so the persistent state per GPU does not move.
 
-**How does TP interact with EP?** torchtitan has no expert TP. Instead, in the
+The interesting question is how TP works inside MoE. Torchtitan has no expert TP. Instead, in the
 MoE layers, the TP ranks become EP ranks: EP is carved out of the FSDP and TP
 axes together. With EP 64 and TP 2, an EP group of 64 GPUs spans 32 positions
 on the FSDP axis times the 2 TP ranks, and each group of 14 experts is still
@@ -206,30 +206,24 @@ dense part.
 
 **What TP buys.** Under FSDP + EP, not much: the dense part of the working set
 is only 7.6 GB, so TP 8 takes the total from 86.5 GB to just 81.5 GB. So let's
-go back to a clean slate and start from ZeRO-1, which we left behind as hopeless.
-Why bring it back? Communication. FSDP all-gathers every layer's weights and
-reduce-scatters its gradients for every microbatch; ZeRO-1 gathers the weights
-once per step and reduce-scatters the gradients once per step. ZeRO-1 trades
-memory for communication, and EP + TP may make that memory affordable:
+go back to a clean slate and start from ZeRO-1.
 
 ::: figure ep-tp-table
 
-*Without PP. EP 64 and EP 128 are the EP degrees that divide both the 896
-experts and the 512 GPUs; EP 128 pads 7 experts per group to 8 over 4 GPUs.*
+There is a lot to unpack, so let's start with the ZeRO-1 + EP 64 row without
+TP to get our bearings. The gradients show the flip we saw earlier: the
+experts' part is 170 GB, while the dense part is 227 GB. The compute weights
+show it too: 42.6 GB of experts against 113 GB of dense. So TP has plenty to
+shrink. The problem is what it cannot touch: the experts' 170 GB of gradients
+and 42.6 GB of compute weights, plus about 50 GB of sharded master weights and
+optimizer state. That is 262 GB that TP cannot shrink, leaving only 26 GB of
+the 288 GB for the dense part. Even TP 8 needs 73 GB for it, so no TP degree
+fits.
 
-**Under ZeRO-1, TP is what makes it fit.** ZeRO-1 holds the whole model's
-compute weights and unsharded gradients all step, but only for the GPU's
-experts (1/EP of them) and its TP slice of the dense layers. Without TP, the
-dense part alone is 56.7B parameters x (2 bytes of bf16 weights + 4 bytes of
-fp32 gradients) = 340 GB. This is where the flip matters: once EP has shrunk the
-experts, the dense layers are the bulk of what ZeRO-1 holds, and TP divides
-them. ZeRO-1 + EP 128 fits with TP 4 (21 GB left for activations) and TP 8
-(59 GB left).
-
-**What is left.** At ZeRO-1 + EP 128 + TP 8, the gradients are 134 GB, 85 GB of
-them the experts', which TP cannot shrink. Gradients, not weights, are what
-keep ZeRO-1 big, and the 10% of the dense parameters that TP leaves whole set a
-floor on the dense part.
+So we go to EP 128, which halves the experts' part: the part TP cannot touch
+drops from 262 GB to 156 GB, leaving 132 GB for the dense part. Now there is
+room: TP 4 just fits, with 21 GB to spare, and TP 8 fits with 59 GB left for
+activations.
 
 ::: tree-end
 
