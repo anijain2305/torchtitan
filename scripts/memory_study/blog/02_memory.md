@@ -385,36 +385,50 @@ parallelism schedules affects activation footprint.
 There are two ways to stash less, and both trade something for memory:
 
 - **Rematerialization** (with [torch_remat](https://github.com/meta-pytorch/remat))
-  does not stash a region's tensors at all; backward recomputes them. It costs
-  compute. DistMoE's own config from 3.3 also sits here: the size of its buffers.
+  does not stash a region's tensors; backward recomputes them. We pay recompute overhead. DistMoE's own config from 3.3 also sits here: the size of its buffers.
 - **Offloading** stashes them in CPU memory instead: forward copies them out,
   backward copies them back, over the link between the GPU and its CPU (on a
   GB300, the C2C link to the Grace CPU). It costs bandwidth, and it is free as
   long as the copies hide behind compute.
 
-This is a large search space. So we apply a greedy approach. We did not spend serious efforts in this approach, so it is definitely possible it can be easily improved. The basic idea is to rank the steps based on how much overhead (recompute/offload latency) per bytes. Based on this we incrementally keep applying these optimization until we fit the activation footprint under the budget that parallelism config sets. Since these steps can jump a lot (they are very discreet and not really a gradual space), we can undo some of the earlier steps and save some earlier recompute/offload cost. Again this is a very simple recipe, and you can definitely come up with better.
+This is a large search space, so we use a greedy approach. We did not put
+serious effort into it, so it can very likely be improved. The idea is to rank
+the steps by their overhead (recompute or offload time) per byte freed, and
+keep applying the cheapest one until the activations fit under the budget the
+parallelism config leaves. The steps are discrete and can jump a lot, so the
+last one may overshoot; we can then undo some earlier steps and win back some
+of their recompute or offload cost. Again, this is a very simple recipe, and
+you can certainly come up with better ones.
 
-
-Lets look at three different paths that let us fit into the budget for FSDP + EP 64 at 8K. The blue one is our greedy appraoch, the other two paths are just showcasing other paths that are suboptimal. To read this chart, start from the bottom right, which is no remat, no offload config, and then each line applies a different set of optimizations in order.
-
+Let's look at three different paths that fit FSDP + EP 64 at 8K into its
+budget. The blue one is our greedy approach; the other two show alternatives
+that end up slower. To read the chart, start at the bottom right, with no remat
+and no offload; each line then applies its own steps in order.
 
 ::: figure remat-offload-frontier
 
-- **Remat only.** Recompute DistMoe, then attention. It lands right on the budget line..
-- **Greedy.** Take the step that frees the most memory for the least time: offload the attention projects and feed-forward as they can hide behind the next layer compute. Then, recomppute DistMoe and finally attention. This is an example of overshoot where we now have lot of memory left and then we can try to buy back some performance. For example (not done here), we could choose DistMoE buffer in a manner, such that half ot the layers stash and other half compute.
-- **Full remat.** One step. Gets you under the budget but very slow.
+- **Remat only.** Let DistMoE recompute, then recompute attention. It lands
+  right on the budget line.
+- **Greedy.** Take the step that frees the most memory for the least time:
+  offload the attention projections and the feed-forward, as the copies hide
+  behind compute; then let DistMoE recompute, and finally recompute attention.
+  This overshoots, leaving a lot of memory unused, so we buy back some speed:
+  giving a quarter of DistMoE's buffer back, so that about a quarter of the
+  layers keep their intermediates, takes it to the fastest setting that fits.
+- **Full remat.** One step. It gets under the budget, but it is very slow.
 
-A general insight that was new to me after this experiment was that offload is very powerful, and can reduce a portion of memory footprint for free if you are not using C2C link for any other purpose.
+A general insight that was new to me from this experiment: offloading is very
+powerful. If you are not using the C2C link for anything else, it removes a
+good part of the memory footprint for free.
+
 > NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute.
 
-
-
-This is one config at one context length. Others land differently. How much
-can be offloaded for free scales with the forward time it hides behind. CP and
-TP shrink both the activations and the forward time, so the ladder carries over
-roughly. PP multiplies the activations without adding forward time per
-microbatch, so PP configs land lower on the ladder. In [[memory.4.6]], each
-config gets its own rung.
+This is one config at one context length, and others land differently. How
+much can be offloaded for free scales with the forward time it hides behind.
+CP and TP shrink both the activations and the forward time, so the picture
+carries over roughly. PP multiplies the activations without adding forward
+time per microbatch, so PP configs need more remat. In [[memory.4.6]], each
+config gets its own setting.
 
 <!--
 ## Rematerialization
