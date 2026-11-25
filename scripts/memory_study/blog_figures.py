@@ -304,6 +304,34 @@ def memory_by_kind(ctx: str = "8K") -> str:
                      f"persistent state by kind and saved activations at {ctx}, log2 axis")
 
 
+# One 8K sequence's stash with DistMoE running the routed experts, nothing else
+# rematerialized, FSDP + EP 64: the 8-layer no-remat run (bench/
+# remat_policy_8k_none_fixedptrs.json) scaled to 93 layers, with DistMoE
+# recomputing its intermediates (activation slots off, today's default).
+DISTMOE_RECOMPUTE_8K = 322 * 2**30
+
+
+def distmoe_keep_all_8k() -> float:
+    """The same with DistMoE keeping its intermediates: plus one MoE layer's
+    activation slots at capacity factor 1.0 (balanced routing; measured in
+    bench/dist_moe_slots_8k.json) for each of the 92 MoE layers."""
+    path = _Path(__file__).resolve().parent / "bench" / "dist_moe_slots_8k.json"
+    rows = {r["slot"]: r for r in _json.loads(path.read_text())["rows"]}
+    return DISTMOE_RECOMPUTE_8K + MOE_LAYERS * (rows[1.0]["context_bytes"] - rows[None]["context_bytes"])
+
+
+def activations_distmoe() -> str:
+    """One 8K sequence's stashed activations on the log2 axis of memory-by-kind:
+    PyTorch stashing the routed experts like any layer, then DistMoE's two
+    extremes. 8K only (the DistMoE runs are 8K)."""
+    d = _data()
+    return log2_bars([("PyTorch stashes the routed experts", d["contexts"]["8K"]["activations"]["total"],
+                       COLORS["acts"]),
+                      ("DistMoE keeps its intermediates", distmoe_keep_all_8k(), "#2a78d6"),
+                      ("DistMoE recomputes them (default)", DISTMOE_RECOMPUTE_8K, "#1baf7a")],
+                     "stashed activations of one 8K sequence, without and with DistMoE, log2 axis")
+
+
 def memory_remat(ctx: str = "8K") -> str:
     """Saved activations of one sequence at each remat level; full remat as its
     stash plus the recompute working set at the backward peak."""
@@ -2585,7 +2613,7 @@ def by_context(fn):
     return render
 
 
-FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind),
+FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": activations_distmoe,
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),

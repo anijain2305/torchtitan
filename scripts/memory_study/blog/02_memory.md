@@ -232,17 +232,16 @@ that is where we go next.
 
 ## How big are the activations?
 
+Let's set up the problem for activations, as we did for the persistent state.
 The forward pass keeps some tensors around for the backward pass. We call them
 *stashed activations*, to avoid the word "saved", which is easily confused with
 saving memory. Unlike the persistent state, they scale with tokens, not
 parameters.
 
 To keep things simple, a microbatch is one sequence: 8,192 tokens at 8K, or
-32,768 at 32K. Measured with a fake-tensor run (see [[methodology.1]] for how), one sequence stashes
-**746 GB at 8K** and **3.0 TB at 32K** (4x the footprint at 8K). The toggle at the
-top right switches the charts between the two.
-
-Where do they go? At 8K:
+32,768 at 32K. As we saw earlier, one sequence stashes **746 GB at 8K** (and
+3.0 TB at 32K), measured with a fake-tensor run ([[methodology.1]]) and far
+more than a GPU's 288 GB. Where does it go, at 8K?
 
 | Stashed by | GB | Share |
 |---|---|---|
@@ -252,35 +251,42 @@ Where do they go? At 8K:
 | Attention residuals | 25 | 3% |
 | **Total** | **746** |  |
 
-More than half of it is the routed experts. Each token goes to 16 experts, so each of its
-expert intermediates is stashed 16 times over.
+More than half of it is the routed experts. Each token goes to 16 experts, so
+each of its expert intermediates is stashed 16 times over.
 
-In practice the routed experts run in DistMoE, which manages their activations
-itself, in preallocated slot buffers, and has its own rematerialization knob:
-how big those buffers are. Big enough for every layer's expert intermediates,
-nothing is recomputed. With no buffers, DistMoE keeps only the expert inputs
-and recomputes the rest in backward (today's default). Per 8K sequence on
-FSDP + EP 64, with nothing else rematerialized:
+But 746 GB assumes PyTorch stashes the routed experts like any other layer. In
+practice they run in [DistMoE](https://github.com/meta-pytorch/dist_moe), our
+recently released kernels for MoE layers, and DistMoE manages their activations
+itself. Kernels like it handle MoE activations separately because the number of
+tokens each GPU receives varies from step to step. DistMoE stashes the expert
+intermediates in an activation buffer whose size we choose. At runtime it
+checks how many tokens arrived, and the rows that do not fit in the buffer are
+not stashed but recomputed in backward. Conceptually this is rematerialization,
+but built into the kernels and decided at runtime rather than ahead of time.
 
-| DistMoE | Stashed | DistMoE's backward |
-|---|---|---|
-| Keeps its intermediates (buffers sized for balanced routing) | about 660 GB | no recompute |
-| Recomputes them (default) | about 346 GB | 1.5 ms more per MoE layer |
+Take its two extremes, with nothing else in the model rematerialized:
 
-*Measured on 8 layers (and one MoE layer for the buffers), scaled to all 93.*
+- **DistMoE keeps everything** (buffers big enough for balanced routing): no
+  recompute.
+- **DistMoE recomputes everything** (no buffers, today's default): our
+  counterpart to full remat, for the routed experts. Even then DistMoE stashes
+  each MoE layer's inputs, because that is what it recomputes from. Its
+  backward takes 1.5 ms more per MoE layer.
 
-Either way, one sequence is more than a whole GPU. That is what we are dealing
-with; the next section shrinks it. DistMoE's buffer size is one of the knobs:
-if a config has memory to spare, growing the buffers so DistMoE stops
-recomputing is one way to spend it.
+Here they are on the log2 axis from earlier:
 
-This is deliberately simple again. Tensor parallelism (with sequence
-parallelism) and context parallelism split each sequence across GPUs and shrink
-what each one stashes; we bring them in when we get there.
+::: figure activations-distmoe
 
-The attention residuals run on TorchTitan's fused Triton kernel (an opt-in
-override adapted from Flash Linear Attention). It reads the block stack and the
-current partial sum directly, so it stashes no concatenated copies of them.
+*One 8K sequence on FSDP + EP 64. The DistMoE bars are measured on 8 layers
+(and one MoE layer for the buffers) and scaled to all 93.*
+
+DistMoE recomputing everything halves the stash, to 346 GB; keeping everything
+costs 661 GB. Either way, one sequence is more than a whole GPU. That is the
+problem; the next section shrinks it. DistMoE's buffer size is one of the
+knobs: if a config has memory to spare, growing the buffers so that DistMoE
+stops recomputing is one way to spend it.
+
+> NOTE: A roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, which are the most expensive and most dynamic part of the model. Leave it out, and the roofline is way off.
 
 ## Use the leftover memory for activations effectively
 
