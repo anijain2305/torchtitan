@@ -13,7 +13,7 @@ state is, and the discussion grows from there into the sharding needed to fit
 it on our cluster; then we turn to activations:
 
 - What is the memory footprint we are dealing with?
-- Fitting the persistent state
+- Shrinking the weight footprint: ZeRO/FSDP, EP and TP
 - Shrinking the activations
 - Spending the leftover memory on activations
 - Which parallelism configs fit
@@ -66,7 +66,7 @@ the persistent state alone fills a quarter of it. The stashed activations of a
 single 8K sequence, 746 GB, are 2.6 times one GPU. It is an understatement to
 call this model memory hungry!
 
-## Fitting the persistent state
+## Shrinking the weight footprint: ZeRO/FSDP, EP and TP
 
 Alright, time to roll up our sleeves! Let's shard the persistent state and fit
 it on our cluster.
@@ -174,6 +174,10 @@ the larger part, and TP can go after them.
 > NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
 
 ### Tensor parallelism
+
+TP shows up twice in this post. Here we look at what it does to the weight
+footprint; later it comes back to shrink the activations, which is where it
+pays off the most.
 
 **Where does TP go?** Every parallelism is an axis of the device mesh, and
 the axes multiply to the 512 GPUs. So far we had one axis: FSDP over 512. TP
