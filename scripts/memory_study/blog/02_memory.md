@@ -12,11 +12,10 @@ The section follows the same order. We first look at how large the persistent
 state is, and the discussion grows from there into the sharding needed to fit
 it on our cluster; then we turn to activations:
 
-- What is the memory footprint we are dealing with?
-- Shrinking the weight footprint: ZeRO/FSDP, EP and TP
-- Shrinking the activations
-- Spending the leftover memory on activations
-- Which parallelism configs fit
+- [What is the memory footprint we are dealing with?](#sec-memory-1)
+- [Shrinking the weight footprint: ZeRO/FSDP, EP and TP](#sec-memory-2)
+- [How big are the activations?](#sec-memory-3)
+- [Use the leftover memory for activations effectively](#sec-memory-4)
 
 ## What is the memory footprint we are dealing with?
 
