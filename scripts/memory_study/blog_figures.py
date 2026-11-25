@@ -891,8 +891,8 @@ def pp_weight_parts(P: int) -> dict:
 
 def pp_weight_table() -> str:
     """Weight footprint (persistent state + working set) per GPU on the first
-    stage for ZeRO-1 + PP 4 / 8 / 16 with EP = the stage, next to 3.2.3's
-    ZeRO-1 + EP 128 + TP 8 (greyed); same columns as ep-tp-table.
+    stage for ZeRO-1 + PP 4 / 8 / 16 with EP = the stage, next to plain ZeRO-1
+    from 3.2.1 (greyed); same columns as ep-tp-table.
     Independent of the context length."""
     rule = "border-left: 2px solid #898781;"
     tint = "background: rgba(137, 135, 129, 0.10);"
@@ -918,12 +918,16 @@ def pp_weight_table() -> str:
                    f'<td style="{rule}"><b>{_dec(total)}</b></td>'
                    f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
 
-    out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">From 3.2.3</td></tr>')
-    r = ep_tp_parts(1, 128, 8)
-    m, gr, o = r["persistent"]
-    row("ZeRO-1 + EP 128 + TP 8", [_dec(m) + sub(r["notes"][0]), _dec(gr) + sub(r["notes"][1]),
-                                   _dec(o) + sub(r["notes"][2]), _dec(r["working"][0]) + sub(r["notes"][3])],
-        r["total"], dim=True)
+    out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">From 3.2.1</td></tr>')
+    z1 = zero_parts("8K")[1]  # plain ZeRO-1 over 512 GPUs
+    P_ = _data()["persistent"]["model"]
+    g_exp, g_dense = P_["grads"]["routed"], sum(P_["grads"].values()) - P_["grads"]["routed"]
+    w_exp = MXFP8_WEIGHT_BYTES * P_["weights"]["routed"] / 4
+    m, gr, o = z1["persistent"]
+    row("ZeRO-1", [_dec(m) + sub("1/512"), _dec(gr) + sub(f"dense {_dec(g_dense)}<br>experts {_dec(g_exp)}"),
+                   _dec(o) + sub("1/512"),
+                   _dec(z1["working"][0]) + sub(f"dense {_dec(z1['working'][0] - w_exp)}<br>experts {_dec(w_exp)}")],
+        sum(z1["persistent"]) + sum(z1["working"]), dim=True)
     out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">ZeRO-1 + PP, EP = the stage\'s GPUs, '
                "first stage</td></tr>")
     for P in (4, 8, 16):

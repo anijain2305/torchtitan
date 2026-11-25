@@ -224,20 +224,33 @@ room: TP 4 and TP 8 both fit.
 
 ### Shrinking the weights with PP
 
-Before we go to activations, lets look into Pipeline Parallelism as well. You might be wondering why do we need pipeline parallelism complexity if our FSDP config already leaves ~200 GB for activations. The reason is FSDP communications. FSDP gathers and reduce scatters every microbatch. Not only this can get exposed if the compute overlap is not enough, it also makes the compute go slow (as we will measure later). Pipeline parallelism increase system complexity (its not SPMD anymore), so practitioners avoid it for as long as possible. But when FSDP comms are just too slow, and our previous alternative of using TP is also slow (which is very often the case), pipeline parallelism gets attracitve.
+Before we turn to activations, let's look at pipeline parallelism (PP). PP is
+known to be complex, because the training system is no longer SPMD: you have to
+send data between pipeline stages, balance the stages, pick a pipeline schedule,
+and more. So why take on all that complexity when an FSDP config already fits in
+memory? The reason is FSDP's communication. FSDP gathers and reduce-scatters
+every layer for every microbatch. If there is not enough compute to hide it,
+that communication is exposed; and even when it is hidden, it slows down the
+compute it overlaps with (as we will measure later). If that is the case in your
+pretraining run, PP becomes an attractive option.
 
+**How PP shards.** PP splits the layers into stages, and each stage owns a group
+of GPUs, within which it is SPMD. With PP 8, for example, each stage holds 12 of
+the 93 layers on 64 GPUs. Everything we have seen so far then happens *inside* a
+stage: ZeRO-1 shards the stage's master weights and optimizer state over its
+GPUs, EP spreads the stage's experts over them, and the same goes for TP and CP
+(discussed later).
 
+The interesting part is that PP makes ZeRO-1 affordable. Without PP, ZeRO-1
+only fit with EP 128 and TP 4 or 8 (3.2.3). Let's see how, by comparing plain
+ZeRO-1 from 3.2.1 with ZeRO-1 + PP on its first stage.
 
-**How PP shards.** PP splits the layers into stages. Each stage then owns a group of GPUs (each stage is SPMD). For example, with PP 8, each stage holds 12 of the 93 layers on 64 GPUs. Everything we have seen so far then happens *inside* a stage: ZeRO-1
-shards the stage's master weights and optimizer state over its GPUs, and EP
-spreads the stage's experts over them, and same with TP and CP (discussed later).
-
-
-The interesting part here is that PP enables Zero-1 where earlier we had to go to FSDP withuot PP (or suboptimal PP). Lets look at how this is possible. Lets look at one stage.
-
-Lets look at the Zero-1 without any thing from 3.2.1. The compute weights there were 2.84 TB - these are unsharded weights kept alive throughout the step. With PP, the pesisitent memory is still the same. But look at the row tieh Zero-1 + PP. It just correposnds to the unsharded weights of the first stage, a very reasoable 45.5 GB. And this our second nugget. PP makes Zero-1 affordable, even though the persisitent state is still same, the working set reduces roughly by the number of stages.
-
-
+Plain ZeRO-1 keeps 2.84 TB of compute weights and 11.1 TB of unsharded
+gradients alive for the whole step, on every GPU. With PP, the master weights
+and optimizer state stay the same, 1/512 of the model each. But a GPU now keeps
+compute weights and gradients only for its stage: PP divides them by the number
+of stages, and EP inside the stage divides the experts further. At PP 8, that
+is 21 GB of compute weights and 53 GB of gradients:
 
 ::: tree-step pp snapshot
 
@@ -245,6 +258,8 @@ Lets look at the Zero-1 without any thing from 3.2.1. The compute weights there 
 
 *First stage, no TP. Master weights and optimizer state are split 8 bytes per
 parameter, fp32 each.*
+
+> NUGGET: PP makes ZeRO-1 affordable. The persistent shards stay at 1/512, but everything ZeRO-1 keeps unsharded for the whole step, the compute weights and the gradients, shrinks to one stage's worth. That is how PP avoids FSDP's per-microbatch communication, and why TorchTitan's FSDP defaults to ZeRO-1 under PP.
 
 Every PP degree fits the weights, even PP 4, with no TP at all. But look at
 what doubling PP actually shrinks. The master weights and optimizer state do
