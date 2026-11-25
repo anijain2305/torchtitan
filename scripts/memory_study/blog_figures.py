@@ -638,7 +638,7 @@ def working_set_flip() -> str:
     series = [("Routed experts", "#2a78d6", expert_ws(1), expert_ws(64)),
               ("Dense layers", "#eb6834", dense_ws, dense_ws)]
     w, h, top, bottom = 760, 320, 30, 270
-    ax, xa, xb = 70, 300, 540
+    ax, xa, xb = 70, 330, 560
     lo, hi = 1, 9  # 2 GB .. 512 GB
     y = lambda v: bottom - (bottom - top) * (_math.log2(v / 1e9) - lo) / (hi - lo)
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="working set per GPU: routed '
@@ -662,8 +662,9 @@ def working_set_flip() -> str:
         for x, v in ((xa, va), (xb, vb)):
             out.append(f'<circle cx="{x}" cy="{y(v):.1f}" r="5" fill="{col}" stroke="{SURFACE}" stroke-width="2"/>')
         out.append("</g>")
-        out.append(_text(xa - 12, y(va) + 4, f"{name} {_dec(va)}", 12, INK, "end", weight=600))
-        out.append(_text(xb + 12, y(vb) + 4 + (-4 if k else 6), _dec(vb), 12, INK, weight=600))
+        share = lambda v, side: f"{100 * v / sum(sr[2 + side] for sr in series):.0f}%"  # of that config's working set
+        out.append(_text(xa - 12, y(va) + 4, f"{name} {_dec(va)} ({share(va, 0)})", 12, INK, "end", weight=600))
+        out.append(_text(xb + 12, y(vb) + 4 + (-4 if k else 6), f"{_dec(vb)} ({share(vb, 1)})", 12, INK, weight=600))
     out.append(_text(xb + 12, y(series[0][3]) + 22, "64x smaller", 11, MUTED))
     out.append(_text(xb + 12, y(dense_ws) - 18, "unchanged", 11, MUTED))
     out.append("</svg>")

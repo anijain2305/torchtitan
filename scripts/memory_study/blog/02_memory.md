@@ -154,7 +154,7 @@ will come back to it very soon.
 
 *EP shrinks the experts' part of the working set 64x, from 296 GB to 4.6 GB,
 while the dense layers stay at 7.6 GB, so the dense layers become the larger
-part.*
+part. Percentages are each part's share of that config's working set.*
 
 The working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing
 the persistent state plus working set down to 86.5 GB, way under our 288 GB
