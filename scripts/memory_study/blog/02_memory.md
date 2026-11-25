@@ -285,23 +285,16 @@ Let's look at the numbers:
 
 ::: figure activations-distmoe
 
-*One sequence; the toggle at the top right switches between 8K and 32K. No
-DistMoE: the fake-tensor inventory, all bf16. DistMoE bars: FSDP + EP 64, dense
-layers in bf16 and routed experts in MXFP8, measured on 8 layers (and one MoE
-layer for the buffers) and scaled to all 93; their "rest of the model" differs
-slightly from the inventory's.*
-
 The naive PyTorch stash is 746 GB at 8K. DistMoE keeping everything already
 brings it down to 683 GB, scratch included. DistMoE recomputing everything
-removes the intermediates entirely, leaving 368 GB. Either way, one sequence is
-more than a GPU.
+removes the intermediates entirely, leaving 368 GB.
 
 Its inputs and output are small, and so is the scratch at 8K. At 32K, though,
 the scratch grows to about a third of a GPU. Once you know how uneven the
 routing really is in a training run, you can size the scratch for a smaller
 imbalance than 4; for now we keep 4.
 
-> NOTE: A roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, which are the most expensive and most dynamic part of the model. Leave it out, and the roofline is way off.
+> NOTE: The meta point here is that a roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, the most expensive and most dynamic part of the model. Leave it out early on, and your roofline can be way off.
 
 ## Use the leftover memory for activations effectively
 
