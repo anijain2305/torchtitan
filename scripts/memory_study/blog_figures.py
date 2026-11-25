@@ -377,7 +377,7 @@ def remat_offload_frontier() -> str:
     at 8K: step time (forward + backward span) against memory for activations
     (peak minus the weight footprint). Every path starts at no remat:
       - remat only: DistMoE recomputes, then recompute attention;
-      - offload first (the recipe): the free offload (attention projections and
+      - greedy: the free offload (attention projections and
         feed-forward), then DistMoE recomputes, then recompute attention;
       - full remat.
     Endpoints are measured at full depth (CUDA graphs); intermediate points
@@ -410,7 +410,7 @@ def remat_offload_frontier() -> str:
     budget = GPU_BYTES - weights
     blue, orange, green = "#2a78d6", "#eb6834", "#1baf7a"
     paths = [  # name, color, [(point, estimated)], legend text
-        ("Offload first (the recipe)", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False)],
+        ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False)],
          "free offload, then DistMoE recomputes, then recompute attention"),
         ("Remat only", orange, [(none, True), (dm_only, True), (sel, False)],
          "DistMoE recomputes, then recompute attention"),
@@ -438,7 +438,7 @@ def remat_offload_frontier() -> str:
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, t + 44, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
     halo = lambda txt: txt.replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1)
-    end_place = {"Offload first (the recipe)": (10, 22, "start"), "Remat only": (10, -12, "start"),
+    end_place = {"Greedy": (10, 22, "start"), "Remat only": (10, -12, "start"),
                  "Full remat": (10, -12, "start")}
     for name, c, pts, _ in paths:
         out.append(f'<polyline fill="none" stroke="{c}" stroke-width="2" points="'

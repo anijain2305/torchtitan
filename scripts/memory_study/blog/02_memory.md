@@ -359,17 +359,13 @@ Here is the general recipe I followed:
    so fewer, larger microbatches mean less communication.
 3. **If it does not fit** (our case: a single 8K sequence is already more than a
    GPU), there are two levers:
-    - **Rematerialization and offloading.** First offload whatever you can
-      for free: copies to CPU memory cost nothing as long as they hide behind
-      compute, up to what the GPU-CPU link can move in a step. That free
-      budget is limited, so spend it on the bytes that are most expensive to
-      recompute. Then, until the config fits, take the next cheapest step,
-      measured in seconds added per byte freed: rematerializing a region
-      (including the knobs built into custom kernels like DistMoE), or
-      offloading past the link's budget. If the last step overshoots, spend
-      the leftover memory in reverse, buying back the most expensive step per
-      byte first. As in step 2, memory that is left over can also buy a larger
-      microbatch for FSDP configs.
+    - **Rematerialization and offloading.** There are many ways to get under
+      the budget ([[memory.4.1]] shows a few). A greedy approach works well:
+      keep taking the step that frees the most memory for the least time,
+      starting with offloads the GPU can hide behind compute, until the config
+      fits. If the last step overshoots by a lot, undo some of the steps you
+      took, buying back recompute or offload time with the memory you do not
+      need.
     - **Context and tensor parallelism.** They split
       every sequence across their GPUs and shrink the activations roughly by
       their degree, at the cost of communication on the critical path (and,
@@ -419,11 +415,12 @@ get to the left of the budget line. Here are three:
 
 - **Remat only.** Let DistMoE recompute, then recompute attention (the cores of
   KDA and MLA). It lands right on the budget line: it fits, but only just.
-- **Offload first, the recipe.** Offload the attention projections and the
-  feed-forward for free, then let DistMoE recompute, then recompute attention.
-  It ends at almost the same speed, but far inside the budget. That leftover
-  memory is the recipe's last step: spent in reverse, for example on growing
-  DistMoE's buffer, it can buy back time.
+- **Greedy.** Take the step that frees the most memory for the least time:
+  first offload the attention projections and the feed-forward, which hides
+  behind compute for free, then let DistMoE recompute, then recompute
+  attention. It ends at almost the same speed, but far inside the budget. That
+  leftover memory is where undoing steps comes in: spent on growing DistMoE's
+  buffer, for example, it can buy back time.
 - **Full remat.** One step, also far inside the budget, but by far the slowest:
   it recomputes everything, including what offloading would hide for free.
 
