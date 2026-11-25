@@ -374,7 +374,7 @@ def activations_distmoe(ctx: str = "8K") -> str:
 
 # Remat + offload ladder rungs measured at full depth (bench/ladder_8k): run, label.
 # Labels are cumulative, read from the bottom right (nothing recomputed).
-LADDER_8K = [("rperf_sel", "+ selective remat"),
+LADDER_8K = [("rperf_sel", "+ recompute attention"),
              ("rperf_off_attn", "+ offload attention"),
              ("rperf_off_attn_ff", "+ offload attention + FF"),
              ("rperf_off_attn_ff_block", "+ offload everything"),
@@ -411,37 +411,45 @@ def remat_offload_frontier() -> str:
     pts.append(("+ DistMoE recomputes (est.)", dm_mem, dm_time))
     pts.append(("No remat (est.)", dm_mem + MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"]),
                 dm_time - MOE_LAYERS * mbs * save_s))
+    # memory for activations: the peak minus this config's weight footprint
+    # (persistent state + working set, as in zero-table), against the budget
+    # the config leaves over
+    fsdp = zero_parts("8K")[-1]
+    weights = sum(fsdp["persistent"]) + sum(fsdp["working"])
+    budget = GPU_BYTES - weights
+    pts = [(label, m - weights, s_) for label, m, s_ in pts]
     front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
     front.sort(key=lambda p: p[1])
     w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
-    x0, x1, y0, y1 = 100e9, 850e9, 17.5, 21.5
+    x0, x1, y0, y1 = 0.0, 750e9, 17.5, 21.5
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     blue, grey = "#2a78d6", "#898781"
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
            'along the remat and offload ladder at 8K">']
-    for gb in range(100, 851, 100):
+    for gb in range(0, 751, 100):
         out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
         out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
     for k in range(9):
         s_ = 17.5 + 0.5 * k
         out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(s_):.1f}" y2="{Y(s_):.1f}" stroke="{GRID}"/>')
         out.append(_text(l - 8, Y(s_) + 4, f"{s_:.1f} s", 11, MUTED, "end"))
-    out.append(_text(l + (w - l - r) / 2, h - 8, "peak memory per GPU", 11, MUTED, "middle"))
+    out.append(_text(l + (w - l - r) / 2, h - 8, "memory for activations per GPU (peak minus the weight footprint)",
+                     11, MUTED, "middle"))
     out.append(_text(l - 8, t - 12, "step time (forward + backward)", 11, MUTED, "start"))
-    gx = X(GPU_BYTES)
+    gx = X(budget)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{t}" y2="{h - b}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
-    out.append(_text(gx + 4, h - b - 6, "one GB300: 288 GB", 11, INK))
-    fit = [p for p in front if p[1] <= GPU_BYTES]
-    over = [p for p in front if p[1] > GPU_BYTES]
+    out.append(_text(gx + 4, h - b - 6, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
+    fit = [p for p in front if p[1] <= budget * 1.001]
+    over = [p for p in front if p[1] > budget * 1.001]
     out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" points="'
                + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in fit) + '"/>')
     if over:  # the frontier past one GPU: dashed
         out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" stroke-dasharray="5 4" points="'
                    + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in [fit[-1]] + over) + '"/>')
     place = {  # label offsets (dx, dy, anchor), tuned so labels clear points and lines
-        "+ selective remat": (10, -12, "start"), "+ offload attention": (10, 22, "start"),
+        "+ recompute attention": (10, -12, "start"), "+ offload attention": (10, 22, "start"),
         "+ offload attention + FF": (14, -44, "start"), "+ offload everything": (10, -12, "start"),
         "Full remat": (10, -12, "start"), "+ DistMoE recomputes (est.)": (10, -12, "start"),
         "No remat (est.)": (-10, 22, "end")}

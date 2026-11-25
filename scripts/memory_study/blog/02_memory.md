@@ -398,8 +398,9 @@ from the cheapest bytes to give up, and add one region at a time.
 
 We measured one config, FSDP + EP 64 at 8K, with all 93 layers on one GB300
 (the other GPUs faked) and CUDA graphs on. Time is the forward and backward of
-a step; memory is the peak per GPU, everything included: weights, working set,
-activations and DistMoE.
+a step. Memory is what the activations take: the peak per GPU minus the
+config's weight footprint from 3.2, set against the budget that footprint
+leaves over.
 
 ::: figure remat-offload-frontier
 
@@ -416,21 +417,21 @@ the line, giving up a little speed for memory at each step:
 - **Let DistMoE recompute first.** It frees the most memory for the least time
   of any step: DistMoE's built-in recompute is the cheapest recompute in the
   model. That is why it is DistMoE's default.
-- **Add selective remat.** It recomputes only the attention kernels (the cores
-  of KDA and MLA) and keeps every other stash. Those kernels stash a lot but
-  are cheap to recompute. This lands right at the GPU's limit: it fits, but
-  only just.
+- **Recompute attention.** Recompute only the attention kernels (the cores of
+  KDA and MLA) and keep every other stash. Those kernels stash a lot but
+  are cheap to recompute. This lands right at the budget: it fits, but only
+  just.
 - **Then offload.** Offloading the attention projections, then the
   feed-forward, frees about half of the remaining memory for under a percent
   of step time. Past that point the CPU link saturates: offloading everything
   else saves little more memory and costs about a second.
-- **Full remat is dominated.** It is both slower and bigger than selective
-  remat with attention and feed-forward offloaded. On a GB300, there is no
+- **Full remat is dominated.** It is both slower and bigger than recomputing
+  attention with attention and feed-forward offloaded. On a GB300, there is no
   reason to use it for this config.
 
 > NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
 
-The settings to the right of the GPU line are faster, but do not fit this
+The settings to the right of the budget line are faster, but do not fit this
 config. That is where context and tensor parallelism come in, next.
 
 This is one config at one context length. Others land differently. How much
