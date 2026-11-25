@@ -312,6 +312,13 @@ def memory_by_kind(ctx: str = "8K") -> str:
 DISTMOE_RECOMPUTE_8K = 322 * 2**30
 
 
+# DistMoE's scratch at 8K with MXFP8 experts (the study's precision): dist_moe.
+# plan_memory with BlockScaledFormat.MXFP8_E4M3 (staged), capacity factor 4,
+# EP 64, intermediate_dim 3072 (dist_moe b76e0e0 + the routing-pointer fix).
+# The bf16 planner value, 23.6 GB, is in kimi_k3_data.json.
+DISTMOE_SCRATCH_MXFP8_8K = 22.22e9
+
+
 def distmoe_keep_all_8k() -> float:
     """The same with DistMoE keeping its intermediates: plus one MoE layer's
     activation slots at capacity factor 1.0 (balanced routing; measured in
@@ -326,7 +333,7 @@ def activations_distmoe() -> str:
     PyTorch stashing the routed experts like any layer, then DistMoE's two
     extremes. 8K only (the DistMoE runs are 8K)."""
     d = _data()
-    scratch = d["cp_sweep"]["8K"]["1"]["nopp_f4"]["scratch"]  # allocated once, independent of remat
+    scratch = DISTMOE_SCRATCH_MXFP8_8K  # allocated once, independent of remat
     sc = "#e87ba4"
     keep, rec = distmoe_keep_all_8k(), DISTMOE_RECOMPUTE_8K
     return log2_bars([("PyTorch stashes the routed experts", d["contexts"]["8K"]["activations"]["total"],

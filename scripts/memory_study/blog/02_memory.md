@@ -275,14 +275,15 @@ Take its two extremes, with nothing else in the model rematerialized:
 
 DistMoE also needs a scratch workspace to move tokens between GPUs. It is
 allocated once, whatever the remat setting, and its size scales with a capacity
-factor that leaves room for uneven routing (we use 4): 23.6 GB at 8K.
+factor that leaves room for uneven routing (we use 4): 22.2 GB at 8K.
 
 Here they are on the log2 axis from earlier:
 
 ::: figure activations-distmoe
 
-*One 8K sequence on FSDP + EP 64. The DistMoE bars are measured on 8 layers
-(and one MoE layer for the buffers) and scaled to all 93.*
+*One 8K sequence on FSDP + EP 64. The dense layers run in bf16 throughout; in
+the DistMoE bars, the routed experts run in MXFP8. Those bars are measured on 8
+layers (and one MoE layer for the buffers) and scaled to all 93.*
 
 DistMoE recomputing everything halves the stash, to 346 GB; keeping everything
 costs 661 GB. Either way, with the scratch on top, one sequence is more than a
