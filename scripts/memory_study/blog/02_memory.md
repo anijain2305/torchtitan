@@ -283,13 +283,15 @@ DistMoE also needs a scratch workspace to move tokens between GPUs. It is
 allocated once, whatever the remat setting, and its size scales with a capacity
 factor that leaves room for uneven routing (we use 4).
 
-Here is what each extreme adds up to, part by part:
+Here is what each extreme adds up to, part by part, next to the 746 GB without
+DistMoE:
 
 ::: figure activations-distmoe
 
-*One 8K sequence on FSDP + EP 64. The dense layers run in bf16, the routed
-experts in MXFP8. Measured on 8 layers (and one MoE layer for the buffers) and
-scaled to all 93.*
+*One 8K sequence. No DistMoE: the fake-tensor inventory, all bf16. DistMoE
+bars: FSDP + EP 64, dense layers in bf16 and routed experts in MXFP8, measured
+on 8 layers (and one MoE layer for the buffers) and scaled to all 93; their
+"rest of the model" (335 GB) differs slightly from the inventory's (326 GB).*
 
 Keeping DistMoE's intermediates costs 315 GB, almost as much as the rest of the
 model (335 GB). Its inputs and output are small, 5.4 GB each, and so is the

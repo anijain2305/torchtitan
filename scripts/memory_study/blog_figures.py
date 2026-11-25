@@ -329,23 +329,33 @@ def distmoe_keep_all_8k() -> float:
 
 
 def activations_distmoe() -> str:
-    """One 8K sequence's activations at DistMoE's two extremes, nothing else
-    rematerialized, on a linear axis: the rest of the model's stash, DistMoE's
-    stashed inputs, its output (stashed for the next ops), its intermediates
-    (only when it keeps them) and its scratch. 8K only (the DistMoE runs are 8K)."""
-    dm = _data()["cp_sweep"]["8K"]["1"]["nopp_f4"]
+    """One 8K sequence's activations, nothing else rematerialized, on a linear
+    axis: first without DistMoE (PyTorch stashes the routed experts like any
+    layer; the fake-tensor inventory), then DistMoE's two extremes (measured
+    runs): the rest of the model's stash, DistMoE's stashed inputs, its output
+    (stashed for the next ops), its intermediates (only when it keeps them) and
+    its scratch. 8K only (the DistMoE runs are 8K)."""
+    d = _data()
+    dm = d["cp_sweep"]["8K"]["1"]["nopp_f4"]
+    acts = d["contexts"]["8K"]["activations"]
+    routed_naive = sum(acts[k]["count"] * next(c["bytes"] for c in acts[k]["components"] if c["key"] == "routed")
+                       for k in ("kda_layer", "mla_layer"))
     inputs, output = dm["saved"], dm["output"]
     rest = DISTMOE_RECOMPUTE_8K - inputs - output
     inter = distmoe_keep_all_8k() - DISTMOE_RECOMPUTE_8K
     c_rest, c_in, c_out, c_int, c_sc = "#c3c2b7", "#1baf7a", "#eb6834", "#2a78d6", "#e87ba4"
     base = [(rest, c_rest, "rest of the model"), (inputs, c_in, "DistMoE inputs"),
             (output, c_out, "DistMoE output")]
+    c_naive = "#eda100"
     return linear_stacked_bars(
-        [("DistMoE keeps its intermediates", base + [(inter, c_int, "DistMoE intermediates"),
+        [("No DistMoE", [(acts["total"] - routed_naive, c_rest, "rest of the model"),
+                                                       (routed_naive, c_naive, "routed experts")]),
+         ("DistMoE keeps its intermediates", base + [(inter, c_int, "DistMoE intermediates"),
                                                      (DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")]),
          ("DistMoE recomputes them (default)", base + [(DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")])],
         "activations of one 8K sequence at DistMoE's two extremes, by part",
-        legend=[("Rest of the model", c_rest), ("DistMoE inputs", c_in), ("DistMoE output", c_out),
+        legend=[("Rest of the model", c_rest), ("Routed experts, stashed by PyTorch", c_naive),
+                ("DistMoE inputs", c_in), ("DistMoE output", c_out),
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
 
 
