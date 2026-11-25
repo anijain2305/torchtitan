@@ -241,40 +241,34 @@ stage: ZeRO-1 shards the stage's master weights and optimizer state over its
 GPUs, EP spreads the stage's experts over them, and the same goes for TP and CP
 (discussed later).
 
-The interesting part is that PP makes ZeRO-1 affordable. Without PP, ZeRO-1
-only fit with EP 128 and TP 4 or 8 (3.2.3). Let's see how, by comparing plain
-ZeRO-1 from 3.2.1 with ZeRO-1 + PP on its first stage.
+The interesting part is that PP makes ZeRO-1 affordable. Let's see how, by
+comparing plain ZeRO-1 from 3.2.1 with ZeRO-1 + PP on its first stage. As we
+saw, plain ZeRO-1 keeps 2.84 TB of compute weights and 11.1 TB of unsharded
+gradients alive for the whole step. Now look at the PP rows:
 
-Plain ZeRO-1 keeps 2.84 TB of compute weights and 11.1 TB of unsharded
-gradients alive for the whole step, on every GPU. With PP, the master weights
-and optimizer state stay the same, 1/512 of the model each. But a GPU now keeps
-compute weights and gradients only for its stage: PP divides them by the number
-of stages, and EP inside the stage divides the experts further. At PP 8, that
-is 21 GB of compute weights and 53 GB of gradients:
+- The master weights and optimizer state stay roughly the same, 1/512 of the
+  model each.
+- But a GPU now keeps compute weights and gradients only for its stage. PP
+  divides them by the number of stages, and EP inside the stage divides the
+  experts further. At PP 8, that is 21 GB of compute weights and 53 GB of
+  gradients.
 
 ::: tree-step pp snapshot
 
 ::: figure pp-weight-table
 
-*First stage, no TP. Master weights and optimizer state are split 8 bytes per
-parameter, fp32 each.*
+Time for a nugget:
 
 > NUGGET: PP makes ZeRO-1 affordable. The persistent shards stay at 1/512, but everything ZeRO-1 keeps unsharded for the whole step, the compute weights and the gradients, shrinks to one stage's worth. That is how PP avoids FSDP's per-microbatch communication, and why TorchTitan's FSDP defaults to ZeRO-1 under PP.
 
-Every PP degree fits the weights, even PP 4, with no TP at all. But look at
-what doubling PP actually shrinks. The master weights and optimizer state do
-not move: they are still 1/512 of the model. Neither do the experts: each stage
-has half the layers, but also half the GPUs, so EP halves and every GPU keeps
-the same share of experts. Only the dense part halves. Like TP, PP mostly
-shrinks the dense weights, which is why PP 16 saves little over PP 8.
+Every PP degree fits. A higher degree, though, means more stages, and so a
+bigger pipeline bubble and more hops between them; we will see what that costs
+in the rankings. An attentive reader might wonder why we have not discussed
+pipeline schedules. For the widely used schedules, the weight footprint is the
+same; only the activation footprint changes. So PP comes back when we count the
+activations.
 
-What separates PP 8 from PP 16 is not memory but latency: more stages mean a
-bigger pipeline bubble and more hops between stages, and a smaller EP group per
-stage. That is for the ranking to decide.
-
-That wraps up the weights. Three families fit: FSDP + EP, which communicates
-every microbatch, and two ways of affording ZeRO-1, which communicates once per
-step: ZeRO-1 + EP + TP and ZeRO-1 + PP. The tree that has been growing
+That wraps up the weights. Three families fit: FSDP + EP, and two ways of affording ZeRO-1: ZeRO-1 + EP + TP and ZeRO-1 + PP. The tree that has been growing
 alongside the text tracks which configs fit so far, and how much of each GPU
 their weights take. Whatever is left is each config's budget for activations, and
 that is where we go next.
