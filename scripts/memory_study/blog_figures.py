@@ -325,11 +325,15 @@ def activations_distmoe() -> str:
     PyTorch stashing the routed experts like any layer, then DistMoE's two
     extremes. 8K only (the DistMoE runs are 8K)."""
     d = _data()
+    scratch = d["cp_sweep"]["8K"]["1"]["nopp_f4"]["scratch"]  # allocated once, independent of remat
+    sc = "#e87ba4"
     return log2_bars([("PyTorch stashes the routed experts", d["contexts"]["8K"]["activations"]["total"],
                        COLORS["acts"]),
                       ("DistMoE keeps its intermediates", distmoe_keep_all_8k(), "#2a78d6"),
-                      ("DistMoE recomputes them (default)", DISTMOE_RECOMPUTE_8K, "#1baf7a")],
-                     "stashed activations of one 8K sequence, without and with DistMoE, log2 axis")
+                      ("DistMoE recomputes them (default)", DISTMOE_RECOMPUTE_8K, "#1baf7a"),
+                      ("+ DistMoE scratch (either way)", scratch, sc)],
+                     "stashed activations of one 8K sequence, without and with DistMoE, and DistMoE's "
+                     "scratch, log2 axis")
 
 
 def memory_remat(ctx: str = "8K") -> str:

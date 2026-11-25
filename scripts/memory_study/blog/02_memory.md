@@ -273,6 +273,10 @@ Take its two extremes, with nothing else in the model rematerialized:
   each MoE layer's inputs, because that is what it recomputes from. Its
   backward takes 1.5 ms more per MoE layer.
 
+DistMoE also needs a scratch workspace to move tokens between GPUs. It is
+allocated once, whatever the remat setting, and its size scales with a capacity
+factor that leaves room for uneven routing (we use 4): 23.6 GB at 8K.
+
 Here they are on the log2 axis from earlier:
 
 ::: figure activations-distmoe
@@ -281,7 +285,8 @@ Here they are on the log2 axis from earlier:
 (and one MoE layer for the buffers) and scaled to all 93.*
 
 DistMoE recomputing everything halves the stash, to 346 GB; keeping everything
-costs 661 GB. Either way, one sequence is more than a whole GPU. That is the
+costs 661 GB. Either way, with the scratch on top, one sequence is more than a
+whole GPU. That is the
 problem; the next section shrinks it. DistMoE's buffer size is one of the
 knobs: if a config has memory to spare, growing the buffers so that DistMoE
 stops recomputing is one way to spend it.
