@@ -228,7 +228,8 @@ def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
     """Horizontal bars on a log2 axis (one gridline per power of 2, labels every
     4x) with a line at one GB300's 288 GB. rows: (label, bytes, color), or
     (label, [(bytes, color, part label), ...], None) for a bar stacked from parts
-    (each part's length on the log axis is the increase it adds)."""
+    (each part's length on the log axis is the increase it adds). An optional
+    4th element replaces the value printed at the bar's end."""
     lab, w, bar, gap, top = 250, 760, 22, 10, 24  # w leaves room for the last axis label
     leg_rows, cur, cw = [], [], 40
     for name, color in legend or []:
@@ -251,7 +252,7 @@ def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{top - 14}" y2="{axis_y - 16}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, top - 12, "one GB300: 288 GB", 11, INK))
-    for k, (label, b, color) in enumerate(rows):
+    for k, (label, b, color, *text) in enumerate(rows):
         y = top + k * (bar + gap)
         out.append(_text(lab - 10, y + bar / 2 + 4, label, 12, INK2, "end"))
         if isinstance(b, list):
@@ -268,7 +269,7 @@ def log2_bars(rows, aria, lo=30, hi=45, legend=None) -> str:
         else:
             out.append(f'<g><title>{html.escape(label)}: {_dec(b)} (2^{_math.log2(b):.2f})</title>'
                        f'<rect x="{lab}" y="{y}" width="{x(b) - lab:.1f}" height="{bar}" rx="4" fill="{color}"/></g>')
-        out.append(_text(x(b) + 6, y + bar / 2 + 4, _dec(b), 12, INK, weight=600)
+        out.append(_text(x(b) + 6, y + bar / 2 + 4, text[0] if text else _dec(b), 12, INK, weight=600)
                    .replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1))
     for r, entries in enumerate(leg_rows):
         ly = h - 22 * (len(leg_rows) - r) + 10
@@ -327,13 +328,15 @@ def activations_distmoe() -> str:
     d = _data()
     scratch = d["cp_sweep"]["8K"]["1"]["nopp_f4"]["scratch"]  # allocated once, independent of remat
     sc = "#e87ba4"
+    keep, rec = distmoe_keep_all_8k(), DISTMOE_RECOMPUTE_8K
     return log2_bars([("PyTorch stashes the routed experts", d["contexts"]["8K"]["activations"]["total"],
                        COLORS["acts"]),
-                      ("DistMoE keeps its intermediates", distmoe_keep_all_8k(), "#2a78d6"),
-                      ("DistMoE recomputes them (default)", DISTMOE_RECOMPUTE_8K, "#1baf7a"),
-                      ("+ DistMoE scratch (either way)", scratch, sc)],
-                     "stashed activations of one 8K sequence, without and with DistMoE, and DistMoE's "
-                     "scratch, log2 axis")
+                      ("DistMoE keeps its intermediates", [(keep, "#2a78d6", "stashed"), (scratch, sc, "scratch")],
+                       None, f"{_dec(keep)} + {_dec(scratch)} scratch"),
+                      ("DistMoE recomputes them (default)", [(rec, "#1baf7a", "stashed"), (scratch, sc, "scratch")],
+                       None, f"{_dec(rec)} + {_dec(scratch)} scratch")],
+                     "stashed activations of one 8K sequence, without and with DistMoE (plus its scratch), "
+                     "log2 axis")
 
 
 def memory_remat(ctx: str = "8K") -> str:
