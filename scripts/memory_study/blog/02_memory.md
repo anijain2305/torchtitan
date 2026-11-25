@@ -172,9 +172,9 @@ EP they were 3% of the working set, so TP had little to gain; after EP they are
 the larger part, and TP can go after them.
 
 I should point out that this TP direction is mostly an exercise in building
-the mental model. TP also puts communication on the critical path, and an
-NVLink domain has only 72 GPUs, so EP 64 and TP 2 cannot both fit inside one:
-one of them has to cross InfiniBand, which will likely make this config slow.
+the mental model. TP also puts communication on the critical path, in every
+one of the 93 layers and on top of EP's all-to-alls, and today nothing hides
+it. That will likely make this config slow.
 But since we are building a mental model, let's work it out anyway and add it
 to the configs that fit in memory; the rankings will show whether it is indeed
 slow.
