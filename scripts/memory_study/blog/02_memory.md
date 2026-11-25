@@ -136,34 +136,34 @@ Almost all of the working set is routed experts: 296 of the 304 GB. Expert
 parallelism (EP) goes after exactly that part.
 
 **How EP shards.** EP does not need GPUs of its own; it is carved out of the
-same 512 GPUs that FSDP shards over. With EP 64, each layer's 896 routed
-experts split into 64 groups of 14, one group per EP rank, and each group is
-then FSDP-sharded over the remaining 512 / 64 = 8 GPUs. The dense layers are
-untouched: they stay FSDP-sharded over all 512. So every GPU still stores about
-1/512 of the persistent state. What changes is what it *gathers*: under plain
-FSDP a GPU gathers all 896 experts of a layer, under EP only its group's 14.
-Instead of every GPU fetching every expert, the tokens travel to the experts:
-an all-to-all sends each token to the GPUs that hold its experts, and a second
-one brings the results back.
+same 512 GPUs that FSDP shards over. Let's take EP 64 as an example. Each
+layer's 896 experts are divided into 64 groups of 14, and each group is then
+FSDP-sharded over the remaining 512 / 64 = 8 GPUs. The dense layers do not
+take part in EP: they stay FSDP-sharded over all 512 GPUs.
 
-Here is what that does to the working set:
+So for the persistent state, nothing changes compared to FSDP (ZeRO-3): each
+GPU still holds a 1/512 shard. What changes is what each GPU **gathers** for a
+layer, its working set: only its group's 14 experts, instead of all 896. This
+also flips the makeup of the working set. Without EP, the routed experts are
+97% of it; with EP, each GPU gathers only 1/64 of them, and the dense layers
+become the larger part, at 62%.
 
 ::: figure working-set-mix
 
-The working set shrinks 25x, from 304 GB to 12.2 GB, and its makeup flips.
-The experts drop from 97% to 38%, and the dense layers, which EP does not
-touch, become the largest part, at the same 7.6 GB as before.
-
-**The cost.** The all-to-all moves activations, and where each token goes is
-known only after the router has run. FSDP can fetch a layer's weights one layer
-ahead, behind the previous layer's compute; the all-to-all has no such head
-start. It sits on the critical path, and is much harder to hide. That is why
-EP is usually kept inside an NVLink domain (up to 72 GPUs on GB300 NVL72),
-while the FSDP axis crosses domains over InfiniBand.
-
-Back to our table, now with EP:
+The working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing
+the persistent state plus working set down to 86.5 GB, way under our 288 GB
+budget (before activations, which come next).
 
 ::: figure zero-ep-table
+
+However, **EP is not free**. It adds all-to-alls on the critical path: one
+sends each token's activations to the GPUs holding its experts, and another
+brings the results back. FSDP's communication can be hidden behind compute,
+because a layer's weights can be fetched while the previous layer computes.
+EP's cannot be fetched ahead: where each token goes is known only after the
+router runs. This is the trade-off we make. These all-to-alls are so expensive
+that serious training runs use custom kernels like DistMoE (introduced later)
+to overlap them with the routed experts' own compute.
 
 ## Using Parallelism to Fit the Model
 
