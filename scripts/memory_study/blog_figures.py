@@ -329,21 +329,24 @@ def distmoe_keep_all_8k() -> float:
 
 
 def activations_distmoe() -> str:
-    """One 8K sequence's stashed activations on the log2 axis of memory-by-kind:
-    PyTorch stashing the routed experts like any layer, then DistMoE's two
-    extremes. 8K only (the DistMoE runs are 8K)."""
-    d = _data()
-    scratch = DISTMOE_SCRATCH_MXFP8_8K  # allocated once, independent of remat
-    sc = "#e87ba4"
-    keep, rec = distmoe_keep_all_8k(), DISTMOE_RECOMPUTE_8K
-    return log2_bars([("PyTorch stashes the routed experts", d["contexts"]["8K"]["activations"]["total"],
-                       COLORS["acts"]),
-                      ("DistMoE keeps its intermediates", [(keep, "#2a78d6", "stashed"), (scratch, sc, "scratch")],
-                       None, f"{_dec(keep)} + {_dec(scratch)} scratch"),
-                      ("DistMoE recomputes them (default)", [(rec, "#1baf7a", "stashed"), (scratch, sc, "scratch")],
-                       None, f"{_dec(rec)} + {_dec(scratch)} scratch")],
-                     "stashed activations of one 8K sequence, without and with DistMoE (plus its scratch), "
-                     "log2 axis")
+    """One 8K sequence's activations at DistMoE's two extremes, nothing else
+    rematerialized, on a linear axis: the rest of the model's stash, DistMoE's
+    stashed inputs, its output (stashed for the next ops), its intermediates
+    (only when it keeps them) and its scratch. 8K only (the DistMoE runs are 8K)."""
+    dm = _data()["cp_sweep"]["8K"]["1"]["nopp_f4"]
+    inputs, output = dm["saved"], dm["output"]
+    rest = DISTMOE_RECOMPUTE_8K - inputs - output
+    inter = distmoe_keep_all_8k() - DISTMOE_RECOMPUTE_8K
+    c_rest, c_in, c_out, c_int, c_sc = "#c3c2b7", "#1baf7a", "#eb6834", "#2a78d6", "#e87ba4"
+    base = [(rest, c_rest, "rest of the model"), (inputs, c_in, "DistMoE inputs"),
+            (output, c_out, "DistMoE output")]
+    return linear_stacked_bars(
+        [("DistMoE keeps its intermediates", base + [(inter, c_int, "DistMoE intermediates"),
+                                                     (DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")]),
+         ("DistMoE recomputes them (default)", base + [(DISTMOE_SCRATCH_MXFP8_8K, c_sc, "DistMoE scratch")])],
+        "activations of one 8K sequence at DistMoE's two extremes, by part",
+        legend=[("Rest of the model", c_rest), ("DistMoE inputs", c_in), ("DistMoE output", c_out),
+                ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
 
 
 def memory_remat(ctx: str = "8K") -> str:

@@ -269,28 +269,34 @@ Take its two extremes, with nothing else in the model rematerialized:
 - **DistMoE keeps everything** (buffers big enough for balanced routing): no
   recompute.
 - **DistMoE recomputes everything** (no buffers, today's default): our
-  counterpart to full remat, for the routed experts. Even then DistMoE stashes
-  each MoE layer's inputs, because that is what it recomputes from. Its
-  backward takes 1.5 ms more per MoE layer.
+  counterpart to full remat, for the routed experts. Its backward takes 1.5 ms
+  more per MoE layer.
+
+Either way, two DistMoE tensors stay stashed:
+
+- **Its inputs**, because that is what DistMoE recomputes from.
+- **Its output.** DistMoE manages its own recompute, so when the rest of a
+  layer is rematerialized in backward (full remat, next section), DistMoE is
+  not run again: the layer's recompute reads DistMoE's stashed output instead.
 
 DistMoE also needs a scratch workspace to move tokens between GPUs. It is
 allocated once, whatever the remat setting, and its size scales with a capacity
-factor that leaves room for uneven routing (we use 4): 22.2 GB at 8K.
+factor that leaves room for uneven routing (we use 4).
 
-Here they are on the log2 axis from earlier:
+Here is what each extreme adds up to, part by part:
 
 ::: figure activations-distmoe
 
-*One 8K sequence on FSDP + EP 64. The dense layers run in bf16 throughout; in
-the DistMoE bars, the routed experts run in MXFP8. Those bars are measured on 8
-layers (and one MoE layer for the buffers) and scaled to all 93.*
+*One 8K sequence on FSDP + EP 64. The dense layers run in bf16, the routed
+experts in MXFP8. Measured on 8 layers (and one MoE layer for the buffers) and
+scaled to all 93.*
 
-DistMoE recomputing everything halves the stash, to 346 GB; keeping everything
-costs 661 GB. Either way, with the scratch on top, one sequence is more than a
-whole GPU. That is the
-problem; the next section shrinks it. DistMoE's buffer size is one of the
-knobs: if a config has memory to spare, growing the buffers so that DistMoE
-stops recomputing is one way to spend it.
+Keeping DistMoE's intermediates costs 315 GB, almost as much as the rest of the
+model (335 GB). Its inputs and output are small, 5.4 GB each, and so is the
+22.2 GB scratch. Recomputing roughly halves the total, but either way one
+sequence is more than a whole GPU. That is the problem; the next section shrinks
+it. DistMoE's buffer size is one of the knobs: if a config has memory to spare,
+growing the buffers so that DistMoE stops recomputing is one way to spend it.
 
 > NOTE: A roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, which are the most expensive and most dynamic part of the model. Leave it out, and the roofline is way off.
 
