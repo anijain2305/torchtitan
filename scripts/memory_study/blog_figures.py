@@ -795,9 +795,11 @@ def ep_tp_table() -> str:
                    f'<td style="{rule}"><b>{_dec(r["total"])}</b></td>'
                    f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
         if g:
+            r8 = ep_tp_parts(zero, ep, 8)
+            margin, dense_tp8 = GPU_BYTES - r["fixed"], r8["total"] - r8["fixed"]  # "only": not even TP 8 fits
             out.append(f'<tr class="tpfix-row"><td></td><td colspan="4" style="text-align: center;">'
                        f'<span class="tpfix-sum" data-g="{g}">TP cannot shrink: <b>{_dec(r["fixed"])}</b>, '
-                       f'leaving {_dec(GPU_BYTES - r["fixed"])} for the dense part</span></td>'
+                       f'leaving {"only " if margin < dense_tp8 else "a "}{_dec(margin)}{" of" if margin < dense_tp8 else ""} margin</span></td>'
                        f'<td colspan="2"></td></tr>')
     out.append("</table></div>")
     return "".join(out)
