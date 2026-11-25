@@ -143,12 +143,23 @@ take part in EP: they stay FSDP-sharded over all 512 GPUs.
 
 So for the persistent state, nothing changes compared to FSDP (ZeRO-3): each
 GPU still holds a 1/512 shard. What changes is what each GPU **gathers** for a
-layer, its working set: only its group's 14 experts, instead of all 896. This
-also flips the makeup of the working set. Without EP, the routed experts are
-97% of it; with EP, each GPU gathers only 1/64 of them, and the dense layers
-become the larger part, at 62%. Keep this flip in mind: it is what makes
-tensor parallelism worth reaching for, because TP shards the dense layers. We
-will come back to it very soon.
+layer, its working set: only its group's 14 experts, instead of all 896. The
+working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing the
+persistent state plus working set down to 86.5 GB, way under our 288 GB budget
+and leaving about 200 GB for activations (we tackle those later).
+
+::: figure zero-ep-table
+
+However, **EP is not free**. It adds all-to-alls on the critical path, while
+FSDP's communication can be overlapped with compute. These all-to-alls are so
+expensive that serious training runs use custom kernels like DistMoE
+(introduced later) to overlap them with the routed experts' own compute.
+
+**Why not tensor parallelism?** At this point my colleague Tianyu asked: EP
+makes sense here, but why did I not consider tensor parallelism (TP)? If you
+are stumped like I was, look at how EP changes the makeup of the working set.
+Without EP, the routed experts are 97% of it. With EP, each GPU gathers only
+1/64 of them, while the dense layers stay the same, so their share grows to 62%:
 
 ::: figure working-set-flip
 
@@ -156,20 +167,17 @@ will come back to it very soon.
 while the dense layers stay at 7.6 GB, so the dense layers become the larger
 part. Percentages are each part's share of that config's working set.*
 
-The working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing
-the persistent state plus working set down to 86.5 GB, way under our 288 GB
-budget and leaving about 200 GB for activations (we tackle those later).
+This flip is what Tianyu was pointing at. TP shards the dense layers. Before
+EP they were 3% of the working set, so TP had little to gain; after EP they are
+the larger part, and TP can go after them.
 
-::: figure zero-ep-table
-
-However, **EP is not free**. It adds all-to-alls on the critical path: one
-sends each token's activations to the GPUs holding its experts, and another
-brings the results back. FSDP's communication can be hidden behind compute,
-because a layer's weights can be fetched while the previous layer computes.
-EP's cannot be fetched ahead: where each token goes is known only after the
-router runs. This is the trade-off we make. These all-to-alls are so expensive
-that serious training runs use custom kernels like DistMoE (introduced later)
-to overlap them with the routed experts' own compute.
+I should point out that this TP direction is mostly an exercise in building
+the mental model. TP also puts communication on the critical path, and an
+NVLink domain has only 72 GPUs, so EP 64 and TP 2 cannot both fit inside one:
+one of them has to cross InfiniBand, which will likely make this config slow.
+But since we are building a mental model, let's work it out anyway and add it
+to the configs that fit in memory; the rankings will show whether it is indeed
+slow.
 
 ## Using Parallelism to Fit the Model
 
