@@ -423,12 +423,11 @@ good part of the memory footprint for free.
 
 > NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute.
 
-This is one config at one context length, and others land differently. How
-much can be offloaded for free scales with the forward time it hides behind.
-CP and TP shrink both the activations and the forward time, so the picture
-carries over roughly. PP multiplies the activations without adding forward
-time per microbatch, so PP configs need more remat. In [[memory.4.6]], each
-config gets its own setting.
+This experiment covers just one parallelism config. Every config needs its own
+run of these steps, because each leaves a different budget for activations. But
+part of the analysis carries over: the price of each step per byte freed. TP and
+CP shrink the memory footprint and the forward time together, so these prices
+stay roughly the same. We run this greedy approach for every config.
 
 <!--
 ## Rematerialization
