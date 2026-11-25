@@ -404,13 +404,16 @@ activations and DistMoE.
 ::: figure remat-offload-frontier
 
 *8K, FSDP 512 + EP 64, CP 1. The blue line is the Pareto frontier: no other
-setting is both faster and smaller.*
+setting is both faster and smaller. FF is the feed-forward. No remat does not
+fit, so it was not run at full depth; its point is estimated from 8-layer runs.*
 
 Three things stand out:
 
-- **Selective remat fits, but only just.** Recomputing only the attention
-  kernels (KDA and MLA) is the fastest setting, and it lands right at the
-  GPU's limit.
+- **Selective remat fits, but only just.** It recomputes only the attention
+  kernels (the cores of KDA and MLA) and keeps every other stash. Those kernels
+  stash a lot but are cheap to recompute, so this gives up the most memory for
+  the least time. It is the fastest setting that fits, and it lands right at
+  the GPU's limit.
 - **Offloading is almost free, up to a point.** Offloading the attention
   projections, then the feed-forward, frees about half of that memory for
   under a percent of step time. Past that point the CPU link saturates:
@@ -422,8 +425,9 @@ Three things stand out:
 
 > NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
 
-And no remat at all? For this config it does not fit: the activations alone
-are more than what the weights leave over. That is where context and tensor
+No remat at all would be faster still, but for this config it does not come
+close to fitting: the activations alone are more than what the weights leave
+over. That is where context and tensor
 parallelism come in, next.
 
 This is one config at one context length. Others land differently. How much

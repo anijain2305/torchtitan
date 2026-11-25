@@ -316,10 +316,16 @@ DISTMOE_SCRATCH_MXFP8 = {"8K": 22.22e9, "32K": 88.65e9}
 
 
 def distmoe_recompute(ctx: str) -> float:
-    """One sequence's stash with DistMoE recomputing, scaled from the 8-layer
-    run to 93 layers: layer 0 (KDA + dense FFN) + 68 x the mean KDA + MoE layer
-    (layers 1, 2, 4-6) + 24 x the mean MLA + MoE layer (layers 3, 7)."""
-    g = _bench(DISTMOE_NONE_RUNS[ctx])["allocated_growth_per_layer"]
+    """One sequence's stash with DistMoE recomputing (nothing else
+    rematerialized), scaled from the 8-layer run to 93 layers."""
+    return scaled_stash(DISTMOE_NONE_RUNS[ctx])
+
+
+def scaled_stash(run: str) -> float:
+    """One sequence's stash from an 8-layer remat-policy run, scaled to 93
+    layers: layer 0 (KDA + dense FFN) + 68 x the mean KDA + MoE layer (layers 1,
+    2, 4-6) + 24 x the mean MLA + MoE layer (layers 3, 7)."""
+    g = _bench(run)["allocated_growth_per_layer"]
     kda = [g[f"layers.{i}"] for i in (1, 2, 4, 5, 6)]
     mla = [g[f"layers.{i}"] for i in (3, 7)]
     return g["layers.0"] + 68 * sum(kda) / len(kda) + 24 * sum(mla) / len(mla)
@@ -368,8 +374,8 @@ def activations_distmoe(ctx: str = "8K") -> str:
 
 # Remat + offload ladder rungs measured at full depth (bench/ladder_8k): run, label.
 LADDER_8K = [("rperf_sel", "Selective remat"),
-             ("rperf_off_attn", "+ offload attention projections"),
-             ("rperf_off_attn_ff", "+ offload attention and feed-forward"),
+             ("rperf_off_attn", "+ offload attention"),
+             ("rperf_off_attn_ff", "+ offload attention + FF"),
              ("rperf_off_attn_ff_block", "+ offload everything"),
              ("rperf_full", "Full remat")]
 
@@ -381,19 +387,29 @@ def remat_offload_frontier() -> str:
     joined by a line, dominated rungs in grey, and one GPU's 288 GB."""
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
     pts = [(label, peaks[run] * 2**30, _bench(f"ladder_8k/{run}.json")["fwd_bwd_span_s"]) for run, label in LADDER_8K]
+    # No remat does not fit, so it was never run at full depth. Estimate it from
+    # selective remat's measured point: memory plus the extra stash of no remat
+    # (both scaled from the 8-layer policy runs), time scaled by the 8-layer
+    # no-remat / selective step ratio.
+    sel_mem, sel_time = peaks["rperf_sel"] * 2**30, _bench("ladder_8k/rperf_sel.json")["fwd_bwd_span_s"]
+    none_mem = sel_mem + scaled_stash("remat_policy_8k_none_fixedptrs.json") - scaled_stash(
+        "remat_policy_8k_selective_fixedptrs.json")
+    none_time = sel_time * (_bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
+                            / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
+    pts.append(("No remat (estimated)", none_mem, none_time))
     front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
     front.sort(key=lambda p: p[1])
     w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
-    x0, x1, y0, y1 = 100e9, 320e9, 19.0, 21.5
+    x0, x1, y0, y1 = 100e9, 500e9, 18.0, 21.5
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     blue, grey = "#2a78d6", "#898781"
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
            'for remat and offload settings at 8K">']
-    for gb in range(100, 321, 50):
+    for gb in range(100, 501, 50):
         out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
         out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
-    for s_ in (19.0, 19.5, 20.0, 20.5, 21.0, 21.5):
+    for s_ in (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5):
         out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(s_):.1f}" y2="{Y(s_):.1f}" stroke="{GRID}"/>')
         out.append(_text(l - 8, Y(s_) + 4, f"{s_:.1f} s", 11, MUTED, "end"))
     out.append(_text(l + (w - l - r) / 2, h - 8, "peak memory per GPU", 11, MUTED, "middle"))
@@ -401,17 +417,24 @@ def remat_offload_frontier() -> str:
     gx = X(GPU_BYTES)
     out.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{t}" y2="{h - b}" stroke="{INK}" stroke-width="1.5" '
                'stroke-dasharray="4 3"/>')
-    out.append(_text(gx - 4, t + 12, "one GB300: 288 GB", 11, INK, "end"))
+    out.append(_text(gx + 4, h - b - 6, "one GB300: 288 GB", 11, INK))
+    fit = [p for p in front if p[1] <= GPU_BYTES]
     out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" points="'
-               + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in front) + '"/>')
+               + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in fit) + '"/>')
+    over = [p for p in front if p[1] > GPU_BYTES]  # the frontier past one GPU: dashed
+    if over:
+        out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" stroke-dasharray="5 4" points="'
+                   + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in [fit[-1]] + over) + '"/>')
     for label, m, s_ in pts:
         on = (label, m, s_) in front
         c = blue if on else grey
+        est = "estimated" in label
         out.append(f'<g><title>{html.escape(label)}: {s_:.2f} s, {_dec(m)}</title>'
-                   f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{c}" stroke="{SURFACE}" stroke-width="2"/></g>')
-        anchor_end = m > 250e9
+                   f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{SURFACE if est else c}" stroke="{c}" '
+                   f'stroke-width="2"/></g>')
+        anchor_end = "estimated" in label
         dx = -10 if anchor_end else 10
-        dy = 22 if "projections" in label else -8  # below: the bottom rungs crowd
+        dy = 22 if label == "+ offload attention" or "estimated" in label else -8  # below: crowded or on the line
         out.append(_text(X(m) + dx, Y(s_) + dy, label + ("" if on else " (dominated)"), 12, INK if on else MUTED,
                          "end" if anchor_end else "start", weight=600 if on else 400))
     out.append("</svg>")
