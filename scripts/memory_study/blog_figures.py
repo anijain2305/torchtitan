@@ -703,9 +703,10 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
         weights = MXFP8_WEIGHT_BYTES * (q_all + routed) + 2 * (dense - q_all)
         working = (weights, 0.0)
         dense_deg = f"1/{tp}" if tp > 1 else "whole"
-        notes = ("1/512", _split_note(4 * routed, f"1/{ep}", 4 * dense, dense_deg, mark=True), "1/512",
+        mark = f"ep{ep}" if tp == 1 else ""  # one row per EP degree carries the bracket
+        notes = ("1/512", _split_note(4 * routed, f"1/{ep}", 4 * dense, dense_deg, mark), "1/512",
                  _split_note(MXFP8_WEIGHT_BYTES * routed, f"1/{ep}", weights - MXFP8_WEIGHT_BYTES * routed,
-                             dense_deg, mark=True), "")
+                             dense_deg, mark), "")
         # what TP cannot shrink: master weights, optimizer state, the experts' gradients and weights
         fixed = master + optim + (4 + MXFP8_WEIGHT_BYTES) * routed
     else:
@@ -721,16 +722,14 @@ def ep_tp_parts(zero: int, ep: int, tp: int) -> dict:
             "total": total, "notes": notes, "fixed": fixed if zero == 1 else None}
 
 
-FIXED_TINT = "background: rgba(237, 161, 0, 0.18);"  # marks what TP cannot shrink
-
-
-def _split_note(experts: float, experts_deg: str, dense: float, dense_deg: str, mark: bool = False) -> str:
-    """Cell note: a cell's experts vs dense bytes, each with how it is split;
-    mark: tint the experts' part (TP cannot shrink it)."""
+def _split_note(experts: float, experts_deg: str, dense: float, dense_deg: str, mark: str = "") -> str:
+    """Cell note: a cell's dense vs experts bytes, each with how it is split.
+    mark: a group name; boxes the experts' part (TP cannot shrink it) so the
+    page script can draw a bracket from it to that group's sum."""
     e = f"experts {_dec(experts)} ({experts_deg})"
     if mark:
-        e = f'<span style="{FIXED_TINT} border-radius: 3px; padding: 0 3px; color: var(--text-secondary);">{e}</span>'
-    return f"{e}<br>dense {_dec(dense)} ({dense_deg})"
+        e = f'<span class="tpfix" data-g="{mark}">{e}</span>'
+    return f"dense {_dec(dense)} ({dense_deg})<br>{e}"
 
 
 EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
@@ -738,20 +737,21 @@ EP_TP_ROWS = [(1, ep, t) for ep in (64, 128) for t in (1, 2, 4, 8)]
 
 def ep_tp_table() -> str:
     """Persistent state + working set per GPU for ZeRO-1 with EP and TP (no
-    PP), plus what is left of one GPU for activations. Amber marks what TP
-    cannot shrink (master weights, optimizer state, the experts' gradients and
-    compute weights); its column sums it and shows the room left for the dense
-    part against what the dense part needs. ZeRO-1 has no working-set
-    gradients, so that column is left out. Independent of the context length."""
+    PP), plus what is left of one GPU for activations. In each EP group's
+    no-TP row, the four parts TP cannot shrink (master weights, optimizer
+    state, the experts' gradients and compute weights) are boxed, and the page
+    script draws a bracket from them to a callout with their sum in the row
+    below. ZeRO-1 has no working-set gradients, so that column is left out.
+    Independent of the context length."""
     rule = "border-left: 2px solid #898781;"
     tint = "background: rgba(137, 135, 129, 0.10);"
     center = "text-align: center !important;"
     th = lambda h, style="", attrs="": f'<th{attrs} style="{style}">{h}</th>' if style else f"<th{attrs}>{h}</th>"
-    ncol = 8
-    out = ['<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
+    ncol = 7
+    out = ['<div class="tpfix-wrap"><svg class="tpfix-lines" aria-hidden="true"></svg>'
+           '<table class="dtable"><tr>' + th("Per GPU", attrs=' rowspan="2"')
            + th("Persistent state", rule + tint + center, ' colspan="3"')
            + th("Working set", rule + tint + center)
-           + th("TP cannot shrink", rule + FIXED_TINT, ' rowspan="2"')
            + th("Persistent + working set", rule, ' rowspan="2"')
            + th("Left for activations", rule, ' rowspan="2"') + "</tr>",
            "<tr>" + "".join(th(h, (rule if i in (0, 3) else "") + center)
@@ -771,7 +771,7 @@ def ep_tp_table() -> str:
         cells = "".join((f'<td style="{rule}">' if i in (0, 3) else "<td>")
                         + ((_dec(v) + (f'<span class="sub">{notes[i]}</span>' if notes[i] else "")) if v else "-")
                         + "</td>" for i, v in enumerate(vals))
-        out.append(f'<tr style="opacity: 0.55;"><td>{zr["label"]}</td>{cells}<td style="{rule}">-</td>'
+        out.append(f'<tr style="opacity: 0.55;"><td>{zr["label"]}</td>{cells}'
                    f'<td style="{rule}"><b>{_dec(sum(vals))}</b></td>'
                    f'<td style="{rule}">over by {_dec(sum(vals) - GPU_BYTES)}</td></tr>')
     family = None
@@ -781,24 +781,25 @@ def ep_tp_table() -> str:
         if fam != family:
             out.append(f'<tr><td colspan="{ncol}" style="{tint} font-weight: 600;">{fam}</td></tr>')
             family = fam
+        g = f"ep{ep}" if tp == 1 else ""
         cells = ""
         for i, v in enumerate(list(r["persistent"]) + [r["working"][0]]):
             note = r["notes"][i]
             text = _dec(v) + (f'<span class="sub">{note}</span>' if note else "")
-            style = (rule if i in (0, 3) else "") + (FIXED_TINT if i in (0, 2) else "")
-            cells += f'<td style="{style}">{text}</td>' if style else f"<td>{text}</td>"
-        dense = r["total"] - r["fixed"]
-        room = GPU_BYTES - r["fixed"]
-        need_c = "#008300" if dense <= room else "#c0302f"
-        fixed_cell = (f'<b>{_dec(r["fixed"])}</b><span class="sub">room for dense: {_dec(room)}<br>'
-                      f'<span style="color: {need_c}; font-weight: 600;">dense needs: {_dec(dense)}</span></span>')
+            if g and i in (0, 2):  # master weights and optimizer state: boxed whole
+                text = f'<span class="tpfix" data-g="{g}">{text}</span>'
+            cells += f'<td style="{rule}">{text}</td>' if i in (0, 3) else f"<td>{text}</td>"
         left = GPU_BYTES - r["total"]
         shade = "background: rgba(0, 131, 0, 0.12);" if left > 0 else "background: rgba(227, 73, 72, 0.15);"
         out.append(f'<tr><td>{"TP " + str(tp) if tp > 1 else "no TP"}</td>{cells}'
-                   f'<td style="{rule}">{fixed_cell}</td>'
                    f'<td style="{rule}"><b>{_dec(r["total"])}</b></td>'
                    f'<td style="{rule}{shade}">{_dec(left) if left > 0 else "over by " + _dec(-left)}</td></tr>')
-    out.append("</table>")
+        if g:
+            out.append(f'<tr class="tpfix-row"><td></td><td colspan="4" style="text-align: center;">'
+                       f'<span class="tpfix-sum" data-g="{g}">TP cannot shrink: <b>{_dec(r["fixed"])}</b>, '
+                       f'leaving {_dec(GPU_BYTES - r["fixed"])} for the dense part</span></td>'
+                       f'<td colspan="2"></td></tr>')
+    out.append("</table></div>")
     return "".join(out)
 
 

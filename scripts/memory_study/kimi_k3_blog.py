@@ -168,6 +168,14 @@ EXTRA_CSS = """
 .ft-past.ft-over { opacity: 0.5; }
 .ft-new .ft-hl { fill: #eef4fc; }
 .tree-inline { margin: 18px 0; }
+/* EP + TP table: boxes around what TP cannot shrink, bracketed to their sum */
+.tpfix-wrap { position: relative; }
+.tpfix-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.tpfix { display: inline-block; outline: 1.5px solid #c98500; background: rgba(237, 161, 0, 0.12);
+         border-radius: 3px; padding: 0 4px; }
+.dtable tr.tpfix-row td { border-bottom: 0; padding-top: 14px; padding-bottom: 8px; }
+.tpfix-sum { display: inline-block; border: 1.5px solid #c98500; background: rgba(237, 161, 0, 0.12);
+             border-radius: 6px; padding: 2px 10px; font-size: 12px; color: var(--text-primary); }
 @media (min-width: 1400px) {
   .wrap { max-width: none; }
   .blog { margin-left: max(0px, calc((100vw - 1300px) / 2 - 24px)); }
@@ -475,6 +483,28 @@ if (treeBox) {{
   }});
   update();
 }}
+// EP + TP table: a bracket from each boxed part down to its group's sum
+const drawBrackets = () => {{
+  for (const wrap of document.querySelectorAll(".tpfix-wrap")) {{
+    const svg = wrap.querySelector(".tpfix-lines"), base = wrap.getBoundingClientRect();
+    if (!base.width) continue;  // hidden (other context)
+    let paths = "";
+    for (const sum of wrap.querySelectorAll(".tpfix-sum")) {{
+      const s = sum.getBoundingClientRect(), y = s.top - base.top - 7, sx = s.left + s.width / 2 - base.left;
+      const xs = [sx];
+      for (const box of wrap.querySelectorAll(`.tpfix[data-g="${{sum.dataset.g}}"]`)) {{
+        const b = box.getBoundingClientRect(), x = b.left + b.width / 2 - base.left;
+        xs.push(x);
+        paths += `M${{x}} ${{b.bottom - base.top + 1}} V${{y}} `;
+      }}
+      paths += `M${{Math.min(...xs)}} ${{y}} H${{Math.max(...xs)}} M${{sx}} ${{y}} V${{s.top - base.top}} `;
+    }}
+    svg.innerHTML = `<path d="${{paths}}" fill="none" stroke="#c98500" stroke-width="1.5"/>`;
+  }}
+}};
+drawBrackets();
+window.addEventListener("resize", drawBrackets);
+for (const btn of document.querySelectorAll(".ctx-toggle button")) btn.addEventListener("click", drawBrackets);
 // ranking chart: hover tooltip and filters (FSDP rows follow the family filter only)
 const tip = document.createElement("div");
 tip.id = "rk-tip"; tip.hidden = true; document.body.append(tip);
