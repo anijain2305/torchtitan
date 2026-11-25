@@ -155,9 +155,9 @@ FSDP's communication can be overlapped with compute. These all-to-alls are so
 expensive that serious training runs use custom kernels like DistMoE
 (introduced later) to overlap them with the routed experts' own compute.
 
-**Why not tensor parallelism?** At this point my colleague Tianyu asked: EP
-makes sense here, but why did I not consider tensor parallelism (TP)? If you
-are stumped like I was, look at how EP changes the makeup of the working set.
+**Wait, why pair EP with FSDP and not with TP?** That is what my colleague
+Tianyu asked me at this point, and I did not have a good answer. If you are
+stumped like I was, look at how EP changes the makeup of the working set.
 Without EP, the routed experts are 97% of it. With EP, each GPU gathers only
 1/64 of them, while the dense layers stay the same, so their share grows to 62%:
 
