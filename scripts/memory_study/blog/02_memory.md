@@ -146,13 +146,19 @@ GPU still holds a 1/512 shard. What changes is what each GPU **gathers** for a
 layer, its working set: only its group's 14 experts, instead of all 896. This
 also flips the makeup of the working set. Without EP, the routed experts are
 97% of it; with EP, each GPU gathers only 1/64 of them, and the dense layers
-become the larger part, at 62%.
+become the larger part, at 62%. Keep this flip in mind: it is what makes
+tensor parallelism worth reaching for, because TP shards the dense layers. We
+will come back to it very soon.
 
 ::: figure working-set-mix
 
+*EP shrinks the working set 25x, from 304 GB to 12.2 GB, and flips its makeup:
+the experts drop from 97% to 38%, and the dense layers, untouched at 7.6 GB,
+become the larger part.*
+
 The working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing
 the persistent state plus working set down to 86.5 GB, way under our 288 GB
-budget (before activations, which come next).
+budget and leaving about 200 GB for activations (we tackle those later).
 
 ::: figure zero-ep-table
 

@@ -636,12 +636,12 @@ def working_set_mix() -> str:
     q = dense_quantized_params()
     dense_w = 2 * (MXFP8_WEIGHT_BYTES * q + 2 * (dense - q))  # two layers
     blue, orange = "#2a78d6", "#eb6834"
-    kinds = [("Expert gradients (fp32)", blue, False), ("Expert compute weights (MXFP8)", blue, True),
-             ("Dense gradients (fp32)", orange, False), ("Dense compute weights (bf16)", orange, True)]
+    kinds = [("Expert compute weights (MXFP8)", blue, True), ("Expert gradients (fp32)", blue, False),
+             ("Dense compute weights (bf16)", orange, True), ("Dense gradients (fp32)", orange, False)]
     rows = []
     for label, ep in (("FSDP 512", 1), ("FSDP 512 + EP 64", 64)):
         r = blk["routed"] / ep
-        rows.append((label, [2 * 4 * r, 2 * MXFP8_WEIGHT_BYTES * r, 2 * 4 * dense, dense_w]))
+        rows.append((label, [2 * MXFP8_WEIGHT_BYTES * r, 2 * 4 * r, dense_w, 2 * 4 * dense]))
     lab, w, x0, x1, bar, gap, top = 150, 760, 150, 670, 34, 30, 28
     h = top + len(rows) * (bar + gap) + 56
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="working set composition, '
