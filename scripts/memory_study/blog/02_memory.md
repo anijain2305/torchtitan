@@ -171,13 +171,7 @@ This flip is what Tianyu was pointing at. TP shards the dense layers. Before
 EP they were 3% of the working set, so TP had little to gain; after EP they are
 the larger part, and TP can go after them.
 
-I should point out that this TP direction is mostly an exercise in building
-the mental model. TP also puts communication on the critical path, in every
-one of the 93 layers and on top of EP's all-to-alls, and today nothing hides
-it. That will likely make this config slow.
-But since we are building a mental model, let's work it out anyway and add it
-to the configs that fit in memory; the rankings will show whether it is indeed
-slow.
+> NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, and today nothing hides it, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
 
 ## Using Parallelism to Fit the Model
 
