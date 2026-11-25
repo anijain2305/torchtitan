@@ -403,39 +403,35 @@ activations and DistMoE.
 
 ::: figure remat-offload-frontier
 
-*8K, FSDP 512 + EP 64, CP 1. The blue line is the Pareto frontier: no other
-setting is both faster and smaller. FF is the feed-forward. Every measured
-point runs DistMoE recomputing its intermediates (its default). The two hollow
-points are estimates: no remat, from 8-layer runs (it does not fit, so it was
-not run at full depth), and selective remat with DistMoE keeping all of its
-intermediates, from the one-layer DistMoE benchmark.*
+*8K, FSDP 512 + EP 64, CP 1. Each label says what that setting adds to the one
+before it, starting from the bottom right. The blue line is the Pareto frontier:
+no other setting is both faster and smaller. FF is the feed-forward. The two
+hollow points do not fit, so they were not run at full depth: they are
+estimated from 8-layer runs and from the one-layer DistMoE benchmark.*
 
-Four things stand out:
+Read the chart from the bottom right, where nothing is recomputed, and walk up
+the line, giving up a little speed for memory at each step:
 
-- **Selective remat fits, but only just.** It recomputes only the attention
-  kernels (the cores of KDA and MLA) and keeps every other stash. Those kernels
-  stash a lot but are cheap to recompute, so this gives up the most memory for
-  the least time. It is the fastest setting that fits, and it lands right at
-  the GPU's limit.
-- **Offloading is almost free, up to a point.** Offloading the attention
-  projections, then the feed-forward, frees about half of that memory for
-  under a percent of step time. Past that point the CPU link saturates:
-  offloading everything else saves little more memory and costs about a
-  second.
+- **No remat** is the fastest, and nowhere near fitting.
+- **Let DistMoE recompute first.** It frees the most memory for the least time
+  of any step: DistMoE's built-in recompute is the cheapest recompute in the
+  model. That is why it is DistMoE's default.
+- **Add selective remat.** It recomputes only the attention kernels (the cores
+  of KDA and MLA) and keeps every other stash. Those kernels stash a lot but
+  are cheap to recompute. This lands right at the GPU's limit: it fits, but
+  only just.
+- **Then offload.** Offloading the attention projections, then the
+  feed-forward, frees about half of the remaining memory for under a percent
+  of step time. Past that point the CPU link saturates: offloading everything
+  else saves little more memory and costs about a second.
 - **Full remat is dominated.** It is both slower and bigger than selective
   remat with attention and feed-forward offloaded. On a GB300, there is no
   reason to use it for this config.
-- **DistMoE's recompute is the last thing to buy back.** Letting DistMoE keep
-  its intermediates costs more memory than dropping remat altogether, and saves
-  less time. Its built-in recompute is the cheapest recompute in the model, so
-  keep it on unless memory is truly spare.
 
 > NUGGET: Offloading can stand in for recompute, until the CPU link saturates. On a GB300, offloading half of a step's peak memory costs under a percent of step time, while full remat frees less and costs far more. Offload first, and recompute only what the link cannot keep up with.
 
-No remat at all would be faster still, but for this config it does not come
-close to fitting: the activations alone are more than what the weights leave
-over. That is where context and tensor
-parallelism come in, next.
+The settings to the right of the GPU line are faster, but do not fit this
+config. That is where context and tensor parallelism come in, next.
 
 This is one config at one context length. Others land differently. How much
 can be offloaded for free scales with the forward time it hides behind. CP and

@@ -373,7 +373,8 @@ def activations_distmoe(ctx: str = "8K") -> str:
 
 
 # Remat + offload ladder rungs measured at full depth (bench/ladder_8k): run, label.
-LADDER_8K = [("rperf_sel", "Selective remat"),
+# Labels are cumulative, read from the bottom right (nothing recomputed).
+LADDER_8K = [("rperf_sel", "+ selective remat"),
              ("rperf_off_attn", "+ offload attention"),
              ("rperf_off_attn_ff", "+ offload attention + FF"),
              ("rperf_off_attn_ff_block", "+ offload everything"),
@@ -381,45 +382,49 @@ LADDER_8K = [("rperf_sel", "Selective remat"),
 
 
 def remat_offload_frontier() -> str:
-    """Step time (forward + backward span) against peak memory per GPU for the
-    measured remat + offload rungs (8K, FSDP 512 + EP 64, CP 1, 93 layers,
-    CUDA graphs), with the Pareto frontier (rungs no other rung beats on both)
-    joined by a line, dominated rungs in grey, and one GPU's 288 GB."""
+    """Step time (forward + backward span) against peak memory per GPU along
+    the remat + offload ladder (8K, FSDP 512 + EP 64, CP 1, 93 layers, CUDA
+    graphs), read from the bottom right: nothing recomputed (DistMoE keeping
+    its intermediates too), then DistMoE recomputing, then the measured rungs
+    (selective remat, then offloading more and more). The Pareto frontier
+    (rungs no other rung beats on both) is joined by a line, dashed past one
+    GPU's 288 GB; dominated rungs are grey; estimated points are hollow."""
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
     pts = [(label, peaks[run] * 2**30, _bench(f"ladder_8k/{run}.json")["fwd_bwd_span_s"]) for run, label in LADDER_8K]
-    # No remat does not fit, so it was never run at full depth. Estimate it from
-    # selective remat's measured point: memory plus the extra stash of no remat
-    # (both scaled from the 8-layer policy runs), time scaled by the 8-layer
-    # no-remat / selective step ratio.
+    # The two rungs that do not fit were never run at full depth; estimate them
+    # from selective remat's measured point.
+    #  - DistMoE recomputing, no other remat: plus no remat's extra stash over
+    #    selective (both scaled from the 8-layer policy runs), time scaled by the
+    #    8-layer no-remat / selective step ratio.
+    #  - Nothing recomputed: plus DistMoE keeping its intermediates, one MoE
+    #    layer's slots at capacity factor 1.0 and its forward + backward saving
+    #    (bench/dist_moe_slots_8k.json) for each of the 92 MoE layers, times the
+    #    step's microbatches.
     sel_mem, sel_time = peaks["rperf_sel"] * 2**30, _bench("ladder_8k/rperf_sel.json")["fwd_bwd_span_s"]
-    none_mem = sel_mem + scaled_stash("remat_policy_8k_none_fixedptrs.json") - scaled_stash(
+    dm_mem = sel_mem + scaled_stash("remat_policy_8k_none_fixedptrs.json") - scaled_stash(
         "remat_policy_8k_selective_fixedptrs.json")
-    none_time = sel_time * (_bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
-                            / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
-    pts.append(("No remat (est.)", none_mem, none_time))
-    # DistMoE keeping its intermediates (every measured point recomputes them, the
-    # default), on top of selective remat: one MoE layer's slots at capacity
-    # factor 1.0 and its forward + backward saving (bench/dist_moe_slots_8k.json)
-    # for each of the 92 MoE layers, times the step's microbatches.
+    dm_time = sel_time * (_bench("ladder_8k/rperf8_none.json")["fwd_bwd_span_s"]
+                          / _bench("ladder_8k/rperf8_sel.json")["fwd_bwd_span_s"])
     slots = {r["slot"]: r for r in _bench("dist_moe_slots_8k.json")["rows"]}
     save_s = ((slots[None]["fwd_ms"] + slots[None]["bwd_ms"]) - (slots[1.0]["fwd_ms"] + slots[1.0]["bwd_ms"])) / 1e3
     mbs = _data()["global_tokens"] / 8192 / 512
-    pts.append(("DistMoE keeps all (est.)",
-                sel_mem + MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"]),
-                sel_time - MOE_LAYERS * mbs * save_s))
+    pts.append(("+ DistMoE recomputes (est.)", dm_mem, dm_time))
+    pts.append(("No remat (est.)", dm_mem + MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"]),
+                dm_time - MOE_LAYERS * mbs * save_s))
     front = [p for p in pts if not any(q[1] <= p[1] and q[2] <= p[2] and q != p for q in pts)]
     front.sort(key=lambda p: p[1])
     w, h, l, r, t, b = 760, 330, 70, 40, 30, 50
-    x0, x1, y0, y1 = 100e9, 650e9, 18.0, 21.5
+    x0, x1, y0, y1 = 100e9, 850e9, 17.5, 21.5
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     blue, grey = "#2a78d6", "#898781"
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="step time against peak memory per GPU '
-           'for remat and offload settings at 8K">']
-    for gb in range(100, 651, 50):
+           'along the remat and offload ladder at 8K">']
+    for gb in range(100, 851, 100):
         out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
         out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
-    for s_ in (18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5):
+    for k in range(9):
+        s_ = 17.5 + 0.5 * k
         out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(s_):.1f}" y2="{Y(s_):.1f}" stroke="{GRID}"/>')
         out.append(_text(l - 8, Y(s_) + 4, f"{s_:.1f} s", 11, MUTED, "end"))
     out.append(_text(l + (w - l - r) / 2, h - 8, "peak memory per GPU", 11, MUTED, "middle"))
@@ -429,12 +434,17 @@ def remat_offload_frontier() -> str:
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, h - b - 6, "one GB300: 288 GB", 11, INK))
     fit = [p for p in front if p[1] <= GPU_BYTES]
+    over = [p for p in front if p[1] > GPU_BYTES]
     out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" points="'
                + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in fit) + '"/>')
-    over = [p for p in front if p[1] > GPU_BYTES]  # the frontier past one GPU: dashed
-    if over:
+    if over:  # the frontier past one GPU: dashed
         out.append('<polyline fill="none" stroke="' + blue + '" stroke-width="2" stroke-dasharray="5 4" points="'
                    + " ".join(f"{X(m):.1f},{Y(s_):.1f}" for _, m, s_ in [fit[-1]] + over) + '"/>')
+    place = {  # label offsets (dx, dy, anchor), tuned so labels clear points and lines
+        "+ selective remat": (10, -12, "start"), "+ offload attention": (10, 22, "start"),
+        "+ offload attention + FF": (14, -44, "start"), "+ offload everything": (10, -12, "start"),
+        "Full remat": (10, -12, "start"), "+ DistMoE recomputes (est.)": (10, -12, "start"),
+        "No remat (est.)": (-10, 22, "end")}
     for label, m, s_ in pts:
         on = (label, m, s_) in front
         c = blue if on else grey
@@ -442,11 +452,13 @@ def remat_offload_frontier() -> str:
         out.append(f'<g><title>{html.escape(label)}: {s_:.2f} s, {_dec(m)}</title>'
                    f'<circle cx="{X(m):.1f}" cy="{Y(s_):.1f}" r="6" fill="{SURFACE if est else c}" stroke="{c}" '
                    f'stroke-width="2"/></g>')
-        anchor_end = "(est.)" in label
-        dx = -10 if anchor_end else 10
-        dy = 22 if label in ("+ offload attention", "No remat (est.)") else -12  # below: crowded or on the line
+        dx, dy, anchor = place[label]
+        if abs(dy) > 30:  # lifted label: a leader line back to its point
+            out.append(f'<line x1="{X(m):.1f}" y1="{Y(s_) - 6:.1f}" x2="{X(m) + dx - 2:.1f}" y2="{Y(s_) + dy + 3:.1f}" '
+                       f'stroke="{MUTED}" stroke-width="1"/>')
         out.append(_text(X(m) + dx, Y(s_) + dy, label + ("" if on else " (dominated)"), 12, INK if on else MUTED,
-                         "end" if anchor_end else "start", weight=600 if on else 400))
+                         anchor, weight=600 if on else 400)
+                   .replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1))
     out.append("</svg>")
     return "".join(out)
 
