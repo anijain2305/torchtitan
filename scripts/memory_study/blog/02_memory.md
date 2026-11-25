@@ -409,37 +409,27 @@ leaves over.
 
 ::: figure remat-offload-frontier
 
-*8K, FSDP 512 + EP 64, CP 1. The blue line follows the recipe from the bottom
-right; each label says what that step adds. Filled points are measured at full
-depth; hollow points do not fit, so they were estimated from the measured steps,
-8-layer runs and the one-layer DistMoE benchmark. Grey points are measured
-settings off the recipe's path. FF is the feed-forward.*
+*8K, FSDP 512 + EP 64, CP 1. Every path starts from no remat at the bottom
+right. Endpoints are measured at full depth; the hollow points along the way do
+not fit, so they were estimated from measured steps, 8-layer runs and the
+one-layer DistMoE benchmark.*
 
-Read the chart from the bottom right, where nothing is recomputed, and follow
-the recipe up the line:
+Every path starts at the bottom right, where nothing is recomputed, and has to
+get to the left of the budget line. Here are three:
 
-- **No remat** is the fastest, and nowhere near fitting.
-- **Offload for free.** Offloading the attention projections and the
-  feed-forward frees a lot of memory for almost no time: the copies hide
-  behind compute. These are the right bytes for the free budget, because they
-  are GEMM outputs, expensive to recompute.
-- **Then the cheapest recompute per byte: DistMoE's.** Its built-in recompute
-  frees the most memory per second of any remat in the model, which is why it
-  is DistMoE's default.
-- **Then recompute attention,** the cores of KDA and MLA. Those kernels stash a
-  lot and are cheap to recompute. This step lands well inside the budget: it
-  overshoots.
-- **Spend the leftover in reverse.** The grey point "recompute attention only"
-  undoes the offload and still fits, a little faster. Growing DistMoE's buffer
-  with the same memory is the other way to spend it.
-- **Offloading everything** goes past what the CPU link can hide, and costs
-  about a second.
-- **Full remat is dominated.** It is both slower and bigger than the recipe's
-  pick. On a GB300, there is no reason to use it for this config.
+- **Remat only.** Let DistMoE recompute, then recompute attention (the cores of
+  KDA and MLA). It lands right on the budget line: it fits, but only just.
+- **Offload first, the recipe.** Offload the attention projections and the
+  feed-forward for free, then let DistMoE recompute, then recompute attention.
+  It ends at almost the same speed, but far inside the budget. That leftover
+  memory is the recipe's last step: spent in reverse, for example on growing
+  DistMoE's buffer, it can buy back time.
+- **Full remat.** One step, also far inside the budget, but by far the slowest:
+  it recomputes everything, including what offloading would hide for free.
 
 > NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute. On a GB300, offloading the attention projections and the feed-forward frees most of the activations that recomputing attention leaves, for under a percent of step time; after that, recompute whatever is cheapest per byte freed. Full remat, which recomputes everything, is beaten on both time and memory.
 
-The settings to the right of the budget line are faster, but do not fit this
+Everything to the right of the budget line is faster, but does not fit this
 config. That is where context and tensor parallelism come in, next.
 
 This is one config at one context length. Others land differently. How much
