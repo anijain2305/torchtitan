@@ -345,8 +345,8 @@ Here is the general recipe I followed:
 1. **Start simple:** no rematerialization, no offloading, one sequence per
    microbatch. Check whether it fits the budget.
 2. **If it fits** (rare for LLMs of this size), increase the microbatch size as
-   long as it still fits, up to the GPU's share of the batch. This may seem
-   pointless now, but the rankings will show it pays off under FSDP: FSDP
+   long as it still fits, up to the GPU's share of the local batch size. This may seem
+   confusing now, but it pays off under FSDP: FSDP
    gathers the weights and reduce-scatters the gradients for every microbatch,
    so fewer, larger microbatches mean less communication.
 3. **If it does not fit** (our case: a single 8K sequence is already more than a
@@ -365,13 +365,9 @@ Here is the general recipe I followed:
       CP 1 with full remat versus CP 4 with none is a real trade. So for each
       CP or TP degree, find its best remat and offload setting as above, and
       let the ranking pick.
-4. **Pipeline parallelism costs activations.** PP is there for the weights and
-   the communication (3.2.4), but the first stage holds several microbatches
-   in flight, so a PP config needs more of step 3 to fit.
-
 The rest of this section follows the recipe: the remat and offload frontier,
-then context and tensor parallelism, then what pipeline parallelism does to
-the activations.
+then context and tensor parallelism. A last subsection looks at what pipeline
+parallelism does to the activations a config has to fit.
 
 <!--
 ## Rematerialization
