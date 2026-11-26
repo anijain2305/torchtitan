@@ -173,7 +173,12 @@ class Config:
     microbatch (attention per sequence). expert_precision: the routed experts'
     GEMMs, "mxfp8" or "bf16". prefetch: FSDP prefetches the next layer's
     all-gather in backward (without PP); off, under CUDA graphs, a layer's
-    backward, reduce-scatter and the next all-gather run in sequence."""
+    backward, reduce-scatter and the next all-gather run in sequence.
+    remat: "full" (every layer's forward replays in backward), "attn" (only
+    the attention kernels replay) or "none". dm_keep: the share of MoE layers
+    whose DistMoE keeps its intermediates (the rest recompute them). offload:
+    activations offloaded to CPU memory (3.4.1). zero1: ZeRO-1 + EP 128 without
+    PP (gather and reduce-scatter once per step), the 3.2.3 configs."""
 
     def __init__(
         self,
@@ -187,6 +192,10 @@ class Config:
         rows=1,
         expert_precision="mxfp8",
         prefetch=True,
+        remat="full",
+        dm_keep=0.0,
+        offload=False,
+        zero1=False,
     ):
         d = bf._data()
         self.ctx, self.P, self.cp, self.tp = ctx, P, cp, tp
@@ -196,7 +205,8 @@ class Config:
             prefetch,
         )
         self.T = bf.CTX_TOKENS[ctx]
-        self.ep = NUM_GPUS // P if P > 1 else 64
+        self.remat, self.dm_keep, self.offload, self.zero1 = remat, dm_keep, offload, zero1
+        self.ep = NUM_GPUS // P if P > 1 else 128 if zero1 else 64
         self.Tm = (
             rows * self.T // cp
         )  # GEMM rows per microbatch (after the SP all-gather)
@@ -303,6 +313,41 @@ class StepModel:
         self.shapes = bf._bench("shapes_GB300.json")
         self.fa4 = bf._bench("mla_fa4_GB300.json")["mla_fa4"]["data"]["heads"]
         self.lm = bf._bench("kernels_GB300_summary.json")["linears"]["bf16"]["lm_head"]
+        self._calibrate_remat()
+
+    def _calibrate_remat(self):
+        """What each remat and offload setting costs, from the measured 8K FSDP
+        512 + EP 64 full-depth steps (CUDA graphs, fake process group; blog
+        3.4.1), as multipliers on this model's own per-layer times so they
+        scale with each config's shapes. The model's full-remat compute matches
+        the measured full-remat step (21.1 vs 21.2 s), so each setting subtracts
+        what it no longer replays:
+          - dense replay (full -> recompute attention), measured 1.96 s: a
+            multiple of the dense forward GEMMs;
+          - attention replay (recompute attention -> none), 0.75 s: the attention
+            kernels' forward plus a per-token rest (the region's other ops),
+            from the 8-layer runs scaled to 93 layers;
+          - DistMoE's recompute, 1.67 s with all 92 MoE layers recomputing:
+            a multiple of the expert forward GEMMs (from the 25% and 40%
+            buy-back runs, which agree);
+          - offloading the attention projections + feed-forward, +0.11 s: per
+            token per layer (the copies hide behind compute; this is their
+            slowdown)."""
+        span = lambda r: bf._bench(f"ladder_8k/{r}.json")["fwd_bwd_span_s"]
+        c = Config("8K")
+        lcs = [self.layer_compute(c, i, raw=True) for i in range(NUM_LAYERS)]
+        tok_layers = c.M * NUM_LAYERS * c.Tl
+        dense_fwd = c.M * sum(x["dense_fwd"] for x in lcs)
+        attn_fwd = c.M * sum(x["attn_fwd"] for x in lcs)
+        ex_fwd = c.M * sum(x["ex_fwd"] for x in lcs)
+        sel = span("rperf_sel")
+        self.k_dense = (span("rperf_full") - sel) / dense_fwd
+        attn = sel * (1 - span("rperf8_none") / span("rperf8_sel"))
+        self.attn_rest_per_tok = (attn - attn_fwd) / tok_layers
+        base = span("rperf_off_attn_ff_dmbase")
+        dm = ((base - span("rperf_off_attn_ff_dm0.25")) / 0.25 + (base - span("rperf_off_attn_ff_dm0.4")) / 0.4) / 2
+        self.k_dm = dm / ex_fwd
+        self.offload_per_tok = (span("rperf_off_attn_ff") - sel) / tok_layers
 
     # ------------------------------------------------------------ compute
     def dense_params(self, i):
@@ -310,7 +355,7 @@ class StepModel:
         n = s["attention"] + s["shared"] + s["others"]
         return n + (3 * self.S["D"] * self.S["F"] - s["shared"] if i == 0 else 0)
 
-    def layer_compute(self, c, i):
+    def layer_compute(self, c, i, raw=False):
         """Seconds for one microbatch of layer i on one GPU: forward and
         backward (remat forward + backward), plus the windows comm hides behind."""
         S = self.S
@@ -362,14 +407,34 @@ class StepModel:
             tok = c.Tm  # tokens through the GPU's 1 / TP of the heads
             at_f = tok * bf.KDA_FWD_US * cpf["fwd"] * 1e-6 / sp
             at_b = tok * bf.KDA_FWD_BWD_US * cpf["fwd_bwd"] * 1e-6 / sp
-        return {
+        out = {
             "fwd": fwd_d + ex_f + at_f,
             "bwd": bwd_d + ex_b + at_b,
             "dense_fwd": fwd_d,
             "dense_bwd": bwd_d,
             "ex_fwd": ex_f,
             "ex_bwd": ex_b,
+            "attn_fwd": at_f,
+            "recompute": 0.0,
+            "offload": 0.0,
         }
+        if raw:  # full remat, as calibrated
+            return out
+        # what each replay costs (see _calibrate_remat); full remat pays all of
+        # them, and the times above already include them
+        r_dense = self.k_dense * fwd_d
+        r_attn = at_f + self.attn_rest_per_tok * c.Tl
+        r_dm = self.k_dm * ex_f
+        save = (r_dense if c.remat != "full" else 0.0) + (r_attn if c.remat == "none" else 0.0) + c.dm_keep * r_dm
+        off = self.offload_per_tok * c.Tl if c.offload else 0.0
+        out["bwd"] += off / 2 - save
+        out["fwd"] += off / 2
+        if c.remat != "full":
+            out["dense_bwd"] -= r_dense
+        out["recompute"] = ((r_dense if c.remat == "full" else 0.0) + (r_attn if c.remat != "none" else 0.0)
+                            + (1 - c.dm_keep) * r_dm)
+        out["offload"] = off
+        return out
 
     def memory_bound(self, c):
         """Memory-bound seconds per GPU per step at the measured bandwidths:
@@ -396,6 +461,7 @@ class StepModel:
             ep=c.ep,
             P=c.P,
             split_weights=True,
+            zero1=c.zero1,
             rows=c.rows,
             expert_mxfp8=c.expert_precision == "mxfp8",
         )
@@ -404,7 +470,7 @@ class StepModel:
             k: ref[k] / bf.HBM_BW / meas[k] for k in ref
         }  # achieved fraction of HBM bandwidth
         t = {k: b / bf.HBM_BW / eff[k] for k, b in nm.items()}
-        once = t.pop("FSDP buffer copies") if c.P > 1 else 0.0
+        once = t.pop("FSDP buffer copies") if c.P > 1 or c.zero1 else 0.0
         weights = wq / bf.HBM_BW / eff["MXFP8 quantize"] + t.get(
             "FSDP buffer copies", 0.0
         )
@@ -427,11 +493,13 @@ class StepModel:
             rs_e = L.time("reducescatter", 4 * shard, edp, link)
             ag += ag_e
             rs += rs_e
-        ep = (
-            L.time("alltoall", c.Tl * S["k"] * S["L"] * 2, c.ep, "nvlink") * 2
-            if i > 0
-            else 0.0
-        )
+        a2a = c.Tl * S["k"] * S["L"] * 2
+        ep = L.time("alltoall", a2a, c.ep, "nvlink") * 2 if i > 0 else 0.0
+        if i > 0 and c.ep > NVLINK_DOMAIN:
+            # EP spans NVLink domains (PP 4, ZeRO-1 + EP 128): the share of the
+            # buffer bound for other domains goes through the GPU's own NIC
+            cross = a2a * (1 - NVLINK_DOMAIN / c.ep) / (IB_GBPS * 1e9 * IB_P2P_EFF)
+            ep = max(ep, 2 * cross)
         tp = 0.0
         if c.tp > 1:
             x = c.Tm * S["D"] * 2
@@ -549,13 +617,17 @@ class StepModel:
             "penalty_fsdp": 0.0,
             "penalty_fsdp_comm": 0.0,
             "penalty_tpcp": 0.0,
+            "recompute": 0.0,
+            "offload": 0.0,
         }
         lcs = [self.layer_compute(c, i) for i in layers]
         for j, i in enumerate(layers):
             lc, cm = lcs[j], self.layer_comm(c, i)
-            out["compute"] += lc["fwd"] + lc["bwd"]
+            out["compute"] += lc["fwd"] + lc["bwd"] - lc["recompute"] - lc["offload"]
+            out["recompute"] += lc["recompute"]
+            out["offload"] += lc["offload"]
             out["memory"] += mem_per
-            if c.P == 1:  # ZeRO-3: gather + reduce-scatter every microbatch
+            if c.P == 1 and not c.zero1:  # ZeRO-3: gather + reduce-scatter every microbatch
                 nxt = lcs[j + 1]["fwd"] if j + 1 < len(lcs) else lc["fwd"]
                 ib = c.stage_gpus > NVLINK_DOMAIN
 
@@ -596,18 +668,22 @@ class StepModel:
             out["exposed_ep"] += max(0.0, cm["ep"] - lc["ex_fwd"]) + 2 * max(
                 0.0, cm["ep"] - lc["ex_bwd"] / 2
             )
-            # TP and CP run in sequence with the compute: forward, remat forward
-            # and backward each pay their collectives in full
+            # TP and CP run in sequence with the compute: forward, backward and
+            # each replay pay their collectives in full; TP's sit in the dense
+            # layers (replayed under full remat), CP's around attention
+            # (replayed whenever attention is)
+            n_tp = 3 if c.remat == "full" else 2
+            n_cp = 2 if c.remat == "none" else 3
             if not self.overlap_tp_cp:
-                out["exposed_tp"] += 3 * cm["tp"]
-                out["exposed_cp"] += 3 * cm["cp"]
+                out["exposed_tp"] += n_tp * cm["tp"]
+                out["exposed_cp"] += n_cp * cm["cp"]
             else:
                 dense = lc["dense_fwd"] + lc["dense_bwd"]
                 for key, comm, window in (
-                    ("exposed_tp", cm["tp"], dense),
-                    ("exposed_cp", cm["cp"], lc["fwd"] + lc["bwd"] - dense),
+                    ("exposed_tp", n_tp * cm["tp"], dense),
+                    ("exposed_cp", n_cp * cm["cp"], lc["fwd"] + lc["bwd"] - dense),
                 ):
-                    e, p, q = self.overlap(3 * comm, window)
+                    e, p, q = self.overlap(comm, window)
                     out[key] += e
                     out["penalty_tpcp"] += p + q
         if layers[0] == 0:  # embedding (memory-bound) on the first stage
@@ -650,14 +726,20 @@ class StepModel:
             res["step"] = sum(res["parts"].values())
             _, _, wfrac = self._memory_bound_parts(c)
             pa = res["parts"]
+            z1 = once_mem = 0.0
+            if c.zero1:  # gather once before the first forward, reduce-scatter after the last backward
+                _, once_mem = self.memory_bound(c)
+                z1 = sum(self.layer_comm(c, i)["fsdp_ag"] + self.layer_comm(c, i)["fsdp_rs"]
+                         for i in range(NUM_LAYERS))
+                res["step"] += z1 + once_mem
             res["detail"] = dict(
                 pa,
                 memory=pa["memory"] * (1 - wfrac),
-                weight_prep=pa["memory"] * wfrac,
+                weight_prep=pa["memory"] * wfrac + once_mem,
                 penalty_hop=0.0,
                 bubble=0.0,
                 hops=0.0,
-                zero1=0.0,
+                zero1=z1,
             )
             res["split"] = self._split(res["detail"])
             return res
@@ -742,7 +824,7 @@ class StepModel:
     def _split(d):
         """The detail summed into the ranking table's columns."""
         return {
-            "compute": d["compute"] + d["memory"] + d["weight_prep"],
+            "compute": d["compute"] + d["memory"] + d["weight_prep"] + d["recompute"] + d["offload"],
             "exposed": d["exposed_fsdp"]
             + d["exposed_ep"]
             + d["exposed_tp"]

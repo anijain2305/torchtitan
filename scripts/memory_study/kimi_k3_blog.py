@@ -117,7 +117,8 @@ EXTRA_CSS = """
 .rk-row:not(.rk-head):hover, .rk-row:focus-visible { background: var(--wash); outline: none; }
 .rk-row .r { text-align: right; white-space: nowrap; }
 .rk-n { color: var(--muted); text-align: right; }
-.rk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
+.rk-pick { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 .rk-head { color: var(--muted); font-size: 11px; position: sticky; top: 0; background: var(--page); z-index: 2;
            padding-top: 4px; padding-bottom: 4px; }
 .rk-axis { position: relative; height: 14px; }
@@ -572,7 +573,7 @@ for (const chip of document.querySelectorAll(".rk-chip"))
     }}
     for (const row of document.querySelectorAll(".rk-row[data-fam]"))
       row.hidden = !rkOn("fam", row.dataset.fam) ||
-        (row.dataset.fam !== "1" && !rkOn("v", row.dataset.v));
+        (row.dataset.v !== "0" && !rkOn("v", row.dataset.v));
   }});
 </script>
 </body>

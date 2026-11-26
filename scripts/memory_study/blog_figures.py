@@ -1396,7 +1396,18 @@ def greedy_fit(ctx: str, cp: int, tp: int, pp: int, v: int = 1, zero1: bool = Fa
     if pick in ("dm", "attn", "full"):
         back = min(1.0, int((budget - final) / D * 20) / 20)
         final += back * D
-    return {"states": states, "pick": pick, "back": back, "final": final}
+    block = (ctx, cp, tp, pp) == ("32K", 1, 1, 1) and pick == "full"
+    offload = pick == "off" or (pick in ("dm", "attn") and host_ok) or block
+    return {"states": states, "pick": pick, "back": back, "final": final, "offload": offload}
+
+
+def greedy_policy(g: dict) -> dict:
+    """The step model's remat settings (kimi_k3_step_time.Config) of a greedy
+    pick: what it recomputes, the share of MoE layers whose DistMoE keeps its
+    intermediates, and whether it offloads."""
+    remat = {"nothing": "none", "off": "none", "dm": "none", "attn": "attn", "full": "full"}[g["pick"]]
+    keep = 1.0 if g["pick"] in ("nothing", "off") else g["back"]
+    return {"remat": remat, "dm_keep": keep, "offload": g["offload"]}
 
 
 def fit_configs_table(kind: str = "fsdp") -> str:
@@ -1802,7 +1813,7 @@ def distmoe_eff(tl: int, ep: int, precision: str = "mxfp8") -> float:
     fused in) as a fraction of MXFP8 peak, at tl local tokens per microbatch,
     counting 8 FLOPs per parameter per token (forward, remat, backward).
 
-    EP 64: measured in the FSDP 512 + EP 64 fake-process-group steps, whose
+    EP 64 (and EP 128, assumed the same): measured in the FSDP 512 + EP 64 fake-process-group steps, whose
     collectives move no data, so this is the kernels alone (averaged over the
     configs with the same local tokens). EP 32: scaled by the single-GPU
     DistMoE benchmark's EP 32 / EP 64 ratio at the same local tokens.
@@ -1821,7 +1832,9 @@ def distmoe_eff(tl: int, ep: int, precision: str = "mxfp8") -> float:
         t = _json.loads(f.read_text())["fwd_bwd_by_class_s"]["DistMoE grouped GEMM (+fused dispatch/combine)"]
         by_tl.setdefault(int(ctx) * 1024 // (int(cp) * int(tp)), []).append(flops / t / peak)
     eff = _log_interp(sorted((k, sum(v) / len(v)) for k, v in by_tl.items()), tl)
-    if ep == 64:
+    if ep in (64, 128):
+        # EP 128 (PP 4, ZeRO-1 + EP 128) is not benchmarked: each expert gets twice
+        # EP 64's rows, so take EP 64's efficiency (likely a little pessimistic)
         return eff
     assert ep == 32 and precision == "mxfp8", (ep, precision)
     rows = [r for r in _bench("dist_moe_GB300_ep1.json")["results"] if r["dtype"] == "mxfp8"]
@@ -1929,7 +1942,8 @@ _MLA_LIN = [(7168, 1536, "rep"), (1536, 18432, "col"), (7168, 576, "rep"), (512,
 
 
 def nonmatmul_bytes(ctx: str = "8K", cp: int = 1, tp: int = 1, ep: int = 64, P: int = 1,
-                    split_weights: bool = False, *, rows: int = 1, expert_mxfp8: bool = True) -> dict:
+                    split_weights: bool = False, *, rows: int = 1, expert_mxfp8: bool = True,
+                    zero1: bool = False) -> dict:
     """HBM bytes per GPU per step of the memory-bound work, by class (summed
     over all 93 layers: with PP each GPU runs 1/P of the layers on P times the
     tokens). Full remat: forward ops run twice (forward + remat), backward
@@ -1983,7 +1997,7 @@ def nonmatmul_bytes(ctx: str = "8K", cp: int = 1, tp: int = 1, ep: int = 64, P: 
     # (forward, remat, input gradient); PP's ZeRO-1 keeps the gathered stage and
     # both MXFP8 orientations alive, quantizing the stage's 93 / P layers once
     # per step (summed over all layers that is 2 / P per layer).
-    w_quant = 3 * mb if P == 1 else 2 / P
+    w_quant = 3 * mb if P == 1 and not zero1 else 2 / P  # zero1: ZeRO-1 without PP
     experts_local = 896 // ep * k_routed
     dense_q = (69 * lin_q(_KDA_LIN) + 24 * lin_q(_MLA_LIN)) * DENSE_MXFP8
     out["MXFP8 quantize"] = dense_q + MX_BYTES * experts_local * 92 * w_quant * expert_mxfp8
@@ -1995,7 +2009,7 @@ def nonmatmul_bytes(ctx: str = "8K", cp: int = 1, tp: int = 1, ep: int = 64, P: 
     dense = (69 * (d["attention"] + d["shared"] + d["others"]) + 24 * (dm["attention"] + dm["shared"] + dm["others"])) / 93
     gathered = dense / tp + experts_local
     # ZeRO-3: every layer, every microbatch; PP ZeRO-1: the stage's 93 / P layers once per step
-    copies = mb * layers if P == 1 else layers / P
+    copies = mb * layers if P == 1 and not zero1 else layers / P
     out["FSDP buffer copies"] = (2 * 4 + 6) * gathered * copies
     norm_el = 69 * (2 * D + 12288 / tp) + 24 * (2 * D + 1536 + 512)
     out["Norms (RMSNorm, L2)"] = 14 * norm_el * tok
@@ -2023,8 +2037,14 @@ def nonmatmul_table() -> str:
 
 
 # KDA under TP: measured speedup over TP 1 (heads split, but the chunk kernel
-# does not scale linearly), per context
+# does not scale linearly), per context. TP 8 (ZeRO-1 + EP 128 + TP 8 only):
+# TP 4's value times the TP 8 / TP 4 ratio of chunk_kda at 12 vs 24 heads
+# (bench/kda_tp_GB300.json: 8K 4.65 / 2.87, 32K 5.75 / 3.10).
 KDA_TP_SPEEDUP = {"8K": {1: 1.0, 2: 1.7, 4: 1.7}, "32K": {1: 1.0, 2: 1.8, 4: 3.0}}
+for _ctx, _seq in (("8K", 8192), ("32K", 32768)):
+    _ms = {r["heads"]: r["fwd_bwd_ms"] for r in _json.loads((_Path(__file__).resolve().parent / "bench"
+                                                              / "kda_tp_GB300.json").read_text()) if r["seq_len"] == _seq}
+    KDA_TP_SPEEDUP[_ctx][8] = KDA_TP_SPEEDUP[_ctx][4] * _ms[24] / _ms[12]
 KDA_FWD_BWD_US, KDA_FWD_US = 0.40, 0.05  # per token per layer at TP 1, CP 1
 
 
@@ -2847,32 +2867,63 @@ def one_way_table() -> str:
     return "\n".join(out)
 
 
-def _ranked(ctx: str, transports: str = "all", overlap_tp_cp: bool = False) -> list:
-    """Every config that fits in memory, ranked by step time. PP hop transports:
-    chain (TorchTitan's 1F1B), cache (TorchTitan's interleaved) and direct (each
-    block straight to its consumers, either schedule); chain under interleaving
-    only loses to cache, so it appears in the transport comparison only;
-    transports="titan" leaves out direct."""
+def _rank_configs(ctx: str) -> list:
+    """The configs of 3.5's tables that fit, each with its greedy pick:
+    (label, family, P, v, cp, tp, rows, zero1, greedy result)."""
+    out = []
+    for c_, cp, tp, pp in FIT_ROWS:
+        if c_ != ctx:
+            continue
+        if pp == 1:
+            out.append((f"FSDP {512 // tp}, EP 64", "fsdp", 1, 1, cp, tp, 1, False, greedy_fit(ctx, cp, tp, 1)))
+            for (mc, mcp, mb), src in FIT_MICROBATCH.items():
+                if (mc, mcp, 1, 1) == (ctx, cp, tp, pp):
+                    out.append((f"FSDP {512 // tp}, EP 64, {mb} sequences per microbatch", "fsdp", 1, 1, cp, tp, mb,
+                                False, greedy_fit(*src)))
+            continue
+        for v in (1, 2, 4):
+            g = greedy_fit(ctx, cp, tp, pp, v)
+            sched = "1F1B" if v == 1 else f"interleaved v = {v}"
+            out.append((f"PP {pp}, {sched}, EP {512 // pp}", "pp", pp, v, cp, tp, 1, False, g))
+    for tp in (4, 8):
+        out.append((f"ZeRO-1, EP 128", "zero1", 1, 1, 1, tp, 1, True, greedy_fit(ctx, 1, tp, 1, zero1=True)))
+    return [x for x in out if x[-1]["pick"] is not None]
+
+
+_PICK_LABEL = {"nothing": "no remat", "off": "offload", "dm": "offload + DistMoE recomputes",
+               "attn": "recompute attention", "full": "full remat"}
+
+
+def _pick_label(g: dict) -> str:
+    lab = _PICK_LABEL[g["pick"]]
+    if g["pick"] in ("dm", "attn") and not g["offload"]:
+        lab = lab.replace("offload + ", "")
+    elif g["pick"] == "attn":
+        lab = "offload + " + lab
+    elif g["pick"] == "full" and g["offload"]:
+        lab += " + block offload"
+    if g["back"]:
+        lab += f", +{g['back']:.0%} DistMoE buffer"
+    return lab
+
+
+def _ranked(ctx: str, transports: str = "titan", overlap_tp_cp: bool = False) -> list:
+    """Every config of 3.5 that fits in memory, with its greedy remat / offload
+    pick, ranked by step time. PP hop transports: TorchTitan's (chain for
+    1F1B, cache for interleaving); transports="all" adds direct for both."""
     import kimi_k3_step_time as st
 
     m = st.StepModel(overlap_tp_cp=overlap_tp_cp)
     rows = []
-    for P in (1, 8, 16):
-        scheds = [(1, None)] if P == 1 else [(v, tr) for v in (1, 2, 4)
-                                                  for tr in (("chain", "direct") if v == 1 else ("cache", "direct"))]
-        if transports == "titan":
-            scheds = [x for x in scheds if x[1] != "direct"]
-        for v, tr in scheds:
-            for cp, tp in SPLITS:
-                mem = fsdp_ep_parts(ctx, cp, tp) if P == 1 else pp_parts(ctx, P, 1, cp, tp, v)
-                if mem["total"] > GPU_BYTES:
-                    continue
-                r = m.step(st.Config(ctx, P, cp, tp, v, tr))
-                sched = "1F1B" if v == 1 else f"interleaved v = {v}"
-                fam = "FSDP 512, EP 64" if P == 1 else f"PP {P}, {sched} ({tr}), EP {512 // P}"
-                rows.append({"name": f"{fam}, CP {cp}, TP {tp}", "P": P, "v": v, "transport": tr, "cp": cp, "tp": tp,
-                             "mem": mem["total"], "step": r["step"], "split": r["split"], "detail": r["detail"],
-                             "M": r["M"]})
+    for fam, kind, P, v, cp, tp, mb, zero1, g in _rank_configs(ctx):
+        trs = [None] if P == 1 else ["chain" if v == 1 else "cache"] + (["direct"] if transports == "all" else [])
+        for tr in trs:
+            r = m.step(st.Config(ctx, P, cp, tp, v, tr, rows=mb, zero1=zero1, **greedy_policy(g)))
+            split = ", ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x)
+            name = fam + (f" ({tr})" if tr == "direct" else "") + (f", {split}" if split else "")
+            rows.append({"name": name, "P": P, "v": v, "transport": tr, "cp": cp, "tp": tp, "kind": kind,
+                         "rows": mb, "pick": _pick_label(g), "mem": g["final"] * 2**30, "step": r["step"],
+                         "split": r["split"], "detail": r["detail"], "M": r["M"]})
     return sorted(rows, key=lambda r: r["step"])
 
 
@@ -2882,6 +2933,8 @@ def _ranked(ctx: str, transports: str = "all", overlap_tp_cp: bool = False) -> l
 _RANK_GROUPS = [
     ("Compute", "#184f95", [
         ("compute", "GEMMs + attention", "#2a78d6", "solid"),
+        ("recompute", "Recompute (remat, DistMoE)", "#2a78d6", "hatch"),
+        ("offload", "Offload slowdown", "#86b6ef", "hatch"),
         ("memory", "Memory-bound kernels", "#86b6ef", "solid"),
         ("weight_prep", "Weight prep: FSDP copies + weight quantization", "#184f95", "solid"),
     ]),
@@ -2921,14 +2974,15 @@ def ranking_chart(ctx: str = "8K") -> str:
     """Every config that fits, ranked by step time, with TorchTitan's hop
     transports (chain for 1F1B, cache for interleaving): one stacked bar per
     config (the step by part, ringed by category) and its memory against one
-    GB200."""
+    GB300; each row names its greedy remat / offload pick (3.5)."""
     rows = _ranked(ctx, "titan")
 
     def chip(key, val, label):
         return f'<button class="rk-chip on" data-key="{key}" data-val="{val}" aria-pressed="true">{label}</button>'
 
     out = ['<div class="rk-filters">'
-           '<span>Family</span>' + chip("fam", "1", "FSDP 512") + chip("fam", "8", "PP 8") + chip("fam", "16", "PP 16")
+           '<span>Family</span>' + chip("fam", "1", "FSDP + EP 64") + chip("fam", "z", "ZeRO-1 + EP 128")
+           + chip("fam", "4", "PP 4") + chip("fam", "8", "PP 8") + chip("fam", "16", "PP 16")
            + '<span>Schedule</span>' + chip("v", "1", "1F1B") + chip("v", "2", "interleaved v = 2")
            + chip("v", "4", "interleaved v = 4") + "</div>"]
     sorts = [("step", "Step"), ("fsdp", "Exposed FSDP"), ("tpcp", "Exposed TP + CP"), ("bubble", "Bubble"),
@@ -2953,6 +3007,7 @@ def ranking_chart(ctx: str = "8K") -> str:
         d, x, groups, tip = r["detail"], 0.0, [], []
         tip.append(f"<b>{i}. {html.escape(r['name'])}</b>")
         tip.append(f"Step {r['step']:.2f} s, memory {_dec(r['mem'])}, {r['M']} microbatches per step")
+        tip.append(f"Remat / offload: {html.escape(r['pick'])}")
         for gname, ring, segs in _RANK_GROUPS:
             parts = [(lab, d[k], c, st_) for k, lab, c, st_ in segs if d[k] > 0]
             total = sum(v for _, v, _, _ in parts)
@@ -2976,12 +3031,14 @@ def ranking_chart(ctx: str = "8K") -> str:
         clipped = x > _RANK_AXIS_S
         fr = r["mem"] / GPU_BYTES
         out.append(
-            f'<div class="rk-row" data-fam="{r["P"]}" data-v="{r["v"]}" data-tr="{r["transport"] or "none"}" '
+            f'<div class="rk-row" data-fam="{"z" if r["kind"] == "zero1" else r["P"]}" '
+            f'data-v="{r["v"] if r["P"] > 1 else 0}" data-tr="{r["transport"] or "none"}" '
             f'data-step="{r["step"]:.3f}" data-mem="{r["mem"]:.0f}" '
             f'data-fsdp="{d["exposed_fsdp"]:.3f}" data-tpcp="{d["exposed_tp"] + d["exposed_cp"]:.3f}" '
             f'data-bubble="{d["bubble"]:.3f}" data-hops="{d["hops"] + d["penalty_hop"]:.3f}" '
             f'data-tip="{html.escape("<br>".join(tip))}" tabindex="0">'
-            f'<span class="rk-n">{i}</span><span class="rk-name">{html.escape(r["name"])}</span>'
+            f'<span class="rk-n">{i}</span><span class="rk-name">{html.escape(r["name"])}'
+            f'<span class="rk-pick">{html.escape(r["pick"])}</span></span>'
             f'<span class="rk-bar{" rk-clipped" if clipped else ""}" role="img" '
             f'aria-label="{html.escape(r["name"])}: {r["step"]:.1f} s">{"".join(groups)}</span>'
             f'<span class="r"><b>{r["step"]:.1f} s</b>{" &raquo;" if clipped else ""}</span>'
@@ -2989,11 +3046,12 @@ def ranking_chart(ctx: str = "8K") -> str:
             f'{_dec(r["mem"])}</span></div>')
     out.append("</div>")
     # table view of the same data
-    head = ["#", "Config", "Memory", "Step"] + [lab for _, lab, _, _ in _RANK_SEGS]
+    head = ["#", "Config", "Remat / offload", "Memory", "Step"] + [lab for _, lab, _, _ in _RANK_SEGS]
     tbl = ['<details class="rk-table"><summary>All configs as a table</summary><table class="dtable"><tr>'
            + "".join(f"<th>{html.escape(h)}</th>" for h in head) + "</tr>"]
     for i, r in enumerate(rows, 1):
-        tbl.append(f"<tr><td>{i}</td><td>{html.escape(r['name'])}</td><td>{_dec(r['mem'])}</td>"
+        tbl.append(f"<tr><td>{i}</td><td>{html.escape(r['name'])}</td><td>{html.escape(r['pick'])}</td>"
+                   f"<td>{_dec(r['mem'])}</td>"
                    f"<td><b>{r['step']:.1f}</b></td>"
                    + "".join(f"<td>{r['detail'][k]:.2f}</td>" if r["detail"][k] >= 0.005 else "<td>-</td>"
                              for k, _, _, _ in _RANK_SEGS) + "</tr>")
@@ -3008,14 +3066,15 @@ def overlap_tp_cp_table() -> str:
     for ctx in ("8K", "32K"):
         base = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan"), 1)}
         over = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan", overlap_tp_cp=True), 1)}
-        names = {n for n, (i, _) in base.items() if i <= 3} | {n for n, (i, _) in over.items() if i <= 3}
-        best_fsdp = min((r for _, r in base.values() if r["P"] == 1), key=lambda r: r["step"])["name"]
-        for n in sorted(names | {best_fsdp}, key=lambda n: over[n][0]):
+        # the top 3 either way, and every config overlapping gains a second or more
+        names = ({n for n, (i, _) in base.items() if i <= 3} | {n for n, (i, _) in over.items() if i <= 3}
+                 | {n for n in base if base[n][1]["step"] - over[n][1]["step"] >= 1.0})
+        for n in sorted(names, key=lambda n: over[n][0]):
             rows.append((ctx, n, base[n], over[n]))
     head = ["Context", "Config", "TP / CP exposed (today)", "TP / CP overlapped"]
     out = ['<table class="dtable"><caption>Step time, and in brackets the rank among TorchTitan configs'
            '</caption><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
-    short = lambda n: n.replace(", EP 64", "").replace(", EP 32", "").replace(" (cache)", "").replace(" (chain)", "")
+    short = lambda n: n.replace(", EP 64", "").replace(", EP 32", "")
     for ctx, n, (ib, rb), (io, ro) in rows:
         out.append(f"<tr><td>{ctx}</td><td>{short(n)}</td><td>{rb['step']:.1f} s ({ib})</td>"
                    f"<td><b>{ro['step']:.1f} s</b> ({io})</td></tr>")
@@ -3060,7 +3119,7 @@ def pp16_vs_pp8_table() -> str:
         r8, r16 = (m.step(st.Config(ctx, P, cp, tp, v, tr)) for P in (8, 16))
         m8, m16 = (pp_parts(ctx, P, 1, cp, tp, v)["total"] for P in (8, 16))
         d8, d16 = r8["detail"], r16["detail"]
-        comp = lambda d: d["compute"] + d["memory"] + d["weight_prep"]
+        comp = lambda d: d["compute"] + d["memory"] + d["weight_prep"] + d["recompute"] + d["offload"]
         hop = lambda d: d["hops"] + d["penalty_hop"]
         dc, db, dh = comp(d16) - comp(d8), d16["bubble"] - d8["bubble"], hop(d16) - hop(d8)
         other = r16["step"] - r8["step"] - dc - db - dh
@@ -3072,29 +3131,45 @@ def pp16_vs_pp8_table() -> str:
     return "\n".join(out)
 
 
+def _greedy_config(ctx: str, P: int, cp: int, tp: int, v: int = 1, transport: str | None = None):
+    """The step model's Config of a 3.5 config, with its greedy pick (None if
+    it does not fit)."""
+    import kimi_k3_step_time as st
+
+    g = greedy_fit(ctx, cp, tp, P, v)
+    if g["pick"] is None:
+        return None, g
+    return st.Config(ctx, P, cp, tp, v, transport, **greedy_policy(g)), g
+
+
 def transport_compare_table() -> str:
-    """Chain, cache and direct at the same PP config: step, and in brackets what
-    the hops add (their exposed time plus the compute penalty they cost)."""
+    """Chain, cache and direct at the same PP config (each with its greedy
+    pick): step, and in brackets what the hops add (their exposed time plus
+    the compute penalty they cost)."""
     import kimi_k3_step_time as st
 
     m = st.StepModel()
-    cases = [("8K", 8, 1, 2, 1), ("8K", 16, 1, 2, 1), ("8K", 8, 1, 2, 2), ("8K", 8, 1, 2, 4), ("8K", 16, 1, 1, 2),
-             ("8K", 16, 1, 1, 4), ("32K", 8, 4, 1, 1), ("32K", 16, 4, 1, 2), ("32K", 8, 1, 4, 4)]
+    cases = [("8K", 8, 1, 1, 1), ("8K", 8, 1, 1, 2), ("8K", 8, 1, 1, 4), ("8K", 16, 1, 1, 1), ("8K", 16, 1, 1, 2),
+             ("8K", 16, 1, 1, 4), ("32K", 8, 4, 1, 1), ("32K", 8, 4, 1, 4), ("32K", 16, 4, 1, 2)]
     head = ["Config", "chain", "cache", "direct"]
     out = ['<table class="dtable"><caption>Step time, and in brackets what the hops cost (exposed time plus '
            'their compute penalty); bold: the fastest transport</caption><tr>'
            + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     for ctx, P, cp, tp, v in cases:
-        if pp_parts(ctx, P, 1, cp, tp, v)["total"] > GPU_BYTES:
-            continue
         res = {}
         for tr in ("chain", "cache", "direct"):
             if v == 1 and tr == "cache":
                 continue
-            r = m.step(st.Config(ctx, P, cp, tp, v, tr))
+            c, _ = _greedy_config(ctx, P, cp, tp, v, tr)
+            if c is None:
+                break
+            r = m.step(c)
             res[tr] = (r["step"], r["detail"]["hops"] + r["detail"]["penalty_hop"])
+        if not res:
+            continue
         best = min(res, key=lambda k: res[k][0])
         sched = "1F1B" if v == 1 else f"interleaved v = {v}"
+        split = f", CP {cp}" if cp > 1 else ""
         cells = ""
         for tr in ("chain", "cache", "direct"):
             if tr not in res:
@@ -3103,7 +3178,7 @@ def transport_compare_table() -> str:
             t, hp = res[tr]
             txt = f"{t:.1f} s ({hp:.1f} s)"
             cells += f"<td><b>{txt}</b></td>" if tr == best else f"<td>{txt}</td>"
-        out.append(f"<tr><td>{ctx}, PP {P}, {sched}, CP {cp}, TP {tp}</td>{cells}</tr>")
+        out.append(f"<tr><td>{ctx}, PP {P}, {sched}{split}</td>{cells}</tr>")
     out.append("</table>")
     return "\n".join(out)
 

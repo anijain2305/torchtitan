@@ -7,11 +7,19 @@ EP's dispatch and combine run inside DistMoE's expert GEMMs; TP's and CP's
 collectives are exposed in full. The step is one microbatch's time, times the
 number of microbatches. With PP, the schedule simulation of [[step]] gives the
 step from each chunk's time and each hop, and ZeRO-1 adds the stage's
-all-gather and reduce-scatter once per step. Every config then runs the
-optimizer step ([[compute_roofline.2.3]]).
+all-gather and reduce-scatter once per step; so does ZeRO-1 + EP 128 + TP,
+without a pipeline. Every config then runs the optimizer step
+([[compute_roofline.2.3]]).
 
-The configs that fit in memory ([[memory.5]]), ranked by step time (the toggle
-switches context). For PP, each config also names its schedule and its hop
+Each config runs the remat and offload its greedy path picked ([[memory.5]]),
+so the model charges only what that pick recomputes: the dense layers' replay
+under full remat, the attention kernels' replay when attention is recomputed,
+and DistMoE's recompute in the MoE layers whose buffer was not bought back.
+Each of these, and offload's slowdown, is calibrated on the measured 8K steps
+of [[memory.4.1]] and scaled with each config's shapes.
+
+The configs of [[memory.5]]'s tables that fit in memory, ranked by step time
+(the toggle switches context). For PP, each config also names its schedule and its hop
 transport. The chart runs TorchTitan's transports, chain for plain 1F1B and
 cache for interleaving ([[step]]); whether direct would change anything is
 [[ranking.4]]'s question. For PP, each bar shows the rank that sets the pace,
@@ -21,7 +29,8 @@ each step into parts (hover a row for the numbers; the buttons filter by
 family and schedule, and sort by the parts the sections below look at):
 
 - **Compute**, at the practical roofline ([[compute_roofline.2]]): GEMMs and
-  attention; the memory-bound kernels that scale with tokens (norms, casts, the
+  attention; **recompute**, what the config's remat and DistMoE replay in
+  backward; offload's slowdown; the memory-bound kernels that scale with tokens (norms, casts, the
   attention-residual mix); and **weight prep**,
   the work that scales with each gather of the weights: FSDP's copies of the
   gathered weights and of the gradients into their buffers, and the expert
@@ -46,30 +55,38 @@ family and schedule, and sort by the parts the sections below look at):
   hide behind ([[memory.2.4]]).
 - **Optimizer**: DistMuon's step, at the GPU time it needs ([[compute_roofline.2.3]]).
 
-The bars share one axis at both contexts; the four slowest 8K configs run past
-it (marked &raquo;).
+The bars share one axis at both contexts; the four slowest 8K configs and the
+slowest 32K one run past it (marked &raquo;).
 
 ::: figure ranking-chart
 
 First, the winners:
 
-- **At 8K, interleaved PP 8 leads,** with CP 2 or TP 2 (22.1-22.3 s).
-- **At 32K, the top configs tie** within about a second: PP 8 interleaved with
-  TP 4, PP 16 interleaved with CP 4, and FSDP 512 with TP 4.
+- **At 8K, interleaved PP 8 leads, without a split:** 19.1 s at `v = 4`, 19.8 s
+  at `v = 2`. It recomputes attention, offloads, and buys back a fifth to a
+  quarter of DistMoE's buffer.
+- **At 32K, two very different configs tie** within 0.3 s: FSDP 512 without a
+  split (23.1 s), and PP 8 interleaved with CP 4 (23.4 s).
 
 But the chart holds much more than the winners, so let's go through what it
 says, one question at a time.
 
 ## Why FSDP 512 Without PP Falls Behind
 
-At 8K, even the best FSDP 512 config is well behind the leader, and the others
-fare much worse. Why?
+At 8K, even the best FSDP 512 config, with 2 sequences per microbatch, is 3 s
+behind the leader, and the others fare much worse. Why?
 
 - **Overlap is not free.** FSDP's collectives almost hide behind each layer's
   compute, but hiding them means running alongside nearly all of it, and
   slowing it down the whole time. On top comes the weight prep (copying the
   gathered weights, quantizing the experts), which FSDP repeats every
   microbatch and PP's ZeRO-1 does once per step.
+- **Less remat buys FSDP little.** The compute that remat no longer replays was
+  what hid FSDP's collectives. At 8K, the greedy pick saves 2.6 s of compute
+  over full remat, but only 0.8 s of the step: the rest comes back as exposed
+  communication and overlap penalties. Halving the microbatches helps more:
+  with 2 sequences per microbatch, FSDP gathers half as often, and wins 3.6 s
+  even though it needs full remat.
 - **CP and TP make it much worse.** They multiply the microbatches, and that
   exposes the communication from both sides: each microbatch has fewer tokens,
   so less compute to hide behind, and there are more of them, so more
@@ -78,15 +95,15 @@ fare much worse. Why?
 - **TP is less bad than CP.** Both sit at the bottom of the ranking, but TP also
   splits the dense weights, so FSDP has less to gather.
 
-At 32K, FSDP 512 fares much better, which may be surprising at first. Memory
-forces every config into CP 4 or TP 4, and that treats the two families very
-differently. FSDP 512 gets the same 4 microbatches of 8,192 tokens per GPU as
-8K without a split, so its FSDP cost does not grow, while longer attention
-gives it more compute to hide behind. PP, on the other hand, now pays for the
-split: exposed TP or CP, and a bigger bubble. So the gap closes to about a
-second.
+At 32K, FSDP 512 wins, which may be surprising at first. Without a split, a
+32K step is a single microbatch per GPU, so FSDP gathers and reduce-scatters
+each layer once per step, as ZeRO-1 does, and full remat with the block inputs
+offloaded fits ([[memory.5]]). What is left is the overlap penalty of that one
+round, under a second. PP, on the other hand, now pays for its split: CP 4 to
+fit, exposed CP and a bigger bubble. FSDP 512 with a split follows close
+behind, since each microbatch still has long attention to hide behind.
 
-## Why PP 8 Wins Over PP 16
+## Why PP 8 Wins Over PP 16 and PP 4
 
 With FSDP 512 out of the running at 8K, the next questions build up, one at a
 time, why the leader is the fastest. First: PP 8 or PP 16? At the same split
@@ -113,34 +130,36 @@ GPUs per stage instead of 64, so the stage's SPMD mesh, and with it EP, halves
 
 > INSIGHT: Raising the PP degree shrinks everything inside a stage too. With a fixed number of GPUs, more stages mean fewer GPUs per stage, so smaller EP and smaller expert GEMMs.
 
-At 32K, though, PP 16 ties the leaders. The reason is memory, the one thing
-PP 16 has going for it: each stage holds half the layers. At 32K every config
-needs a 4-way split, and the two splits are not equally cheap. CP 4 exposes
-little communication, since only attention communicates, while TP 4 exposes
-its collectives around every dense layer. PP 8 does not fit with CP 4, so it has to take TP 4
-and pay for it; PP 16, with half the layers per stage, fits CP 4. The cheaper
-split makes up for PP 16's smaller expert GEMMs and bigger bubble. With TP 4,
-PP 16 loses to PP 8 as usual.
+At 32K the same holds: both need CP 4 to fit, and PP 16 is 1.3 s slower at
+`v = 2`. PP 16's one advantage, half the layers per stage, buys memory that PP 8
+does not need.
+
+**And PP 4?** It holds twice the layers per stage, so it fits only at 8K, and
+it is the slowest PP of all: 25.4 s at best. The reason is the mirror image of
+PP 16's: with 128 GPUs per stage, EP grows to 128, and that spans two NVLink
+domains. Half of DistMoE's dispatch and combine then crosses InfiniBand, much
+slower than NVLink and too slow to hide behind the expert GEMMs: 6.3 s of
+exposed EP per step.
 
 ## Why Interleaved 1F1B Wins Over 1F1B
 
-Interleaving with `v = 2` beats plain 1F1B in every PP family that fits it,
-and almost all of the gain is the bubble:
+Interleaving beats plain 1F1B in every PP family, and almost all of the gain
+is the bubble:
 
-| PP 8, CP 1, TP 2 at 8K | Step | Bubble | Hops | Memory |
+| PP 8 at 8K | Step | Bubble | Hops | DistMoE buffer bought back |
 |---|---|---|---|---|
-| 1F1B (chain) | 23.6 s | 2.1 s | 0.1 s | 133 GB |
-| Interleaved, `v = 2` (cache) | 22.4 s | 0.7 s | 0.1 s | 142 GB |
-| Interleaved, `v = 4` (cache) | 22.3 s | 0.25 s | 0.2 s | 137 GB |
+| 1F1B (chain) | 21.9 s | 3.5 s | 0.3 s | 30% |
+| Interleaved, `v = 2` (cache) | 19.8 s | 1.4 s | 0.1 s | 20% |
+| Interleaved, `v = 4` (cache) | 19.1 s | 0.5 s | 0.1 s | 25% |
 
-- **The bubble shrinks by about `v`,** as [[step.1]] predicts. It matters most
-  at 32K, where the pipeline runs fewer, longer microbatches.
+- **The bubble shrinks by about `v`,** as [[step.1]] predicts.
 - **The hops barely matter.** With 100 GB/s NICs a hop is short, so even plain
   1F1B, which exposes its hops, loses little to them.
-- **The cost is memory:** the first rank holds more chunks in flight.
+- **The cost is memory:** the first rank holds more chunks in flight, so less
+  of DistMoE's buffer can be bought back, and a little more is recomputed.
 - **More is not always better.** With PP 16, `v = 4` leaves chunks of one or
-  two layers, and the bubble grows back: at 8K it is slower than plain 1F1B
-  in most splits.
+  two layers, and the bubble grows back: at both contexts it is more than a
+  second slower than `v = 2`.
 
 > INSIGHT: Interleaving shrinks the bubble by about `v` and its extra work in flight hides the hops, at the price of memory; but once chunks shrink to a layer or two, the imbalance between them brings the bubble back.
 
@@ -164,8 +183,9 @@ little for direct to save:
 ::: figure transport-compare-table
 
 - **PP 8:** the transport barely matters with any schedule.
-- **PP 16:** chain's stack grows long enough to cost up to about a second, and
-  direct wins that back; cache, under interleaving, gets most of it too.
+- **PP 16:** chain's stack grows long enough to cost up to about a second and a
+  half, and direct wins most of that back; cache, under interleaving, gets
+  most of it too.
 
 **Verdict:** for the configs we rank, direct does not help. Where the leaders
 run, TorchTitan's cache is as good, so the attention residuals cost PP little.
@@ -180,19 +200,15 @@ the same NVLink penalties:
 
 ::: figure overlap-tp-cp-table
 
-- **TP gains the most,** since it exposed the most: under a second at 8K,
-  about two at 32K, where TP 4's collectives are larger. CP, which exposed
-  little to begin with, moves much less.
-- **The near-ties reorder.** At 8K the lead passes from CP 2 to TP 2; at 32K,
-  PP 8 with TP 4 pulls clear, and FSDP 512 with TP 4 overtakes PP 16 with CP 4.
-- **The big picture holds.** PP 8 interleaved still leads at both contexts, and
-  FSDP 512 stays well behind at 8K.
+- **At 8K nothing changes at the top:** the leaders run without a split.
+  ZeRO-1 + EP 128 + TP 8 gains the most, 3.6 s, but stays far behind.
+- **TP gains more than CP,** since it exposed more: FSDP 128 with TP 4 gains
+  1.2 s at 32K, CP 4 configs about half a second.
+- **The 32K tie flips:** PP 8 interleaved with CP 4 edges ahead of FSDP 512, and
+  FSDP 128 with TP 4 moves up to third.
 
-Overall, overlapping helps TP far more than CP, but the CP configs sit so
-close that the picture barely changes. A rule of thumb for PP: reach for TP
-when memory is tight, since it also splits the dense weights; when everything
-fits, CP is slightly faster with TorchTitan's TP today. An overlapped TP would
-tip that balance toward TP.
+Overall, overlapping helps TP far more than CP, but it reorders only near-ties.
+An overlapped TP would make FSDP with TP 4 a real contender at 32K.
 
 ## How Far to Trust the Ranking
 
@@ -202,7 +218,9 @@ percent of each other. Small changes to the model can flip their order:
 
 - **What it assumes:** NVLink bandwidth and overlap inside a 64-GPU NVL domain
   (measured up to 32 GPUs), TP and CP fully exposed, a hop moving as soon as
-  both sides are ready, and the optimizer at its GPU time.
+  both sides are ready, the optimizer at its GPU time, and every remat and
+  offload cost scaled from the measured 8K FSDP 512 + EP 64 steps. EP 128's
+  expert kernels are assumed as efficient as EP 64's (not benchmarked).
 - **What it leaves out:** profiles of a real 512-GPU run show DistMoE
   slower than in our fake-process-group steps (about 1.65x the bare grouped
   GEMM instead of about 1.25x, plus waits at its barriers), and FSDP's dense
@@ -213,8 +231,9 @@ So the practical way to use the ranking is to take a few of the top configs
 and run them on the cluster. What the model gives the practitioner is a clear
 picture of what to expect and why: absolute times will be off, and the order
 of near-ties may change, but the big picture should hold. PP beats FSDP 512 at
-8K, interleaving (at least `v = 2`) beats plain 1F1B, PP 8 beats PP 16 unless memory forces the
-split, and the transport hardly matters. If a run disagrees with that, it
+8K, FSDP 512 catches up at 32K once a step is a single microbatch, interleaving
+(at least `v = 2`) beats plain 1F1B, PP 8 beats PP 16 and PP 4, and the
+transport hardly matters. If a run disagrees with that, it
 points to an inaccuracy in the model.
 
 ## Notes
