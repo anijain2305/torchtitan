@@ -1,0 +1,1386 @@
+{
+ "num_layers": 8,
+ "measured_forwards": 12,
+ "policy": "save_all",
+ "recompute_regions": [
+  "attention.inner_attention"
+ ],
+ "allocated_growth_over_layers": 21976461824,
+ "allocated_growth_per_layer": {
+  "layers.0": 3415736320,
+  "layers.1": 2670242304,
+  "layers.2": 2670242304,
+  "layers.3": 2698029568,
+  "layers.4": 2670242304,
+  "layers.5": 2670242304,
+  "layers.6": 2670242304,
+  "layers.7": 2698029568
+ },
+ "peak_allocated": 60989060096,
+ "block_fwd_ms": {
+  "layers.0": 14.413008213043213,
+  "layers.1": 14.201359748840332,
+  "layers.2": 20.228943824768066,
+  "layers.3": 19.643648147583008,
+  "layers.4": 20.486528396606445,
+  "layers.5": 20.199199676513672,
+  "layers.6": 21.165424346923828,
+  "layers.7": 19.2326078414917
+ },
+ "layers": {
+  "layers.0": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.183119997382164,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.09171199798583984,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05870399996638298,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.0950240008533001,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8332320153713226,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8126720190048218,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8162879943847656,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.6902559995651245,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7374080121517181,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7362560033798218,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.037087999284267426,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15772800147533417,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.042448043823242,
+    "calls": 12,
+    "bytes": 1577058304
+   },
+   {
+    "name": "feed_forward.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 2.09553599357605,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03779200091958046,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.058399999514222145,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.1": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.186831995844841,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.09616000205278397,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06006400100886822,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.09536000341176987,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8339200019836426,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8104639947414398,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8107999861240387,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.4984480142593384,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7404800057411194,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7340959906578064,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03807999938726425,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07275200262665749,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.011744000017642975,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.22220800071954727,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.361727952957153,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.19390399754047394,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15673600137233734,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7592160105705261,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3895200043916702,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.039904000237584114,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05945600010454655,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05684799887239933,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.2": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.335487999022007,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.19625599309802055,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1353280022740364,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.20705599337816238,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8404479920864105,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.756384015083313,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.757535994052887,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.4036478996276855,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7379999756813049,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7387680113315582,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03710399940609932,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07678399980068207,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.13270400231704116,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.36299198865890503,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 7.153792142868042,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.19755200296640396,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15832000225782394,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7609120011329651,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.390079990029335,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.039263999089598656,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.08964800089597702,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.11367999762296677,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.3": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.4983520060777664,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wq_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.5798720121383667,
+    "calls": 12,
+    "bytes": 570425344
+   },
+   {
+    "name": "attention.wq_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.36819200217723846,
+    "calls": 12,
+    "bytes": 301989888
+   },
+   {
+    "name": "attention.wkv_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.25513599812984467,
+    "calls": 12,
+    "bytes": 37748736
+   },
+   {
+    "name": "attention.inner_attention.wkv_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.2542240023612976,
+    "calls": 12,
+    "bytes": 402653184
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 4.430639982223511,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7491039931774139,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.wo.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7150880098342896,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wo.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03806399926543236,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.0727040022611618,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.01158399973064661,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.2207999974489212,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.225343942642212,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.18931199610233307,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1578879952430725,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7585600018501282,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3906719982624054,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.0622399989515543,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1324319988489151,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.10948799923062325,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.4": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.48691199719905853,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3365119993686676,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.24128000438213348,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.2242880016565323,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8502079844474792,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.74891197681427,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7550719976425171,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.280735969543457,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7355040013790131,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7331520020961761,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.037808001041412354,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07263999804854393,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.013344000093638897,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.35041600465774536,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 7.117856025695801,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.18891200423240662,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15727999806404114,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7874879837036133,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3835199922323227,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03931200131773949,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.09433600306510925,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.10892799869179726,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.5": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.5116959810256958,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3154720067977905,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.22625599801540375,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.21767999976873398,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8495360016822815,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.748559981584549,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7578240036964417,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.3468159437179565,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7392159998416901,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7260000109672546,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03783999942243099,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07300799712538719,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.057680000085383654,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.36318400502204895,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 7.061583995819092,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1878720000386238,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.17628800123929977,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8294560015201569,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3860799968242645,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03964800015091896,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1316480040550232,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.10945599898695946,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.6": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.5378560125827789,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.forget_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.32974399626255035,
+    "calls": 12,
+    "bytes": 469762048
+   },
+   {
+    "name": "attention.forget_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.240447998046875,
+    "calls": 12,
+    "bytes": 209715200
+   },
+   {
+    "name": "attention.beta.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.24675199389457703,
+    "calls": 12,
+    "bytes": 1572864
+   },
+   {
+    "name": "attention.q_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8555200099945068,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.k_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7488960027694702,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.v_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7549120187759399,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 2.2483359575271606,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7354239821434021,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.output_proj.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7322079837322235,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.output_proj.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.03795200027525425,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07448000088334084,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.01244799979031086,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3593599945306778,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 7.144160032272339,
+    "calls": 12,
+    "bytes": 71343649
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.187391996383667,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15665599703788757,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8228640258312225,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.38967999815940857,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06248000077903271,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.13212800025939941,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.11219200119376183,
+    "calls": 12,
+    "bytes": 0
+   }
+  ],
+  "layers.7": [
+   {
+    "name": "attention.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.5013759881258011,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wq_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.5799039900302887,
+    "calls": 12,
+    "bytes": 570425344
+   },
+   {
+    "name": "attention.wq_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3737120032310486,
+    "calls": 12,
+    "bytes": 301989888
+   },
+   {
+    "name": "attention.wkv_a.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.2717439979314804,
+    "calls": 12,
+    "bytes": 37748736
+   },
+   {
+    "name": "attention.inner_attention.wkv_b.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.24900799244642258,
+    "calls": 12,
+    "bytes": 402653184
+   },
+   {
+    "name": "attention.inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 4.494863986968994,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7487519979476929,
+    "calls": 12,
+    "bytes": 201326592
+   },
+   {
+    "name": "attention.wo.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.7136320173740387,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "attention.wo.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.038127999752759933,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.router.gate.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.07177600264549255,
+    "calls": 12,
+    "bytes": 29360128
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.011568000074476004,
+    "calls": 12,
+    "bytes": 1048576
+   },
+   {
+    "name": "feed_forward.routed_down.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.2205440029501915,
+    "calls": 12,
+    "bytes": 58720256
+   },
+   {
+    "name": "feed_forward.routed_experts.dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 6.17305588722229,
+    "calls": 12,
+    "bytes": 562667041
+   },
+   {
+    "name": "feed_forward.routed_up.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.18833599984645844,
+    "calls": 12,
+    "bytes": 117440512
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.tp_gather",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15715200453996658,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w13.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.8733760118484497,
+    "calls": 12,
+    "bytes": 671088640
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.linear",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.3891360014677048,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_experts.w2.tp_reduce",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.04624000005424023,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "feed_forward.shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.13886399567127228,
+    "calls": 12,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.11208000034093857,
+    "calls": 12,
+    "bytes": 0
+   }
+  ]
+ },
+ "unattributed_bytes": {
+  "layers.5": {},
+  "layers.1": {},
+  "layers.2": {},
+  "layers.3": {},
+  "layers.6": {},
+  "layers.7": {},
+  "layers.0": {},
+  "layers.4": {}
+ }
+}

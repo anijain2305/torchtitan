@@ -1,0 +1,298 @@
+{
+ "note": "Fit sweep full-depth runs (eager, fake PG on one GB300, FSDP 512 + EP 64); see fit_sweep_collect.py.",
+ "runs": {
+  "fd_32k_cp2_full": {
+   "peak_reserved_gib": 167.8,
+   "tps": [
+    334
+   ],
+   "step_s": 98.10778443113773,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp2_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
+  "fd_32k_cp2tp2_full": {
+   "peak_reserved_gib": 118.15,
+   "tps": [
+    257
+   ],
+   "step_s": 127.50194552529183,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp2tp2_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp2tp2_sel_retry": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp2tp2_seloff": {
+   "peak_reserved_gib": 118.15,
+   "tps": [
+    229
+   ],
+   "step_s": 143.09170305676855,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp4_full": {
+   "peak_reserved_gib": 115.29,
+   "tps": [
+    305
+   ],
+   "step_s": 107.43606557377049,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp4_sel": {
+   "peak_reserved_gib": 243.24,
+   "tps": [
+    303
+   ],
+   "step_s": 108.14521452145215,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_cp4_seloff": {
+   "peak_reserved_gib": 113.26,
+   "tps": [
+    272
+   ],
+   "step_s": 120.47058823529412,
+   "oom": false,
+   "completed": false
+  },
+  "fd_32k_tp2_full": {
+   "peak_reserved_gib": 207.14,
+   "tps": [
+    280,
+    1431,
+    1512,
+    1471
+   ],
+   "step_s": 22.276002719238612,
+   "oom": false,
+   "completed": true
+  },
+  "fd_32k_tp2_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
+  "fd_32k_tp4_full": {
+   "peak_reserved_gib": 154.76,
+   "tps": [
+    279,
+    1050,
+    1148,
+    1217
+   ],
+   "step_s": 28.54355400696864,
+   "oom": false,
+   "completed": true
+  },
+  "fd_32k_tp4_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
+  "fd_32k_tp4_seloff": {
+   "peak_reserved_gib": 152.47,
+   "tps": [
+    210,
+    981,
+    1025,
+    1036
+   ],
+   "step_s": 31.968780487804878,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_cp2_full": {
+   "peak_reserved_gib": 110.51,
+   "tps": [
+    232,
+    491
+   ],
+   "step_s": 66.73727087576374,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_cp2_none": {
+   "peak_reserved_gib": 257.9,
+   "tps": [
+    259
+   ],
+   "step_s": 126.51737451737452,
+   "oom": false,
+   "completed": false
+  },
+  "fd_8k_cp2_sel": {
+   "peak_reserved_gib": 176.88,
+   "tps": [
+    233,
+    479
+   ],
+   "step_s": 68.40918580375782,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_cp2_seloff": {
+   "peak_reserved_gib": 109.33,
+   "tps": [
+    217,
+    489
+   ],
+   "step_s": 67.01022494887526,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_cp4_full": {
+   "peak_reserved_gib": 77.85,
+   "tps": [
+    166
+   ],
+   "step_s": 197.3975903614458,
+   "oom": false,
+   "completed": false
+  },
+  "fd_8k_cp4_none": {
+   "peak_reserved_gib": 163.89,
+   "tps": [
+    192
+   ],
+   "step_s": 170.66666666666666,
+   "oom": false,
+   "completed": false
+  },
+  "fd_8k_cp4_sel": {
+   "peak_reserved_gib": 109.32,
+   "tps": [
+    160
+   ],
+   "step_s": 204.8,
+   "oom": false,
+   "completed": false
+  },
+  "fd_8k_cp4_seloff": {
+   "peak_reserved_gib": 77.85,
+   "tps": [
+    160
+   ],
+   "step_s": 204.8,
+   "oom": false,
+   "completed": false
+  },
+  "fd_8k_tp2_full": {
+   "peak_reserved_gib": 129.06,
+   "tps": [
+    232,
+    622,
+    653,
+    627
+   ],
+   "step_s": 52.261562998405104,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp2_none": {
+   "peak_reserved_gib": 249.6,
+   "tps": [
+    235
+   ],
+   "step_s": 139.43829787234043,
+   "oom": true,
+   "completed": false
+  },
+  "fd_8k_tp2_sel": {
+   "peak_reserved_gib": 212.9,
+   "tps": [
+    232,
+    614,
+    669,
+    646
+   ],
+   "step_s": 50.72445820433437,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp2_seloff": {
+   "peak_reserved_gib": 127.53,
+   "tps": [
+    204,
+    523,
+    588,
+    523
+   ],
+   "step_s": 62.653919694072655,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp4_full": {
+   "peak_reserved_gib": 115.34,
+   "tps": [
+    179,
+    340,
+    315,
+    334
+   ],
+   "step_s": 98.10778443113773,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp4_none": {
+   "peak_reserved_gib": 209.0,
+   "tps": [
+    195,
+    404,
+    376,
+    338
+   ],
+   "step_s": 87.14893617021276,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp4_sel": {
+   "peak_reserved_gib": 167.69,
+   "tps": [
+    152,
+    317,
+    295,
+    318
+   ],
+   "step_s": 103.36908517350157,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_tp4_seloff": {
+   "peak_reserved_gib": 114.9,
+   "tps": [
+    154,
+    286,
+    275,
+    318
+   ],
+   "step_s": 114.57342657342657,
+   "oom": false,
+   "completed": true
+  }
+ }
+}

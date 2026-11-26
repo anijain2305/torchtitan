@@ -1,0 +1,535 @@
+{
+ "num_layers": 8,
+ "measured_forwards": 28,
+ "policy": "none",
+ "recompute_regions": [],
+ "allocated_growth_over_layers": 15990915072,
+ "allocated_growth_per_layer": {
+  "layers.0": 2718171136,
+  "layers.1": 2178841088,
+  "layers.2": 2178841088,
+  "layers.3": 1636121600,
+  "layers.4": 2178841088,
+  "layers.5": 2178841088,
+  "layers.6": 2178841088,
+  "layers.7": 1636121600
+ },
+ "peak_allocated": 43576768000,
+ "block_fwd_ms": {
+  "layers.0": 10.259680271148682,
+  "layers.1": 14.674816131591797,
+  "layers.2": 14.319664001464844,
+  "layers.3": 13.057696342468262,
+  "layers.4": 14.010496139526367,
+  "layers.5": 13.831343650817871,
+  "layers.6": 13.677632331848145,
+  "layers.7": 13.095056056976318
+ },
+ "layers": {
+  "layers.0": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.338128000497818,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.38065600395202637,
+    "calls": 280,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.761967957019806,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.023599999956786633,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.031568000093102455,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.1": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3540479987859726,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.25886400043964386,
+    "calls": 364,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.3716959953308105,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1725279986858368,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.1701439991593361,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.7874720096588135,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06656000018119812,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05447999946773052,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.2": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3511520028114319,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.24295999854803085,
+    "calls": 364,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.4342719912528992,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.16382399946451187,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.15374399721622467,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.474735975265503,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.0652960017323494,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.055344000458717346,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.3": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3325119912624359,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.20788799971342087,
+    "calls": 308,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.2627679705619812,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.11647999659180641,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.14456000179052353,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.358464002609253,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06649599969387054,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05617600120604038,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.4": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.33479999005794525,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.22568000108003616,
+    "calls": 364,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.5139999985694885,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.13782399892807007,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.14665600657463074,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.323983907699585,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06543999910354614,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.055455999448895454,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.5": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.33110401034355164,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.23235200345516205,
+    "calls": 364,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.438319981098175,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1440960019826889,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.14639999717473984,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.300256013870239,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06460800021886826,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05580799840390682,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.6": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3309600055217743,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.2505439966917038,
+    "calls": 364,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.3409440517425537,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.1456959992647171,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.13716799765825272,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.291599988937378,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06510399654507637,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05540800094604492,
+    "calls": 28,
+    "bytes": 0
+   }
+  ],
+  "layers.7": [
+   {
+    "name": "tp_gather",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.3363039940595627,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "linear",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.20768000185489655,
+    "calls": 308,
+    "bytes": 0
+   },
+   {
+    "name": "inner_attention",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 1.2214880585670471,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "tp_reduce",
+    "parent": null,
+    "saved": false,
+    "fwd_ms": 0.12620799615979195,
+    "calls": 56,
+    "bytes": 0
+   },
+   {
+    "name": "routing_decision",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.14059200137853622,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "dist_moe",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 4.347984075546265,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "shared_add",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.06460800021886826,
+    "calls": 28,
+    "bytes": 0
+   },
+   {
+    "name": "ffn_residual",
+    "parent": null,
+    "saved": true,
+    "fwd_ms": 0.05435200035572052,
+    "calls": 28,
+    "bytes": 0
+   }
+  ]
+ },
+ "unattributed_bytes": {}
+}
