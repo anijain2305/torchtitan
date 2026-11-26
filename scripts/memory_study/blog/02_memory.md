@@ -511,28 +511,40 @@ at every `v` ([[memory.5]]).
 With all of that in place, here are the parallelism configs that fit our
 budget:
 
+Each config's greedy path ([[memory.4.1]]) runs left to right: the peak per GPU
+of every state up to the first that fits one GPU's 288 GB, which is the config's
+pick (outlined), and "not needed" after it. The pick shows its peak, then its
+final peak once the memory left over buys back DistMoE's buffer ("+45% DistMoE
+buffer": 45% of the layers keep their DistMoE intermediates). A row with no
+outlined cell does not fit. The ranking uses each config's pick.
+
+**FSDP + EP 64.** The shaded row takes a larger microbatch, as the recipe's step
+2 suggests: 2 sequences per microbatch halve the microbatches per step, and with
+them the rounds of FSDP's gathers and reduce-scatters. It holds 16K tokens per
+GPU with FSDP + EP 64's weights, as 32K with CP 2 does, so it borrows that
+config's memory and greedy path. We only grow the microbatch where there is no
+split to lower: under CP or TP, a microbatch of 2 sequences holds as many tokens
+per GPU as half the degree, while still paying the split's communication.
+
 ::: figure fit-configs
 
-*Each config's greedy path ([[memory.4.1]]): the peak per GPU of every state up
-to the first that fits one GPU's 288 GB, which is the config's pick, and "not
-needed" after it. The pick shows its peak, then its final peak once the memory
-left over buys back DistMoE's buffer ("+45% DistMoE buffer": 45% of the layers
-keep their DistMoE intermediates). A row with no outlined cell does not fit.
-The shaded row takes a larger microbatch, as the recipe's step 2 suggests: 2
-sequences per microbatch halve the microbatches per step, and with them the
-rounds of FSDP's gathers and reduce-scatters. It holds 16K tokens per GPU with
-FSDP + EP 64's weights, as 32K with CP 2 does, so it borrows that config's memory
-and greedy path. We only grow the microbatch where there is no split to lower:
-under CP or TP, a microbatch of 2 sequences holds as many tokens per GPU as half
-the degree, while still paying the split's communication. Offload moves the attention projections and
-feed-forward to CPU memory; "host full": it would not fit in a GB300 node's CPU
-memory, so the path continues without it; "OOM": that setting's run ran out
-of memory. Peaks are measured at full depth with
-a fake process group (CP runs report their first step's peak); "~" marks
-estimates, anchored on the config's own measured settings, and PP 8 / 16 use a
-PP model that matches the measured PP 4 to 0.2 GiB. The ranking uses each
-config's pick.*
+**ZeRO-1 + PP with 1F1B.** PP 4 runs with real pipeline stages on four GPUs;
+PP 8 and 16 use a PP model that matches the measured PP 4 to 0.2 GiB.
 
+::: figure fit-configs-pp
+
+**ZeRO-1 + PP with Interleaved 1F1B**, for the PP configs that fit with 1F1B:
+the same weights per GPU, but the first rank holds more of each microbatch in
+flight ([[memory.4.3]]), modeled the same way.
+
+::: figure fit-configs-interleaved
+
+*In all three tables: offload moves the attention projections and feed-forward
+to CPU memory; "host full": it would not fit in a GB300 node's CPU memory, so
+the path continues without it; "OOM": that setting's run ran out of memory.
+Peaks are measured at full depth with a fake process group (CP runs report their
+first step's peak); "~" marks estimates, anchored on the config's own measured
+settings.*
 
 What the table says:
 
