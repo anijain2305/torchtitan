@@ -1177,7 +1177,7 @@ def _pp_calibration() -> float:
     if not r or r["peak_reserved_gib"] is None:
         return 0.0
     return r["peak_reserved_gib"] * 2**30 - _pp_model("8K", 4, "full")
-FIT_POLICIES = [("none", "No remat"), ("sel", "Recompute attention"),
+FIT_POLICIES = [("none", "DistMoE recomputes"), ("sel", "+ recompute attention"),
                 ("seloff", "+ offload attention + FF"), ("full", "Full remat")]
 
 
@@ -1237,7 +1237,7 @@ def fit_configs_table() -> str:
     amber = "background: rgba(237, 161, 0, 0.16);"
     pick = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
     out = ['<table class="dtable"><tr><th>Config</th>'
-           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Lightest that fits</th></tr>"]
+           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Fits with</th></tr>"]
     for ctx, cp, tp, pp in FIT_ROWS:
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
@@ -1259,6 +1259,8 @@ def fit_configs_table() -> str:
             cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
         if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
             chosen = "Full remat + offload block inputs"
+        if (ctx, cp, tp, pp) == ("8K", 1, 1, 1):  # greedy's undo step, measured in 3.4.1
+            chosen = "+ offload, then 40% of DistMoE's buffer"
         out.append(f"<tr><td>{ctx}, {split}</td>{cells}<td>{chosen or '-'}</td></tr>")
     out.append("</table>")
     return "".join(out)
