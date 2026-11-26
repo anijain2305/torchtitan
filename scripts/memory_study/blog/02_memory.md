@@ -530,7 +530,15 @@ per GPU as half the degree, while still paying the split's communication.
 
 ::: figure fit-configs
 
-**ZeRO-1 + PP with 1F1B.** PP 4 runs with real pipeline stages on four GPUs;
+**ZeRO-1 + EP 128 + TP**, the 3.2.3 configs without FSDP. TorchTitan cannot
+run ZeRO-1 without PP, so these rows are modeled: FSDP + EP 64 + TP 4's measured
+activations (the same tokens per GPU, halved for TP 8) on top of the ZeRO-1
+weights. TP 4 does not fit even with full remat: its weights leave only about 20
+GB.
+
+::: figure fit-configs-zero1
+
+**ZeRO-1 + PP with 1F1B**, grouped by PP degree. PP 4 runs with real pipeline stages on four GPUs;
 PP 8 and 16 use a PP model that matches the measured PP 4 to 0.2 GiB.
 
 ::: figure fit-configs-pp
@@ -541,7 +549,7 @@ flight ([[memory.4.3]]), modeled the same way.
 
 ::: figure fit-configs-interleaved
 
-*In all three tables: offload moves the attention projections and feed-forward
+*In all four tables: offload moves the attention projections and feed-forward
 to CPU memory; "host full": it would not fit in a GB300 node's CPU memory, so
 the path continues without it; "OOM": that setting's run ran out of memory.
 Peaks are measured at full depth with a fake process group (CP runs report their

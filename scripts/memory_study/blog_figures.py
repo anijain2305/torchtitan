@@ -1328,7 +1328,19 @@ def _setting_estimates(ctx: str, cp: int, tp: int, pp: int, v: int = 1) -> dict:
             for pol in ("none", "sel", "full")}
 
 
-def greedy_fit(ctx: str, cp: int, tp: int, pp: int, v: int = 1) -> dict:
+def _zero1_estimates(ctx: str, tp: int) -> dict:
+    """Peaks (bytes) of ZeRO-1 + EP 128 + TP (no PP, no FSDP) per setting, which
+    TorchTitan cannot run without PP: the activations of the measured FSDP +
+    EP 64 + TP 4 config (its peaks minus its weight footprint; same TP, so the
+    same tokens per GPU) plus ZeRO-1 + EP 128 + TP's weight footprint (3.2.3).
+    TP 8 halves TP 4's activations (half the tokens per GPU)."""
+    E4 = _setting_estimates(ctx, 1, 4, 1)
+    acts = {k: x - ep_tp_parts(3, 64, 4)["total"] for k, x in E4.items()}
+    scale = 4 / tp
+    return {k: ep_tp_parts(1, 128, tp)["total"] + a * scale for k, a in acts.items()}
+
+
+def greedy_fit(ctx: str, cp: int, tp: int, pp: int, v: int = 1, zero1: bool = False) -> dict:
     """The greedy approach of 3.4.1 for one config, state by state: no remat;
     + offload the attention projections and feed-forward (if the host can hold
     it); + DistMoE recomputes; + recompute attention; and if still over, full
@@ -1344,8 +1356,9 @@ def greedy_fit(ctx: str, cp: int, tp: int, pp: int, v: int = 1) -> dict:
     D = inflight * _distmoe_keep_bytes(tokens) / 2**30
     O = inflight * _offload_bytes(tokens) / 2**30
     host_ok = O * 2**30 <= HOST_BYTES_PER_GPU
-    E = {k: x / 2**30 for k, x in _setting_estimates(ctx, cp, tp, pp, v).items()}
-    interleaved = v > 1
+    E = {k: x / 2**30 for k, x in (_zero1_estimates(ctx, tp) if zero1 else
+                                    _setting_estimates(ctx, cp, tp, pp, v)).items()}
+    interleaved = v > 1 or zero1  # no measured runs for these
 
     def measured(pol):
         """(GiB or None, note) of a measured run of this setting (1F1B only)."""
@@ -1396,8 +1409,10 @@ def fit_configs_table(kind: str = "fsdp") -> str:
     out = ['<table class="dtable"><tr><th>Config</th>'
            + "".join(f"<th>{lab}</th>" for _, lab in GREEDY_STATES) + "</tr>"]
     gb = lambda v: f"{v * 2**30 / 1e9:.0f} GB"
-    rows = []  # kind: fsdp (no PP), pp (1F1B), interleaved (PP rows that fit with 1F1B, v 2 and 4)
-    for r in FIT_ROWS:
+    # kind: fsdp (no PP), zero1 (ZeRO-1 + EP 128 + TP, modeled), pp (1F1B),
+    # interleaved (PP rows that fit with 1F1B, v 2 and 4); PP rows grouped by degree
+    rows = [((ctx, 1, tp, 1), 1, 1) for ctx in ("8K", "32K") for tp in (4, 8)] if kind == "zero1" else []
+    for r in (FIT_ROWS if kind == "fsdp" else sorted(FIT_ROWS, key=lambda r: r[3]) if kind != "zero1" else []):
         if kind == "fsdp" and r[3] == 1:
             rows.append((r, 1, 1))
             rows += [((ctx, cp, 1, 1), mb, 1) for (ctx, cp, mb) in FIT_MICROBATCH if (ctx, cp, 1, 1) == r]
@@ -1405,17 +1420,24 @@ def fit_configs_table(kind: str = "fsdp") -> str:
             rows.append((r, 1, 1))
         elif kind == "interleaved" and r[3] > 1 and greedy_fit(*r)["pick"] is not None:
             rows += [(r, 1, v) for v in (2, 4)]
+    zero1, last_pp = kind == "zero1", None
     for (ctx, cp, tp, pp), mb, v in rows:
+        if pp > 1 and pp != last_pp:
+            out.append(f'<tr><td colspan="{len(GREEDY_STATES) + 1}" style="font-weight: 600; '
+                       f'background: var(--code-bg, rgba(0, 0, 0, 0.04));">PP {pp}</td></tr>')
+            last_pp = pp
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
             split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "")
         dp = 512 // (pp * cp * tp)
         mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
                          + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
+        if zero1:
+            split, mesh = f"ZeRO-1 + EP 128 + TP {tp}", f"DP {dp}, TP {tp}, EP 128, no FSDP"
         mesh += f"<br>microbatch: {mb} sequence{'s' if mb > 1 else ''}"
         if pp > 1:
             mesh += "; 1F1B" if v == 1 else f"; Interleaved 1F1B, v {v}"
-        g = greedy_fit(*(FIT_MICROBATCH[(ctx, cp, mb)] if mb > 1 else (ctx, cp, tp, pp)), v=v)
+        g = greedy_fit(*(FIT_MICROBATCH[(ctx, cp, mb)] if mb > 1 else (ctx, cp, tp, pp)), v=v, zero1=zero1)
         cells, done = "", False
         for key, v, e, note in g["states"]:
             if done:
@@ -3253,6 +3275,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "fit-configs": fit_configs_table,
                 "fit-configs-pp": lambda: fit_configs_table("pp"),
                 "fit-configs-interleaved": lambda: fit_configs_table("interleaved"),
+                "fit-configs-zero1": lambda: fit_configs_table("zero1"),
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),
