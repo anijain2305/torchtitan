@@ -1249,7 +1249,7 @@ def fit_configs_table() -> str:
             st = st.removesuffix("_model")
             txt = (f"{v * 2**30 / 1e9:.0f} GB{' (est.)' if model else ''}" if st in ("fit", "over") else
                    f"{v * 2**30 / 1e9:.0f} GB, at the line" if st == "line" else
-                   {"oom": "out of memory", "host": "needs more host memory", "est": "over (est.)",
+                   {"oom": "out of memory", "host": "host memory full", "est": "over (est.)",
                     "none": "no data"}[st])
             style = (green if st == "fit" else amber if st == "line" else
                      red if st in ("over", "oom", "est", "host") else "")
@@ -1258,10 +1258,11 @@ def fit_configs_table() -> str:
                 style += pick
             cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
         if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
-            chosen = "Full remat + offload block inputs"
+            chosen = "Full remat + block offload"
         if (ctx, cp, tp, pp) == ("8K", 1, 1, 1):  # greedy's undo step, measured in 3.4.1
             chosen = "+ offload, then 40% of DistMoE's buffer"
-        out.append(f"<tr><td>{ctx}, {split}</td>{cells}<td>{chosen or '-'}</td></tr>")
+        out.append(f"<tr><td>{ctx}, {split}</td>{cells}"
+                   f'<td style="white-space: normal; max-width: 170px;">{chosen or "-"}</td></tr>')
     out.append("</table>")
     return "".join(out)
 

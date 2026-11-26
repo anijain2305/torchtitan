@@ -520,8 +520,8 @@ intermediates in every column, then attention is recomputed, then the attention
 projections and feed-forward are offloaded; full remat recomputes everything.
 The outlined cell is the first setting that fits. Growing DistMoE's buffer back
 with the memory left over (greedy's undo step) is measured only for 8K without a
-split; for the other configs it comes with the latency model. "Needs more host memory": the
-offload would not fit in a GB300 node's CPU memory. PP 4 runs with real
+split; for the other configs it comes with the latency model. "Host memory full": the offload
+would not fit in a GB300 node's CPU memory. PP 4 runs with real
 pipeline stages on four GPUs; "(est.)" marks modeled values: the stage's
 weights, plus the stash of the microbatches the first stage holds in flight,
 plus the overheads measured for FSDP at the same tokens per GPU.*
