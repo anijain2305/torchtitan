@@ -164,6 +164,7 @@ def _measured_block(region_name, fn, *a, **kw):
         _alloc["after_layers"] = torch.cuda.memory_allocated()
         _snapshot_saved_bytes()
         _state["snap_done"] = True
+        _write()  # now, not only at exit: fake CP runs can crash a step later, which skips atexit
     return out
 
 
