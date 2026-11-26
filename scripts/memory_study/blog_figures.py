@@ -1177,11 +1177,75 @@ def _pp_calibration() -> float:
     if not r or r["peak_reserved_gib"] is None:
         return 0.0
     return r["peak_reserved_gib"] * 2**30 - _pp_model("8K", 4, "full")
-FIT_POLICIES = [("none", "DistMoE recomputes"), ("sel", "+ recompute attention"),
-                ("seloff", "+ offload attention + FF"), ("full", "Full remat")]
+FIT_POLICIES = [("nothing", "No remat"), ("off", "Offload"), ("none", "DistMoE recomputes"),
+                ("sel", "+ attention"), ("seloff", "+ attention + offload"), ("full", "Full remat")]
+
+
+def _split_stash(ctx: str, cp: int, tp: int, pol: str) -> float:
+    """One microbatch's 93-layer stash for a setting (none / sel / full) at this
+    split, from its 8-layer inventory (CP 1 / TP 1: the 3.4.1 policy runs)."""
+    if (cp, tp) == (1, 1):
+        return _fsdp_stash(ctx, pol)
+    name = f"{ctx.lower()}_{'cp%d' % cp if cp > 1 else ''}{'tp%d' % tp if tp > 1 else ''}"
+    return scaled_stash(f"fit_sweep/inv_{name}_{pol}.json")
+
+
+def _distmoe_keep_bytes(tokens: float) -> float:
+    """DistMoE's buffers for every MoE layer to keep its intermediates (capacity
+    factor 1.0, measured at 8K tokens), scaled by tokens per GPU."""
+    rows = {r["slot"]: r for r in _bench("dist_moe_slots_8k.json")["rows"]}
+    return MOE_LAYERS * (rows[1.0]["context_bytes"] - rows[None]["context_bytes"]) * tokens / 8192
+
+
+def _offload_bytes(tokens: float) -> float:
+    """What offloading the attention projections and feed-forward moves off the
+    GPU per microbatch (measured at 8K: recompute attention minus recompute
+    attention + offload), scaled by tokens per GPU."""
+    peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
+    return (peaks["rperf_sel"] - peaks["rperf_off_attn_ff"]) * 2**30 * tokens / 8192
 
 
 def _fit_cell(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tuple[str, float | None]:
+    if pol in ("nothing", "off"):
+        return _fit_cell_estimated(ctx, cp, tp, pol, pp)
+    return _fit_cell_measured(ctx, cp, tp, pol, pp)
+
+
+def _fit_cell_estimated(ctx: str, cp: int, tp: int, pol: str, pp: int) -> tuple[str, float | None]:
+    """No remat (DistMoE keeps everything) and offload without remat. Anchored on
+    the config's own measured setting: DistMoE recomputing (or, if that ran out
+    of memory, recomputing attention, plus the stash difference from the
+    config's inventory), plus DistMoE's buffers; offload subtracts the measured
+    offload volume. PP rows use the calibrated PP model."""
+    budget = GPU_BYTES / 2**30
+    seq = 8192 if ctx == "8K" else 32768
+    tokens = seq / (cp * tp)
+    if pp > 1:
+        inflight = pp * -(-93 // pp) / 93
+        base = pp_peak_estimate(ctx, pp, "none", cp)
+        nothing = base + inflight * _distmoe_keep_bytes(tokens)
+        host = inflight * _offload_bytes(tokens)
+    else:
+        anchor = None
+        for a in ("none", "sel", "full"):
+            st, v = _fit_cell_measured(ctx, cp, tp, a, pp)
+            if st in ("fit", "line", "over") and v is not None:
+                anchor = (a, v * 2**30)
+                break
+        if anchor is None:
+            return "none", None
+        a, v = anchor
+        nothing = v + _split_stash(ctx, cp, tp, "none") - _split_stash(ctx, cp, tp, a) + _distmoe_keep_bytes(tokens)
+        host = _offload_bytes(tokens)
+    value = nothing if pol == "nothing" else nothing - host
+    if pol == "off" and host > HOST_BYTES_PER_GPU:
+        return "host", None
+    value /= 2**30
+    st = "fit" if value <= budget else "line" if value <= budget * 1.005 else "over"
+    return st + "_model", value
+
+
+def _fit_cell_measured(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tuple[str, float | None]:
     """(status, peak GiB) of one measured setting: status is fit, over, oom,
     host (offload needs more host memory than a GB300 node has), est (not run,
     estimated over) or none (no data). Peaks are full-depth, fake process group;
@@ -1220,7 +1284,7 @@ def _fit_cell(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tuple[str, f
             f"fd_{ctx.lower()}_{'cp%d' % cp if cp > 1 else ''}{'tp%d' % tp if tp > 1 else ''}_{pol}")
         if r is None:
             # not run: offload past the host's memory, or no remat where it clearly cannot fit
-            return ("host" if pol == "seloff" else "est"), None
+            return ("host" if pol == "seloff" else "est"), None  # not run
         if r["oom"]:
             return "oom", None
         if r["peak_reserved_gib"] is None:
@@ -1229,15 +1293,65 @@ def _fit_cell(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tuple[str, f
     return ("fit" if v <= budget else "line" if v <= budget * 1.005 else "over"), v
 
 
+def greedy_fit(ctx: str, cp: int, tp: int, pp: int) -> dict | None:
+    """The greedy approach of 3.4.1 for one config: from no remat, take the
+    cheapest step per byte until the config fits -- offload (if the host can
+    hold it), then DistMoE recomputes, then recompute attention, then full remat
+    (+ offloading the block inputs if needed) -- then buy back speed with the
+    memory left over by giving DistMoE its buffer back, in 5% steps. Each state
+    uses its measured peak where one exists. Returns steps, buy-back fraction,
+    final peak (GiB) and whether any state was estimated; None if nothing fits."""
+    budget = GPU_BYTES / 2**30
+    tokens = (8192 if ctx == "8K" else 32768) / (cp * tp)
+    inflight = pp * -(-93 // pp) / 93 if pp > 1 else 1.0
+    D = inflight * _distmoe_keep_bytes(tokens) / 2**30
+    host_ok = inflight * _offload_bytes(tokens) <= HOST_BYTES_PER_GPU
+    cell = lambda pol: _fit_cell(ctx, cp, tp, pol, pp)
+    val = lambda st_v: st_v[1] if st_v[1] is not None and st_v[0].removesuffix("_model") in ("fit", "line", "over") else None
+    est = lambda st_v: st_v[0].endswith("_model")
+    nothing, off = cell("nothing"), cell("off")
+    steps, peak, estimated = [], val(nothing), est(nothing)
+    if peak is None:
+        return None
+    if peak > budget and host_ok and val(off) is not None:
+        steps, peak, estimated = ["offload"], val(off), estimated or est(off)
+    if peak > budget:
+        steps.append("DistMoE")
+        peak -= D
+        m = cell("none") if "offload" not in steps else None  # measured state without offload
+        if m and val(m) is not None:
+            peak, estimated = val(m), est(m)
+    if peak > budget:
+        steps.append("attention")
+        m = cell("seloff" if "offload" in steps else "sel")
+        peak, estimated = (val(m), est(m)) if val(m) is not None else (float("inf"), estimated)  # unknown: over
+    if peak > budget:
+        m = cell("full")
+        if val(m) is None:
+            return None
+        steps, peak, estimated = ["full remat"], val(m), est(m)
+        if peak > budget and (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
+            runs = _bench("ladder_32k/eager_runs.json")["runs"]
+            steps, peak, estimated = ["full remat", "block offload"], runs["full_block"]["peak_reserved_gib"], False
+        if peak > budget:
+            return None
+    back = 0.0
+    if ("DistMoE" in steps or "full remat" in steps) and D > 0:
+        back = min(1.0, int((budget - peak) / D * 20) / 20)
+        peak += back * D
+    return {"steps": steps, "back": back, "peak": peak, "estimated": estimated}
+
+
 def fit_configs_table() -> str:
     """Which remat / offload settings fit, per FSDP + EP 64 config: the
     measured peak per GPU of each setting against one GPU's 288 GB, with the
     lightest setting that fits outlined. Rows: context x CP x TP."""
     green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
+    out_style = "font-size: 12px;"
     amber = "background: rgba(237, 161, 0, 0.16);"
     pick = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
     out = ['<table class="dtable"><tr><th>Config</th>'
-           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Fits with</th></tr>"]
+           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Greedy, with buy-back</th></tr>"]
     for ctx, cp, tp, pp in FIT_ROWS:
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
@@ -1247,21 +1361,23 @@ def fit_configs_table() -> str:
             st, v = _fit_cell(ctx, cp, tp, pol, pp)
             model = st.endswith("_model")
             st = st.removesuffix("_model")
-            txt = (f"{v * 2**30 / 1e9:.0f} GB{' (est.)' if model else ''}" if st in ("fit", "over") else
-                   f"{v * 2**30 / 1e9:.0f} GB, at the line" if st == "line" else
-                   {"oom": "out of memory", "host": "host memory full", "est": "over (est.)",
-                    "none": "no data"}[st])
+            txt = (f"{'~' if model else ''}{v * 2**30 / 1e9:.0f} GB" if st in ("fit", "over") else
+                   f"{v * 2**30 / 1e9:.0f} GB (line)" if st == "line" else
+                   {"oom": "OOM", "host": "host full", "est": "~over", "none": "no data"}[st])
             style = (green if st == "fit" else amber if st == "line" else
                      red if st in ("over", "oom", "est", "host") else "")
-            if st == "fit" and chosen is None:
-                chosen = lab
-                style += pick
             cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
-        if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
-            chosen = "Full remat + block offload"
-        if (ctx, cp, tp, pp) == ("8K", 1, 1, 1):  # greedy's undo step, measured in 3.4.1
-            chosen = "+ offload, then 40% of DistMoE's buffer"
-        out.append(f"<tr><td>{ctx}, {split}</td>{cells}"
+        g = greedy_fit(ctx, cp, tp, pp)
+        if g is None:
+            chosen = "does not fit"
+        else:
+            short = {"attention": "attn", "full remat": "full remat"}
+            chosen = (", ".join(short.get(x, x) for x in g["steps"]) or "no remat") + (
+                f"; +{g['back']:.0%} buffer" if g["back"] else "")
+        dp = 512 // (pp * cp * tp)
+        mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
+                         + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
+        out.append(f'<tr><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}'
                    f'<td style="white-space: normal; max-width: 170px;">{chosen or "-"}</td></tr>')
     out.append("</table>")
     return "".join(out)

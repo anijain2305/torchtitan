@@ -514,23 +514,23 @@ budget:
 ::: figure fit-configs
 
 *Peak memory per GPU of each setting against one GPU's 288 GB, measured at full
-depth with a fake process group (CP runs report their first step's peak). The
-settings build on each other, as in [[memory.4.1]]: DistMoE recomputes its
-intermediates in every column, then attention is recomputed, then the attention
-projections and feed-forward are offloaded; full remat recomputes everything.
-The outlined cell is the first setting that fits. Growing DistMoE's buffer back
-with the memory left over (greedy's undo step) is measured only for 8K without a
-split; for the other configs it comes with the latency model. "Host memory full": the offload
-would not fit in a GB300 node's CPU memory. PP 4 runs with real
-pipeline stages on four GPUs; "(est.)" marks modeled values: the stage's
-weights, plus the stash of the microbatches the first stage holds in flight,
-plus the overheads measured for FSDP at the same tokens per GPU.*
+depth with a fake process group (CP runs report their first step's peak). No
+remat keeps everything, DistMoE included; offload moves the attention
+projections and feed-forward to CPU memory without recomputing anything;
+"DistMoE recomputes" is DistMoE's default and is part of every setting to its
+right. "~" marks values that could not be measured: they are anchored on the
+config's own measured settings, and PP 8 / 16 use a PP model that matches the
+measured PP 4 to 0.2 GiB. "OOM": the run ran out of memory. "Host full": the
+offload would not fit in a GB300 node's CPU memory. The last column runs the
+greedy approach of [[memory.4.1]] for each config (attn: recompute attention),
+then gives the memory left over back to DistMoE's buffer ("+45% buffer": 45% of
+the layers keep their DistMoE intermediates).*
 
 What the table says:
 
-- **Splitting the sequence buys you out of remat.** At 8K, CP 2, CP 4 and TP 4
-  fit with only DistMoE's built-in recompute; without a split, even
-  recomputing attention is right at the line.
+- **Splitting the sequence buys you out of remat.** At 8K, CP 4 needs no remat
+  at all and TP 4 only the free offload, while without a split the greedy path
+  has to recompute attention as well.
 - **At 32K, CP beats TP for memory too.** CP 4 fits by recomputing attention
   alone; TP 4 also needs the offload. Without a split, or with a split of 2,
   only full remat fits, and offload runs out of host memory.
