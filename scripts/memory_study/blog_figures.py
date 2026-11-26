@@ -1114,6 +1114,78 @@ def pp_weight_table() -> str:
     return "".join(out)
 
 
+# Fit sweep rows: (context, CP, TP) for FSDP 512 + EP 64.
+FIT_ROWS = [("8K", 1, 1), ("8K", 2, 1), ("8K", 4, 1), ("8K", 1, 2), ("8K", 1, 4),
+            ("32K", 1, 1), ("32K", 2, 1), ("32K", 4, 1), ("32K", 1, 2), ("32K", 1, 4), ("32K", 2, 2)]
+FIT_POLICIES = [("none", "No remat"), ("sel", "Recompute attention"),
+                ("seloff", "+ offload attention + FF"), ("full", "Full remat")]
+
+
+def _fit_cell(ctx: str, cp: int, tp: int, pol: str) -> tuple[str, float | None]:
+    """(status, peak GiB) of one measured setting: status is fit, over, oom,
+    host (offload needs more host memory than a GB300 node has), est (not run,
+    estimated over) or none (no data). Peaks are full-depth, fake process group;
+    CP runs report their first step's peak."""
+    budget = GPU_BYTES / 2**30
+    if (ctx, cp, tp) == ("8K", 1, 1):  # the 3.4.1 ladder (CUDA graphs)
+        peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
+        run = {"sel": "rperf_sel", "seloff": "rperf_off_attn_ff", "full": "rperf_full"}.get(pol)
+        if run is None:
+            return "est", None
+        v = peaks[run]
+    elif (ctx, cp, tp) == ("32K", 1, 1):  # the 32K eager runs
+        runs = _bench("ladder_32k/eager_runs.json")["runs"]
+        if pol == "full":
+            v = runs["full"]["peak_reserved_gib"]
+        elif pol == "seloff":
+            return "host", None
+        else:
+            return "est", None
+    else:
+        r = _bench("fit_sweep/fd_runs.json")["runs"].get(
+            f"fd_{ctx.lower()}_{'cp%d' % cp if cp > 1 else ''}{'tp%d' % tp if tp > 1 else ''}_{pol}")
+        if r is None:
+            # not run: offload past the host's memory, or no remat where it clearly cannot fit
+            return ("host" if pol == "seloff" else "est"), None
+        if r["oom"]:
+            return "oom", None
+        if r["peak_reserved_gib"] is None:
+            return "none", None
+        v = r["peak_reserved_gib"]
+    return ("fit" if v <= budget else "line" if v <= budget * 1.005 else "over"), v
+
+
+def fit_configs_table() -> str:
+    """Which remat / offload settings fit, per FSDP + EP 64 config: the
+    measured peak per GPU of each setting against one GPU's 288 GB, with the
+    lightest setting that fits outlined. Rows: context x CP x TP."""
+    green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
+    amber = "background: rgba(237, 161, 0, 0.16);"
+    pick = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
+    out = ['<table class="dtable"><tr><th>FSDP + EP 64</th>'
+           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Lightest that fits</th></tr>"]
+    for ctx, cp, tp in FIT_ROWS:
+        split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
+        cells, chosen = "", None
+        for pol, lab in FIT_POLICIES:
+            st, v = _fit_cell(ctx, cp, tp, pol)
+            txt = (f"{v * 2**30 / 1e9:.0f} GB" if st in ("fit", "over") else
+                   f"{v * 2**30 / 1e9:.0f} GB, at the line" if st == "line" else
+                   {"oom": "out of memory", "host": "needs more host memory", "est": "over (est.)",
+                    "none": "no data"}[st])
+            style = (green if st == "fit" else amber if st == "line" else
+                     red if st in ("over", "oom", "est", "host") else "")
+            if st == "fit" and chosen is None:
+                chosen = lab
+                style += pick
+            cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
+        if (ctx, cp, tp) == ("32K", 1, 1):
+            chosen = "Full remat + offload block inputs"
+        out.append(f"<tr><td>{ctx}, {split}</td>{cells}<td>{chosen or '-'}</td></tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
 # Steps of the fit tree, in the order the post reaches them; each `::: tree-step
 # <name>` marker in blog/*.md switches the tree to that step.
 TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp", "pp"]
@@ -2904,6 +2976,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "working-set-flip": working_set_flip,
                 "ep-tp-table": ep_tp_table,
                 "pp-weight-table": pp_weight_table,
+                "fit-configs": fit_configs_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

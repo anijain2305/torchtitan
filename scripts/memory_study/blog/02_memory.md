@@ -511,7 +511,12 @@ at every `v` ([[memory.5]]).
 With all of that in place, here are the parallelism configs that fit our
 budget:
 
-::: table fit-configs
+::: figure fit-configs
+
+*Peak memory per GPU of each setting against one GPU's 288 GB, measured at full
+depth with a fake process group (CP runs report their first step's peak). The
+outlined cell is the lightest setting that fits. "Needs more host memory": the
+offload would not fit in a GB300 node's CPU memory.*
 
 <!--
 ### Context Parallelism
