@@ -1121,6 +1121,12 @@ FIT_ROWS = [("8K", 1, 1, 1), ("8K", 2, 1, 1), ("8K", 4, 1, 1), ("8K", 1, 2, 1), 
             ("32K", 1, 1, 1), ("32K", 2, 1, 1), ("32K", 4, 1, 1), ("32K", 1, 2, 1), ("32K", 1, 4, 1),
             ("32K", 2, 2, 1), ("32K", 1, 1, 4), ("32K", 1, 1, 8), ("32K", 1, 1, 16),
             ("32K", 4, 1, 8), ("32K", 4, 1, 16)]
+# Fit-table rows with larger microbatches, each placed after its one-sequence row:
+# (context, CP, sequences per microbatch) -> the row with the same tokens per GPU
+# per microbatch (CP leaves the weight footprint unchanged and the activations
+# scale with tokens per GPU, so its memory and greedy path carry over).
+FIT_MICROBATCH = {("8K", 2, 2): ("8K", 1, 1, 1), ("8K", 4, 2): ("8K", 2, 1, 1),
+                  ("8K", 4, 4): ("8K", 1, 1, 1), ("32K", 4, 2): ("32K", 2, 1, 1)}
 
 
 def _fsdp_stash(ctx: str, pol: str) -> float:
@@ -1359,14 +1365,19 @@ def fit_configs_table() -> str:
     out = ['<table class="dtable"><tr><th>Config</th>'
            + "".join(f"<th>{lab}</th>" for _, lab in GREEDY_STATES) + "</tr>"]
     gb = lambda v: f"{v * 2**30 / 1e9:.0f} GB"
-    for ctx, cp, tp, pp in FIT_ROWS:
+    rows = []
+    for r in FIT_ROWS:
+        rows.append((r, 1))
+        rows += [((ctx, cp, 1, 1), mb) for (ctx, cp, mb) in FIT_MICROBATCH if (ctx, cp, 1, 1) == r]
+    for (ctx, cp, tp, pp), mb in rows:
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
             split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "")
         dp = 512 // (pp * cp * tp)
         mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
                          + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
-        g = greedy_fit(ctx, cp, tp, pp)
+        mesh += f"<br>microbatch: {mb} sequence{'s' if mb > 1 else ''}"
+        g = greedy_fit(*(FIT_MICROBATCH[(ctx, cp, mb)] if mb > 1 else (ctx, cp, tp, pp)))
         cells, done = "", False
         for key, v, e, st in g["states"]:
             if done:
@@ -1375,7 +1386,8 @@ def fit_configs_table() -> str:
             if key == g["pick"]:
                 txt = gb(v) if not g["back"] else f"{gb(v)} &rarr; {gb(g['final'])}"
                 note = (f"+{g['back']:.0%} DistMoE buffer" if g["back"] else
-                        "+ block offload" if (ctx, cp, tp, pp) == ("32K", 1, 1, 1) else "")
+                        "+ block offload" if g["states"][4][1] is not None and (ctx, cp, tp, pp, mb) == ("32K", 1, 1, 1, 1)
+                        else "")
                 sub = f'<span class="sub">{note}</span>' if note else ""
                 cells += f'<td style="{green}{pick_style}">{"~" if e else ""}{txt}{sub}</td>'
                 done = True
@@ -1389,41 +1401,8 @@ def fit_configs_table() -> str:
             else:
                 txt = f"{'~' if e else ''}{gb(v)}"
             cells += f'<td style="{red}">{txt}</td>'
-        out.append(f'<tr><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}</tr>')
-    out.append("</table>")
-    return "".join(out)
-
-
-# Doubling the microbatch: (context, CP, sequences per microbatch) -> the fit-table
-# row with the same tokens per GPU per microbatch. CP leaves the weight footprint
-# unchanged and the activations scale with tokens per GPU, so memory carries over.
-MICROBATCH_ROWS = [(("8K", 2, 2), ("8K", 1, 1, 1)), (("8K", 4, 2), ("8K", 2, 1, 1)),
-                   (("8K", 4, 4), ("8K", 1, 1, 1)), (("32K", 4, 2), ("32K", 2, 1, 1))]
-
-
-def fit_microbatch_table() -> str:
-    """Larger microbatches for configs with memory to spare: each FSDP + EP 64
-    CP config with 2 or 4 sequences per microbatch has the same tokens per GPU
-    per microbatch, and so the same memory, as a row of the fit table; its
-    greedy pick carries over. Fewer microbatches per step means fewer rounds of
-    FSDP's per-microbatch all-gathers and reduce-scatters."""
-    out = ['<table class="dtable"><tr><th>Config</th><th>Sequences per microbatch</th>'
-           "<th>Tokens per GPU per microbatch</th><th>Microbatches per step</th><th>Same memory as</th>"
-           "<th>Greedy pick</th></tr>"]
-    for (ctx, cp, mb), (rc, rcp, rtp, rpp) in MICROBATCH_ROWS:
-        seq = 8192 if ctx == "8K" else 32768
-        tokens = seq * mb // cp
-        base_mbs = GLOBAL_TOKENS_PER_GPU * cp // seq
-        g = greedy_fit(rc, rcp, rtp, rpp)
-        taken = {"nothing": [], "off": ["offload"], "dm": ["offload", "DistMoE"], "attn": ["offload", "DistMoE", "attn"],
-                 "full": ["full remat"]}[g["pick"]]
-        if g["pick"] in ("dm", "attn") and g["states"][1][3] == "host":
-            taken = [t for t in taken if t != "offload"]
-        summary = (", ".join(taken) or "no remat") + (f"; +{g['back']:.0%} buffer" if g["back"] else "")
-        split = f"CP {rcp}" if rcp > 1 else "no split"
-        out.append(f"<tr><td>{ctx}, CP {cp}</td><td>{mb}</td><td>{tokens:,}</td>"
-                   f"<td>{base_mbs // mb} (from {base_mbs})</td><td>{rc}, {split}, 1 sequence</td>"
-                   f"<td>{summary} ({g['final'] * 2**30 / 1e9:.0f} GB)</td></tr>")
+        tint = ' style="background: rgba(42, 120, 214, 0.05);"' if mb > 1 else ""
+        out.append(f'<tr{tint}><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}</tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -3222,7 +3201,6 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "ep-tp-table": ep_tp_table,
                 "pp-weight-table": pp_weight_table,
                 "fit-configs": fit_configs_table,
-                "fit-microbatch": fit_microbatch_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

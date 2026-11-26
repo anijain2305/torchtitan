@@ -517,7 +517,11 @@ budget:
 to the first that fits one GPU's 288 GB, which is the config's pick, and "not
 needed" after it. The pick shows its peak, then its final peak once the memory
 left over buys back DistMoE's buffer ("+45% DistMoE buffer": 45% of the layers
-keep their DistMoE intermediates). A row with no outlined cell does not fit. Offload moves the attention projections and
+keep their DistMoE intermediates). A row with no outlined cell does not fit.
+Shaded rows take a larger microbatch, as the recipe's step 2 suggests: fewer
+microbatches per step mean fewer rounds of FSDP's gathers and reduce-scatters.
+With CP, a microbatch of 2 or 4 sequences holds as many tokens per GPU as a
+config with less CP, so its memory and greedy path are that config's. Offload moves the attention projections and
 feed-forward to CPU memory; "host full": it would not fit in a GB300 node's CPU
 memory, so the path continues without it. Peaks are measured at full depth with
 a fake process group (CP runs report their first step's peak); "~" marks
@@ -525,13 +529,6 @@ estimates, anchored on the config's own measured settings, and PP 8 / 16 use a
 PP model that matches the measured PP 4 to 0.2 GiB. The ranking uses each
 config's pick.*
 
-Configs with memory to spare can also take a larger microbatch, as the recipe's
-step 2 suggests: fewer microbatches per step mean fewer rounds of FSDP's
-gathers and reduce-scatters. With CP, a microbatch of 2 or 4 sequences holds as
-many tokens per GPU as a config already in the table, so its memory, and its
-greedy pick, carry over:
-
-::: figure fit-microbatch
 
 What the table says:
 
