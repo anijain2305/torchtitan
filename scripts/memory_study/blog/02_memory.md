@@ -474,6 +474,38 @@ is worth keeping in mind now.
 We follow the same approach for every config: go to reasonable CP and TP
 degrees, and run the greedy search to fit each one into its activation budget.
 
+### Interleaved Pipeline Parallelism
+
+Interleaved 1F1B gives each rank `v` smaller stages (virtual stages) instead of
+one: with PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers
+6-11 and 54-59, and so on, so each microbatch loops through the ranks `v`
+times. What it buys is a smaller pipeline bubble, by a factor of `v`, which we
+come back to with the step time. What it costs is memory:
+
+- **Each GPU stores the same weights.** A rank still holds 1/P of the layers,
+  only in `v` pieces: the shards, compute weights and gradients do not change.
+- **More microbatches pile up on the first rank.** Before its first backward,
+  rank 0 runs `(v - 1) x P + 2 x (P - 1)` forward chunks (PyTorch's
+  `ScheduleInterleaved1F1B`), so it holds about `(v + 1) P` chunk-microbatches
+  in flight instead of P. Each chunk has only `93 / (P v)` layers, so in layers
+  that is about `(v + 1) / v` times 1F1B's: 1.5x at `v = 2`, 1.25x at `v = 4`.
+  Everything stashed per layer and microbatch grows with it: the activations,
+  DistMoE's routing indices, and its stashed inputs and outputs.
+
+Rank 0 of each schedule. At 32K the table uses CP 4: without a split, 32K has
+only 8 microbatches per pipeline, and every schedule already holds all 8. With
+CP 4 each GPU holds the same 8,192 tokens per microbatch as 8K without a
+split, so the two contexts give the same numbers:
+
+::: figure pp-vpp-table
+
+Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
+smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
+still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
+at every `v` ([[memory.5]]).
+
+> NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
+
 ## What Parallelism Configs Fit
 
 With all of that in place, here are the parallelism configs that fit our
@@ -482,92 +514,6 @@ budget:
 ::: table fit-configs
 
 <!--
-## Rematerialization
-
-Rematerialization (torch_remat, commonly known as activation checkpointing) stashes fewer tensors in the forward pass, and recomputes them during backward. With full remat, each layer keeps only its input (plus the
-routing decisions), and the activations of one 8K sequence drop from 746 GB to
-**15.6 GB**, about 48x less. The price is one extra forward pass: 8 FLOPs per parameter per
-token instead of 6, about 33% more compute.
-
-**Recompute's contribution to the peak.** Before each layer's backward, remat
-reruns its forward, recreating that layer's intermediate activations: about
-6 GB per 8K tokens, one layer at a time. The peak comes at the first layer of
-the backward pass, when the whole stash is still live, so it is the stash plus
-one layer's working set.
-
-The chart below compares no remat, TorchTitan's default remat (which keeps
-every region the model declares except the routed experts' first projection,
-w13, recomputing only that) and full remat, drawn as its stash plus the
-recompute peak. From here on, full remat means both: 21 GB per 8K sequence.
-
-::: figure memory-remat
-
-## DistMoE
-
-[DistMoE](https://github.com/meta-pytorch/dist_moe) is a recent library from
-the PyTorch team for running MoE layers efficiently: its kernels overlap the
-token dispatch and combine with the expert GEMMs, drop no tokens, and work with
-CUDA graphs. Any production training system has something like it to efficiently manage
-routing imbalance, and its implementation changes both memory
-and speed. So even though it pulls us away from the idealized picture, we bring
-it in now.
-
-Memory is tight, so we configure DistMoE to recompute too: per MoE layer it
-stashes only the layer's input and recomputes the expert intermediates in
-backward. On top of full remat, that adds four things:
-
-- **Its stashed input**, held in DistMoE's own preallocated buffer.
-- **Its output**, which full remat keeps instead of recomputing (why: see
-  [[methodology.2]]).
-- **Scratch** for one layer's temporaries, reused by every layer and sized with
-  a capacity factor of 4 so that experts receiving more than their share of
-  tokens still fit.
-- **Routing indices**: three int64 index arrays per MoE layer, stashed so the
-  backward can send gradients back to the right tokens. They are negligible
-  without expert parallelism (0.3 GB at 8K), but they are sized for the worst
-  case across the expert-parallel group, so with EP 64 they grow 56x, to 16 GB.
-
-For one sequence:
-
-|  | 8K | 32K |
-|---|---|---|
-| Full remat (stash + recompute peak) | 21.2 GB | 85.0 GB |
-| DistMoE stashed inputs | 5.4 GB | 21.6 GB |
-| DistMoE outputs | 5.4 GB | 21.6 GB |
-| DistMoE scratch (capacity factor 4) | 23.6 GB | 94.5 GB |
-| **Activations** | **56 GB** | **223 GB** |
-
-::: figure memory-distmoe
-
-> NOTE: DistMoE's scratch gets large at 32K: 94.5 GB, about half of one GPU's 192 GB on its own. It scales with the capacity factor, so it is a knob we can turn down once we know how imbalanced the routing really is. For now we keep the factor at 4.
-
-From here on, "activations" means full remat (stash plus recompute peak) plus
-DistMoE's stashed inputs, outputs and scratch -- 56 GB per 8K sequence and
-223 GB per 32K sequence. The routing indices come in with expert
-parallelism.
-
-## MXFP8
-
-MXFP8 runs the matmuls on 8-bit operands with a shared scale per 32 elements,
-about 1 byte per element instead of 2. We use it for the routed experts only,
-through DistMoE's own MXFP8 kernels; the dense linears stay in bf16. Memory
-barely changes: **with full remat, a layer stashes only
-its bf16 input, so there is little left for MXFP8 to shrink.** DistMoE still
-stashes its input in bf16, and its scratch shrinks by only about 6% (23.6 to
-22.2 GB at 8K), since most of its temporaries stay in bf16. The rest of the
-post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
-
-## Where We Stand
-
-::: figure memory-summary
-
-Rematerialization brought the activations down to 56 GB per 8K sequence, well
-under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
-whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.4.2]]). The persistent state has
-not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
-to be split across many GPUs.
-
 ### Context Parallelism
 
 Context parallelism (CP) splits each sequence across GPUs: with CP 2, each GPU
@@ -680,38 +626,6 @@ every microbatch in flight. And TP finally pays off: TP 2 beats CP 2 by about
 
 > INSIGHT: Once EP shrinks the routed experts on each GPU, and ZeRO-1 (common with PP) keeps the stage's weights and gradients unsharded all step, the dense weights become a large share of what each GPU holds, and only TP splits them. Under FSDP alone, only two layers are ever gathered, so TP gains little over CP for memory. Details in [[methodology.3]].
 
-### Interleaved Pipeline Parallelism
-
-Interleaved 1F1B gives each rank `v` smaller stages (virtual stages) instead of
-one: with PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers
-6-11 and 54-59, and so on, so each microbatch loops through the ranks `v`
-times. What it buys is a smaller pipeline bubble, by a factor of `v`, which we
-come back to with the step time. What it costs is memory:
-
-- **Each GPU stores the same weights.** A rank still holds 1/P of the layers,
-  only in `v` pieces: the shards, compute weights and gradients do not change.
-- **More microbatches pile up on the first rank.** Before its first backward,
-  rank 0 runs `(v - 1) x P + 2 x (P - 1)` forward chunks (PyTorch's
-  `ScheduleInterleaved1F1B`), so it holds about `(v + 1) P` chunk-microbatches
-  in flight instead of P. Each chunk has only `93 / (P v)` layers, so in layers
-  that is about `(v + 1) / v` times 1F1B's: 1.5x at `v = 2`, 1.25x at `v = 4`.
-  Everything stashed per layer and microbatch grows with it: the activations,
-  DistMoE's routing indices, and its stashed inputs and outputs.
-
-Rank 0 of each schedule. At 32K the table uses CP 4: without a split, 32K has
-only 8 microbatches per pipeline, and every schedule already holds all 8. With
-CP 4 each GPU holds the same 8,192 tokens per microbatch as 8K without a
-split, so the two contexts give the same numbers:
-
-::: figure pp-vpp-table
-
-Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
-smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
-still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
-at every `v` ([[memory.4.6]]).
-
-> NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
-
 ### What Fits
 
 Putting it all together, every config in this section (green: fits in 192 GB,
@@ -757,27 +671,3 @@ the configs that fit.
 -->
 
 ## Notes
-
-### Parked from the old "Using Parallelism to Fit the Model" section
-
-Not published; move into the new text if still wanted. Their [[memory...]] links are stale.
-
-**Compute weights.** Sharding the master weights has a catch. A GPU holding 1/512
-of the fp32 master weights cannot run a forward pass on them, so it needs a
-separate copy of the weights in the format the matmuls use: the **compute
-weights**: MXFP8 for the routed experts, about 1 byte per parameter, and bf16
-for everything else. (FSDP gathers the experts in bf16 and frees that buffer
-once their MXFP8 copy is built; the fake runs in [ [memory.7.8]] agree.) Under
-ZeRO-1 and ZeRO-2 every GPU holds the whole model's compute weights: 2.84 TB,
-which after ZeRO-2 is the largest thing left.
-
-**Padding.** FSDP splits each tensor along its first dimension, and pads it when
-that does not divide evenly. For the expert weights that dimension is the expert
-count, 896 over 512 GPUs, which pads to 1,024: 14% more for the expert part of
-every shard.
-
-**Caveat: DistMoE's routing indices.** For backward, DistMoE stashes three
-int64 index arrays per MoE layer, sized for the worst case: EP x tokens x 14
-entries. With EP 64 at 8K that is 16.2 GB over 92 layers, which is why the EP
-row's activations jump from 56 to 72 GB in [ [memory.7.1]]'s table. (We are
-working with the DistMoE authors to shrink this.)
