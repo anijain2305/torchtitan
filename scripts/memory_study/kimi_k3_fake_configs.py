@@ -639,6 +639,15 @@ def perf_fsdp_ep64_8k() -> Trainer.Config:
     )
 
 
+def perf_fsdp_ep64_32k() -> Trainer.Config:
+    """FSDP 512, EP 64, CP 1 at 32K with CUDA graphs, last step profiled."""
+    return _perf(
+        "fsdp_ep64_32k",
+        32768,
+        ParallelismConfig(data_parallel_shard_degree=-1, expert_parallel_degree=64),
+    )
+
+
 def perf_fsdp_ep64_32k_cp2() -> Trainer.Config:
     """FSDP 512, EP 64, CP 2 at 32K with CUDA graphs, last step profiled."""
     return _perf(

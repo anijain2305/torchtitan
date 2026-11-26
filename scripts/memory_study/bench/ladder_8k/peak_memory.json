@@ -11,6 +11,7 @@
   "rperf_off_ff": 228.5,
   "rperf_off_block_ff": 215.18,
   "rperf_off_attn_ff_dm0.25": 208.75,
-  "rperf_off_attn_ff_dmbase": 135.43
+  "rperf_off_attn_ff_dmbase": 135.43,
+  "rperf_off_attn_ff_dm0.4": 252.76
  }
 }

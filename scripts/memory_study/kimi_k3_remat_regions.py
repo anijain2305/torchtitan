@@ -259,17 +259,29 @@ def _policy():
             offload_block_input="block" in items,
             offload_regions=[x for x in items if x != "block"],
         )
-    assert not items, "offload is only wired for save_all policies"
-    return {"full": FullActivationRematConfig(), "none": None}[policy]
+    if policy == "full":
+        return FullActivationRematConfig(offload_block_input="block" in items,
+                                         offload_regions=[x for x in items if x != "block"])
+    assert not items, "offload is not wired for no remat"
+    return None
 
 
-def remat_perf_8k() -> Trainer.Config:
+def remat_perf_32k() -> Trainer.Config:
+    """remat_perf_8k at 32K (perf_fsdp_ep64_32k, CP 1)."""
+    return remat_perf_8k(base.perf_fsdp_ep64_32k)
+
+
+def remat_perf_8k(make=None) -> Trainer.Config:
     """perf_fsdp_ep64_8k truncated to NUM_LAYERS (CUDA graphs, last step profiled) with the remat /
     offload policy from the environment; run with KIMI_K3_INVENTORY_PLAIN=1.
     Traces go to outputs/profiling/<KIMI_K3_INVENTORY_PROFILE>."""
-    config = base.perf_fsdp_ep64_8k()
+    config = (make or base.perf_fsdp_ep64_8k)()
     config.model = replace(config.model, layers=config.model.layers[:NUM_LAYERS])
     config.activation_remat = _policy()
+    steps = os.environ.get("KIMI_K3_INVENTORY_STEPS")
+    if steps:  # at 32K a GPU runs one microbatch per step
+        config.training.steps = int(steps)
+        config.profiler = replace(config.profiler, profile_freq=int(steps))
     slot = os.environ.get("KIMI_K3_INVENTORY_DM_SLOT")  # DistMoE activation slot factor
     if slot:
         config.dist_moe_runtime = replace(config.dist_moe_runtime, activation_slot_capacity_factor=float(slot))
@@ -297,6 +309,8 @@ def remat_regions_8k(make=None) -> Trainer.Config:
         "full": FullActivationRematConfig(),
         "none": None,
     }[policy]
+    if os.environ.get("KIMI_K3_INVENTORY_OFFLOAD"):  # offload needs the full policy builder
+        config.activation_remat = _policy()
     slot = os.environ.get("KIMI_K3_INVENTORY_DM_SLOT")  # DistMoE activation slot factor
     if slot:
         config.dist_moe_runtime = replace(

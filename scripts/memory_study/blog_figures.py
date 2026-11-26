@@ -385,7 +385,7 @@ def remat_offload_frontier() -> str:
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
     run = lambda r: (peaks[r] * 2**30, _bench(f"ladder_8k/{r}.json")["fwd_bwd_span_s"])
     sel, att_ff, full = run("rperf_sel"), run("rperf_off_attn_ff"), run("rperf_full")
-    undo = run("rperf_off_attn_ff_dm0.25")  # greedy's undo step: a quarter of DistMoE's buffer back
+    undo = run("rperf_off_attn_ff_dm0.4")  # greedy's undo step: 40% of DistMoE's buffer back (0.5 does not fit)
     # steps not run at full depth, from measured differences:
     #  - recomputing attention: no remat's extra stash over selective (8-layer policy
     #    runs scaled to 93 layers), time from the 8-layer no-remat / selective ratio;
@@ -412,7 +412,7 @@ def remat_offload_frontier() -> str:
     blue, orange, green = "#2a78d6", "#eb6834", "#1baf7a"
     paths = [  # name, color, [(point, estimated)], legend text
         ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False), (undo, False)],
-         "(1) free offload, (2) DistMoE recomputes, (3) recompute attention, (4) undo: a quarter of DistMoE's "
+         "(1) free offload, (2) DistMoE recomputes, (3) recompute attention, (4) undo: 40% of DistMoE's "
          "buffer back"),
         ("Remat only", orange, [(none, True), (dm_only, True), (sel, False)],
          "DistMoE recomputes, then recompute attention"),
@@ -440,7 +440,7 @@ def remat_offload_frontier() -> str:
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, t + 44, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
     halo = lambda txt: txt.replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1)
-    end_place = {"Greedy": (-8, 26, "middle"), "Remat only": (10, -12, "start"),
+    end_place = {"Greedy": (-10, 24, "end"), "Remat only": (10, -12, "start"),
                  "Full remat": (10, -12, "start")}
     for name, c, pts, _ in paths:
         fwd = pts[:-1] if name == "Greedy" else pts  # greedy's last segment is the undo step: dashed
@@ -454,7 +454,7 @@ def remat_offload_frontier() -> str:
                        f'{" (estimated)" if est else ""}</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '
                        f'r="{4 if est else 6}" fill="{SURFACE if est else c}" stroke="{c}" stroke-width="2"/></g>')
         if name == "Greedy":  # numbered badges: the order of the greedy steps
-            for k, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (15, 10))), 1):
+            for k, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (-14, -15))), 1):
                 cx, cy = X(act(p)) + bx, Y(p[1]) + by
                 out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="{c}"/>')
                 out.append(_text(cx, cy + 4, str(k), 11, "#ffffff", "middle", weight=700))
