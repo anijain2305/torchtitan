@@ -1,0 +1,31 @@
+{
+ "note": "32K, FSDP 512 + EP 64, CP 1, 93 layers, eager, fake PG on one GB300, DistMoE recomputing (default). peak_reserved_gib: the last-step 'memory:' value; step_s: 32768 tokens per GPU per step / median tps of the steps after the first. From the run logs in /tmp/claude-anijain/runs/r32*_*93.log (2026-11-25, not kept).",
+ "runs": {
+  "full": {
+   "peak_reserved_gib": 268.69,
+   "tps": [
+    1425,
+    1383,
+    1367,
+    1437,
+    1397,
+    1376,
+    1448
+   ],
+   "step_s": 23.45597709377237
+  },
+  "full_block": {
+   "peak_reserved_gib": 244.94,
+   "tps": [
+    1535,
+    1497,
+    1454,
+    1548,
+    1522,
+    1470,
+    1547
+   ],
+   "step_s": 21.529566360052563
+  }
+ }
+}

@@ -372,16 +372,11 @@ def activations_distmoe(ctx: str = "8K") -> str:
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])
 
 
-def remat_offload_frontier() -> str:
-    """Paths from no remat to under the activation budget FSDP + EP 64 leaves
-    at 8K: step time (forward + backward span) against memory for activations
-    (peak minus the weight footprint). Every path starts at no remat:
-      - remat only: DistMoE recomputes, then recompute attention;
-      - greedy: the free offload (attention projections and
-        feed-forward), then DistMoE recomputes, then recompute attention;
-      - full remat.
-    Endpoints are measured at full depth (CUDA graphs); intermediate points
-    that do not fit are estimated from measured differences (hollow)."""
+def _frontier_8k(weights: float) -> dict:
+    """Paths for FSDP + EP 64 at 8K (CUDA graphs, full depth): remat only,
+    greedy (with the undo step) and full remat, from no remat. Points that do
+    not fit were not run at full depth; they are estimated from measured
+    differences."""
     peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
     run = lambda r: (peaks[r] * 2**30, _bench(f"ladder_8k/{r}.json")["fwd_bwd_span_s"])
     sel, att_ff, full = run("rperf_sel"), run("rperf_off_attn_ff"), run("rperf_full")
@@ -406,32 +401,85 @@ def remat_offload_frontier() -> str:
     none = (dm_only[0] + dm_bytes, dm_only[1] - dm_time)       # nothing recomputed
     off_free = (none[0] - off_bytes, none[1] + off_time)       # + the free offload
     off_dm = (off_free[0] - dm_bytes, off_free[1] + dm_time)   # + DistMoE recomputes
+    return {"none": none, "x1": 750e9, "y": (17.5, 21.5), "paths": [
+        ("Greedy", "#2a78d6", [(none, True), (off_free, True), (off_dm, True), (att_ff, False), (undo, False)],
+         "(1) free offload, (2) DistMoE recomputes, (3) recompute attention, (4) undo: 40% of DistMoE's "
+         "buffer back", (-10, 24, "end"), True),
+        ("Remat only", "#eb6834", [(none, True), (dm_only, True), (sel, False)],
+         "DistMoE recomputes, then recompute attention", (10, -12, "start"), False),
+        ("Full remat", "#1baf7a", [(none, True), (full, False)], "recompute every layer", (10, -12, "start"), False),
+    ]}
+
+
+# Host memory per GPU on a GB300 node: two Grace CPUs with 956 GB between them,
+# shared by four GPUs (free -g on the study's devserver); an upper bound on what
+# one GPU can offload.
+HOST_BYTES_PER_GPU = 956e9 / 4
+
+
+def _frontier_32k(weights: float) -> dict:
+    """Paths for FSDP + EP 64 at 32K, CP 1 (eager, full depth). Anchored on the
+    two measured runs, full remat and full remat + offload block inputs;
+    estimated points add the 32K 8-layer stash differences to the full-remat
+    peak, with times scaled by the 8K step ratios. Greedy's free offload is
+    capped by host memory, so it cannot get under the budget."""
+    runs = _bench("ladder_32k/eager_runs.json")["runs"]
+    full = (runs["full"]["peak_reserved_gib"] * 2**30, runs["full"]["step_s"])
+    full_block = (runs["full_block"]["peak_reserved_gib"] * 2**30, runs["full_block"]["step_s"])
+    st = lambda r: scaled_stash(f"remat_policy_32k_{r}.json")
+    r8 = lambda r: _bench(f"ladder_8k/rperf8_{r}.json")["fwd_bwd_span_s"] / _bench("ladder_8k/rperf8_full.json")["fwd_bwd_span_s"]
+    slots = {r["slot"]: r for r in _bench("dist_moe_slots_32k.json")["rows"]}
+    dm_bytes = MOE_LAYERS * (slots[1.0]["context_bytes"] - slots[None]["context_bytes"])
+    dm_time = (MOE_LAYERS * _data()["global_tokens"] / 32768 / 512
+               * ((slots[None]["fwd_ms"] + slots[None]["bwd_ms"]) - (slots[1.0]["fwd_ms"] + slots[1.0]["bwd_ms"])) / 1e3)
+    sel = (full[0] + st("sel") - st("full"), full[1] * r8("sel"))
+    dm_only = (full[0] + st("none") - st("full"), full[1] * r8("none"))
+    none = (dm_only[0] + dm_bytes, dm_only[1] - dm_time)
+    # greedy: offload as much as the host can hold, then DistMoE recomputes, then recompute attention
+    off_free = (none[0] - HOST_BYTES_PER_GPU, none[1])
+    off_dm = (off_free[0] - dm_bytes, off_free[1] + dm_time)
+    greedy_end = (sel[0] - HOST_BYTES_PER_GPU, sel[1])
+    return {"none": none, "x1": 3000e9, "y": (17.0, 26.0), "paths": [
+        ("Greedy", "#2a78d6", [(none, True), (off_free, True), (off_dm, True), (greedy_end, True)],
+         "offload what the host can hold (~240 GB), DistMoE recomputes, recompute attention: does not fit",
+         None, False),
+        ("Remat only", "#eb6834", [(none, True), (dm_only, True), (sel, True)],
+         "DistMoE recomputes, then recompute attention: does not fit", None, False),
+        ("Full remat", "#1baf7a", [(none, True), (full, False), (full_block, False)],
+         "recompute every layer (at the line), then offload the block inputs", (10, 5, "start"), False),
+    ]}
+
+
+def remat_offload_frontier(ctx: str = "8K") -> str:
+    """Paths from no remat to under the activation budget FSDP + EP 64 leaves:
+    step time against memory for activations (peak minus the weight
+    footprint). Filled points are measured at full depth, hollow ones
+    estimated; at 8K the greedy path's steps are numbered."""
     fsdp = zero_parts("8K")[-1]
     weights = sum(fsdp["persistent"]) + sum(fsdp["working"])
     budget = GPU_BYTES - weights
-    blue, orange, green = "#2a78d6", "#eb6834", "#1baf7a"
-    paths = [  # name, color, [(point, estimated)], legend text
-        ("Greedy", blue, [(none, True), (off_free, True), (off_dm, True), (att_ff, False), (undo, False)],
-         "(1) free offload, (2) DistMoE recomputes, (3) recompute attention, (4) undo: 40% of DistMoE's "
-         "buffer back"),
-        ("Remat only", orange, [(none, True), (dm_only, True), (sel, False)],
-         "DistMoE recomputes, then recompute attention"),
-        ("Full remat", green, [(none, True), (full, False)], "recompute every layer"),
-    ]
+    f = (_frontier_8k if ctx == "8K" else _frontier_32k)(weights)
+    paths, none = f["paths"], f["none"]
     act = lambda p: p[0] - weights
     w, h, l, r, t, b = 760, 390, 70, 40, 30, 110
-    x0, x1, y0, y1 = 0.0, 750e9, 17.5, 21.5
+    x0, x1 = 0.0, f["x1"]
+    y0, y1 = f["y"]
     X = lambda v: l + (w - l - r) * (v - x0) / (x1 - x0)
     Y = lambda v: h - b - (h - t - b) * (v - y0) / (y1 - y0)
     out = [f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="paths from no remat to under the '
-           'activation budget at 8K: step time against memory for activations">']
-    for gb in range(0, 751, 100):
-        out.append(f'<line x1="{X(gb * 1e9):.1f}" x2="{X(gb * 1e9):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
-        out.append(_text(X(gb * 1e9), h - b + 18, f"{gb} GB", 11, MUTED, "middle"))
-    for k in range(9):
-        s_ = 17.5 + 0.5 * k
-        out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(s_):.1f}" y2="{Y(s_):.1f}" stroke="{GRID}"/>')
-        out.append(_text(l - 8, Y(s_) + 4, f"{s_:.1f} s", 11, MUTED, "end"))
+           f'activation budget at {ctx}: step time against memory for activations">']
+    xstep = 100e9 if x1 <= 1e12 else 500e9
+    k = 0.0
+    while k <= x1 + 1:
+        out.append(f'<line x1="{X(k):.1f}" x2="{X(k):.1f}" y1="{t}" y2="{h - b}" stroke="{GRID}"/>')
+        out.append(_text(X(k), h - b + 18, f"{k / 1e9:.0f} GB" if k < 1e12 else f"{k / 1e12:g} TB", 11, MUTED, "middle"))
+        k += xstep
+    ystep = 0.5 if y1 - y0 <= 5 else 1.0
+    yv = y0
+    while yv <= y1 + 1e-9:
+        out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(yv):.1f}" y2="{Y(yv):.1f}" stroke="{GRID}"/>')
+        out.append(_text(l - 8, Y(yv) + 4, f"{yv:.1f} s", 11, MUTED, "end"))
+        yv += ystep
     out.append(_text(l + (w - l - r) / 2, h - b + 38,
                      "memory for activations per GPU (peak minus the weight footprint)", 11, MUTED, "middle"))
     out.append(_text(l - 8, t - 12, "step time (forward + backward)", 11, MUTED, "start"))
@@ -440,32 +488,34 @@ def remat_offload_frontier() -> str:
                'stroke-dasharray="4 3"/>')
     out.append(_text(gx + 4, t + 44, f"budget left by FSDP + EP 64: {_dec(budget)}", 11, INK))
     halo = lambda txt: txt.replace("<text ", '<text stroke="#f9f9f7" stroke-width="4" paint-order="stroke" ', 1)
-    end_place = {"Greedy": (-10, 24, "end"), "Remat only": (10, -12, "start"),
-                 "Full remat": (10, -12, "start")}
-    for name, c, pts, _ in paths:
-        fwd = pts[:-1] if name == "Greedy" else pts  # greedy's last segment is the undo step: dashed
+    for name, c, pts, _, place, numbered in paths:
+        fwd = pts[:-1] if numbered else pts  # with numbered steps, the last segment is the undo step: dashed
         out.append(f'<polyline fill="none" stroke="{c}" stroke-width="2" points="'
                    + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in fwd) + '"/>')
-        if name == "Greedy":
+        if numbered:
             out.append(f'<polyline fill="none" stroke="{c}" stroke-width="2" stroke-dasharray="5 4" points="'
                        + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in pts[-2:]) + '"/>')
         for p, est in pts[1:]:
             out.append(f'<g><title>{html.escape(name)}: {p[1]:.2f} s, {_dec(act(p))} for activations'
                        f'{" (estimated)" if est else ""}</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '
                        f'r="{4 if est else 6}" fill="{SURFACE if est else c}" stroke="{c}" stroke-width="2"/></g>')
-        if name == "Greedy":  # numbered badges: the order of the greedy steps
-            for k, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (-14, -15))), 1):
+        if numbered:  # numbered badges: the order of the greedy steps
+            for n, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (-14, -15))), 1):
                 cx, cy = X(act(p)) + bx, Y(p[1]) + by
                 out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="{c}"/>')
-                out.append(_text(cx, cy + 4, str(k), 11, "#ffffff", "middle", weight=700))
-        p = pts[-1][0]
-        dx, dy, anchor = end_place[name]
-        out.append(halo(_text(X(act(p)) + dx, Y(p[1]) + dy, f"{name}: {p[1]:.2f} s", 12, INK, anchor, weight=600)))
+                out.append(_text(cx, cy + 4, str(n), 11, "#ffffff", "middle", weight=700))
+        if place is None:  # verdict in the legend instead
+            continue
+        dx, dy, anchor = place
+        p, est = pts[-1]
+        fits = act(p) <= budget * 1.01  # within 1% counts as at the line
+        tag = f"{p[1]:.2f} s" if fits else "does not fit"
+        out.append(halo(_text(X(act(p)) + dx, Y(p[1]) + dy, f"{name}: {tag}", 12, INK, anchor, weight=600)))
     x, y = X(act(none)), Y(none[1])  # the shared start
     out.append(f'<g><title>No remat: {none[1]:.2f} s, {_dec(act(none))} for activations (estimated)</title>'
                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="{SURFACE}" stroke="{INK}" stroke-width="2"/></g>')
     out.append(halo(_text(x + 10, y + 24, "No remat (est.)", 12, INK, "end", weight=600)))
-    for i, (name, c, _, desc) in enumerate(paths):  # legend: each path's steps
+    for i, (name, c, _, desc, _, _) in enumerate(paths):  # legend: each path's steps
         ly = h - b + 62 + 16 * i
         out.append(f'<line x1="{l}" x2="{l + 18}" y1="{ly - 4}" y2="{ly - 4}" stroke="{c}" stroke-width="3"/>')
         out.append(_text(l + 24, ly, f"{name}: {desc}", 11, INK2))
@@ -2846,7 +2896,7 @@ def by_context(fn):
     return render
 
 
-FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": by_context(activations_distmoe), "remat-offload-frontier": remat_offload_frontier,
+FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_context(memory_by_kind), "activations-distmoe": by_context(activations_distmoe), "remat-offload-frontier": by_context(remat_offload_frontier),
                 "memory-remat": by_context(memory_remat), "memory-summary": by_context(memory_summary),
                 "memory-distmoe": by_context(memory_distmoe),
                 "sharding-steps": by_context(sharding_steps), "zero-table": by_context(zero_table),

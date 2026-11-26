@@ -408,6 +408,9 @@ and no offload. Each line then applies its own steps in order.
 
 ::: figure remat-offload-frontier
 
+*Filled points are measured at full depth, hollow ones estimated. 8K runs use
+CUDA graphs; 32K runs (the toggle at the top right) are eager.*
+
 - **Remat only.** Let DistMoE recompute, then recompute attention. It lands
   right on the budget line.
 - **Greedy.** Take the step that frees the most memory for the least time:
@@ -436,7 +439,7 @@ To fit the budget, we have to go all the way to full remat, and offload the
 block inputs on top. Is there another lever? Yes: context and tensor
 parallelism. They cut the activation memory, so the remat can be less
 aggressive, but they put communication on the critical path. The question
-becomes which costs more: the remat or the collectives. Let's look at CP and TP
+becomes which costs more: the remat or the collectives. Let's look Let's do 3 and then 1.at CP and TP
 next.
 
 ### Shrinking activations with Context and Tensor Parallelism
@@ -461,7 +464,10 @@ Both add collectives, and CP's are cheaper here. TP shrinks the GEMMs, which
 lowers their throughput as the degree grows, and it communicates in every
 layer. CP only communicates in the attention layers, and for KDA that is a tiny
 state. So, to set expectations: CP will beat TP, even though both cut the
-activations by about the same amount.
+activations by about the same amount. Confirming it takes the rankings, but it
+is worth keeping in mind now.
+
+
 
 > NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
 
