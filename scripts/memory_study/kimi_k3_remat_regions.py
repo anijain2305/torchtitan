@@ -291,6 +291,45 @@ def remat_perf_8k(make=None) -> Trainer.Config:
     return config
 
 
+def _generic_parallelism():
+    """KIMI_K3_SEQ / _CP / _TP / _PP as a ParallelismConfig over 512 GPUs:
+    FSDP + EP 64 without PP; with PP, 1F1B, EP = the stage's GPUs."""
+    from torchtitan.config.parallelism import ParallelismConfig
+
+    seq = int(os.environ.get("KIMI_K3_SEQ", "8192"))
+    cp, tp, pp = (int(os.environ.get(f"KIMI_K3_{k}", "1")) for k in ("CP", "TP", "PP"))
+    if pp == 1:
+        par = ParallelismConfig(data_parallel_shard_degree=-1, expert_parallel_degree=64,
+                                context_parallel_degree=cp, tensor_parallel_degree=tp)
+    else:
+        dp = 512 // (pp * tp * cp)
+        par = ParallelismConfig(pipeline_parallel_degree=pp, pipeline_parallel_schedule="1F1B",
+                                num_pp_microbatches=base.GLOBAL_TOKENS // seq // dp,
+                                data_parallel_shard_degree=-1, expert_parallel_degree=512 // pp,
+                                context_parallel_degree=cp, tensor_parallel_degree=tp)
+    return seq, cp, tp, pp, par
+
+
+def remat_generic() -> Trainer.Config:
+    """Any FSDP + EP / ZeRO-1 + PP config from the environment (see
+    _generic_parallelism), eager or CUDA-graphed (KIMI_K3_GRAPHS=1), with the
+    remat / offload / DistMoE-slot policy and layer truncation of
+    remat_regions_8k. With PP, set FAKE_PP_RANK (0 = the first stage)."""
+    seq, cp, tp, pp, par = _generic_parallelism()
+    name = f"generic_{seq // 1024}k_cp{cp}_tp{tp}_pp{pp}"
+    graphs = os.environ.get("KIMI_K3_GRAPHS") == "1"
+    make = (lambda: base._perf(name, seq, par, cp=cp > 1)) if graphs else (
+        lambda: base._memory_study(name, seq, par, cp=cp > 1))
+    config = remat_regions_8k(make)
+    if graphs:
+        prof = os.environ.get("KIMI_K3_INVENTORY_PROFILE")
+        if prof:
+            config.profiler = replace(config.profiler, enable_profiling=True,
+                                      save_traces_folder=f"profiling/{prof}", enable_memory_snapshot=False,
+                                      profile_freq=config.training.steps)
+    return config
+
+
 def remat_regions_32k_cp2() -> Trainer.Config:
     """remat_regions_8k at 32K with CP 2 (mem_fsdp_ep64_32k_cp2; eager)."""
     return remat_regions_8k(base.mem_fsdp_ep64_32k_cp2)
