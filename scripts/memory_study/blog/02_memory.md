@@ -16,6 +16,7 @@ it on our cluster; then we turn to activations:
 - [Shrinking the weight footprint: ZeRO/FSDP, EP, TP and PP](#sec-memory-2)
 - [How big are the activations?](#sec-memory-3)
 - [Use the leftover memory for activations effectively](#sec-memory-4)
+- [What parallelism configs fit](#sec-memory-5)
 
 ## What is the memory footprint we are dealing with?
 
@@ -429,6 +430,51 @@ part of the analysis carries over: the price of each step per byte freed. TP and
 CP shrink the memory footprint and the forward time together, so these prices
 stay roughly the same. We run this greedy approach for every config.
 
+
+Now look at the same config at 32K context (use the toggle at the top right).
+To fit the budget, we have to go all the way to full remat, and offload the
+block inputs on top. Is there another lever? Yes: context and tensor
+parallelism. They cut the activation memory, so the remat can be less
+aggressive, but they put communication on the critical path. The question
+becomes which costs more: the remat or the collectives. Let's look at CP and TP
+next.
+
+### Shrinking activations with Context and Tensor Parallelism
+
+We saw earlier how TP shards the dense weights. In pretraining, TP usually
+comes with *sequence parallelism* (SP): the TP ranks share one microbatch, each
+keeps a shard of it for the ops outside the TP GEMMs (norms, residual adds),
+and an all-gather or reduce-scatter sits around each TP GEMM. So TP also cuts
+the activation memory, roughly by its degree.
+
+*Context parallelism* (CP) targets long sequences instead: it shards each
+sequence across the CP ranks, and adds a mechanism so that attention still sees
+the whole sequence, such as an all-to-all (Ulysses) or a ring of all-gathers
+for dense attention. We use Ulysses for MLA, and for KDA we pass only its small
+recurrent state between ranks. CP leaves the weights untouched; it only cuts
+the activations.
+
+If this was too quick, the [Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)
+covers TP, SP and CP in depth.
+
+Both add collectives, and CP's are cheaper here. TP shrinks the GEMMs, which
+lowers their throughput as the degree grows, and it communicates in every
+layer. CP only communicates in the attention layers, and for KDA that is a tiny
+state. So, to set expectations: CP will beat TP, even though both cut the
+activations by about the same amount.
+
+> NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
+
+We follow the same approach for every config: go to reasonable CP and TP
+degrees, and run the greedy search to fit each one into its activation budget.
+
+## What Parallelism Configs Fit
+
+With all of that in place, here are the parallelism configs that fit our
+budget:
+
+::: table fit-configs
+
 <!--
 ## Rematerialization
 
@@ -512,9 +558,9 @@ post keeps the bf16 figure, 23.6 GB, a slightly conservative bound.
 Rematerialization brought the activations down to 56 GB per 8K sequence, well
 under one GPU. **At 32K the problem is not solved**: 223 GB is still more than a
 whole GPU, before anything else is stored. We come back to it with context and
-tensor parallelism ([[memory.4.2]], [[memory.4.3]]). The persistent state has
+tensor parallelism ([[memory.4.2]]). The persistent state has
 not moved: 33.4 TB, 174 times one GPU. No single-GPU trick fixes that; it has
-to be split across many GPUs. -->
+to be split across many GPUs.
 
 ### Context Parallelism
 
@@ -701,6 +747,8 @@ So the model is accurate for what the program allocates. A config near
 
 Memory alone does not pick a winner: next we build a performance model to rank
 the configs that fit.
+
+-->
 
 ## Notes
 
