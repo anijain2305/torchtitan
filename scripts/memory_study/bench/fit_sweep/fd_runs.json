@@ -76,6 +76,20 @@
    "oom": false,
    "completed": false
   },
+  "fd_32k_pp4_full": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
+  "fd_32k_pp4_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
   "fd_32k_tp2_full": {
    "peak_reserved_gib": 207.14,
    "tps": [
@@ -199,6 +213,44 @@
    ],
    "step_s": 204.8,
    "oom": false,
+   "completed": false
+  },
+  "fd_8k_pp4_full": {
+   "peak_reserved_gib": 212.22,
+   "tps": [
+    208,
+    209,
+    211,
+    211,
+    1127,
+    1140,
+    1146,
+    1145,
+    1351,
+    1351,
+    1351,
+    1351,
+    1348,
+    1348,
+    1348,
+    1348
+   ],
+   "step_s": 24.30860534124629,
+   "oom": false,
+   "completed": true
+  },
+  "fd_8k_pp4_none": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
+   "completed": false
+  },
+  "fd_8k_pp4_sel": {
+   "peak_reserved_gib": null,
+   "tps": [],
+   "step_s": null,
+   "oom": true,
    "completed": false
   },
   "fd_8k_tp2_full": {

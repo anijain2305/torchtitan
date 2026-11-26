@@ -1161,8 +1161,22 @@ def pp_peak_estimate(ctx: str, P: int, pol: str, cp: int = 1) -> float:
     if cp > 1:
         assert (ctx, cp) == ("32K", 4), "only 32K CP 4 maps onto a measured context"
         ctx = "8K"
+    return _pp_model(ctx, P, pol) + _pp_calibration()
+
+
+def _pp_model(ctx: str, P: int, pol: str) -> float:
     inflight = P * -(-93 // P) / 93
     return pp_weight_parts(P)["total"] + inflight * _fsdp_stash(ctx, pol) + _fsdp_extras(ctx)
+
+
+def _pp_calibration() -> float:
+    """Measured minus modeled peak for the one PP config that ran and fit: 8K,
+    PP 4, full remat (real pipeline stages on four GPUs, everything else fake).
+    Added to every PP estimate."""
+    r = _bench("fit_sweep/fd_runs.json")["runs"].get("fd_8k_pp4_full")
+    if not r or r["peak_reserved_gib"] is None:
+        return 0.0
+    return r["peak_reserved_gib"] * 2**30 - _pp_model("8K", 4, "full")
 FIT_POLICIES = [("none", "No remat"), ("sel", "Recompute attention"),
                 ("seloff", "+ offload attention + FF"), ("full", "Full remat")]
 
