@@ -513,18 +513,25 @@ budget:
 
 ::: figure fit-configs
 
-*Peak memory per GPU of each setting against one GPU's 288 GB, measured at full
-depth with a fake process group (CP runs report their first step's peak). No
-remat keeps everything, DistMoE included; offload moves the attention
-projections and feed-forward to CPU memory without recomputing anything;
-"DistMoE recomputes" is DistMoE's default and is part of every setting to its
-right. "~" marks values that could not be measured: they are anchored on the
-config's own measured settings, and PP 8 / 16 use a PP model that matches the
-measured PP 4 to 0.2 GiB. "OOM": the run ran out of memory. "Host full": the
-offload would not fit in a GB300 node's CPU memory. The last column runs the
-greedy approach of [[memory.4.1]] for each config (attn: recompute attention),
-then gives the memory left over back to DistMoE's buffer ("+45% buffer": 45% of
-the layers keep their DistMoE intermediates).*
+*Each config's greedy path ([[memory.4.1]]): the peak per GPU of every state up
+to the first that fits one GPU's 288 GB, which is the config's pick, and "not
+needed" after it. The pick shows its peak, then its final peak once the memory
+left over buys back DistMoE's buffer ("+45% DistMoE buffer": 45% of the layers
+keep their DistMoE intermediates). A row with no outlined cell does not fit. Offload moves the attention projections and
+feed-forward to CPU memory; "host full": it would not fit in a GB300 node's CPU
+memory, so the path continues without it. Peaks are measured at full depth with
+a fake process group (CP runs report their first step's peak); "~" marks
+estimates, anchored on the config's own measured settings, and PP 8 / 16 use a
+PP model that matches the measured PP 4 to 0.2 GiB. The ranking uses each
+config's pick.*
+
+Configs with memory to spare can also take a larger microbatch, as the recipe's
+step 2 suggests: fewer microbatches per step mean fewer rounds of FSDP's
+gathers and reduce-scatters. With CP, a microbatch of 2 or 4 sequences holds as
+many tokens per GPU as a config already in the table, so its memory, and its
+greedy pick, carry over:
+
+::: figure fit-microbatch
 
 What the table says:
 

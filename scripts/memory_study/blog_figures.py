@@ -1293,94 +1293,142 @@ def _fit_cell_measured(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tup
     return ("fit" if v <= budget else "line" if v <= budget * 1.005 else "over"), v
 
 
-def greedy_fit(ctx: str, cp: int, tp: int, pp: int) -> dict | None:
-    """The greedy approach of 3.4.1 for one config: from no remat, take the
-    cheapest step per byte until the config fits -- offload (if the host can
-    hold it), then DistMoE recomputes, then recompute attention, then full remat
-    (+ offloading the block inputs if needed) -- then buy back speed with the
-    memory left over by giving DistMoE its buffer back, in 5% steps. Each state
-    uses its measured peak where one exists. Returns steps, buy-back fraction,
-    final peak (GiB) and whether any state was estimated; None if nothing fits."""
+GREEDY_STATES = [("nothing", "No remat"), ("off", "+ offload"), ("dm", "+ DistMoE recomputes"),
+                 ("attn", "+ recompute attention"), ("full", "Full remat")]
+
+
+def greedy_fit(ctx: str, cp: int, tp: int, pp: int) -> dict:
+    """The greedy approach of 3.4.1 for one config, state by state: no remat;
+    + offload the attention projections and feed-forward (if the host can hold
+    it); + DistMoE recomputes; + recompute attention; and if still over, full
+    remat (+ offloading the block inputs where that is what fits). The first
+    state under the budget is the pick; then the memory left over buys back
+    DistMoE's buffer in 5% steps. Each state uses its measured peak where one
+    exists, else an estimate anchored on the config's measured settings.
+    Returns {"states": [(key, status, GiB, estimated)], "pick": key or None,
+    "back": fraction, "final": GiB}."""
     budget = GPU_BYTES / 2**30
     tokens = (8192 if ctx == "8K" else 32768) / (cp * tp)
     inflight = pp * -(-93 // pp) / 93 if pp > 1 else 1.0
     D = inflight * _distmoe_keep_bytes(tokens) / 2**30
-    host_ok = inflight * _offload_bytes(tokens) <= HOST_BYTES_PER_GPU
+    O = inflight * _offload_bytes(tokens) / 2**30
+    host_ok = O * 2**30 <= HOST_BYTES_PER_GPU
     cell = lambda pol: _fit_cell(ctx, cp, tp, pol, pp)
-    val = lambda st_v: st_v[1] if st_v[1] is not None and st_v[0].removesuffix("_model") in ("fit", "line", "over") else None
-    est = lambda st_v: st_v[0].endswith("_model")
-    nothing, off = cell("nothing"), cell("off")
-    steps, peak, estimated = [], val(nothing), est(nothing)
-    if peak is None:
-        return None
-    if peak > budget and host_ok and val(off) is not None:
-        steps, peak, estimated = ["offload"], val(off), estimated or est(off)
-    if peak > budget:
-        steps.append("DistMoE")
-        peak -= D
-        m = cell("none") if "offload" not in steps else None  # measured state without offload
-        if m and val(m) is not None:
-            peak, estimated = val(m), est(m)
-    if peak > budget:
-        steps.append("attention")
-        m = cell("seloff" if "offload" in steps else "sel")
-        peak, estimated = (val(m), est(m)) if val(m) is not None else (float("inf"), estimated)  # unknown: over
-    if peak > budget:
-        m = cell("full")
-        if val(m) is None:
-            return None
-        steps, peak, estimated = ["full remat"], val(m), est(m)
-        if peak > budget and (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
-            runs = _bench("ladder_32k/eager_runs.json")["runs"]
-            steps, peak, estimated = ["full remat", "block offload"], runs["full_block"]["peak_reserved_gib"], False
-        if peak > budget:
-            return None
-    back = 0.0
-    if ("DistMoE" in steps or "full remat" in steps) and D > 0:
-        back = min(1.0, int((budget - peak) / D * 20) / 20)
-        peak += back * D
-    return {"steps": steps, "back": back, "peak": peak, "estimated": estimated}
+    num = lambda c: c[1] if c[1] is not None and c[0].removesuffix("_model") in ("fit", "line", "over") else None
+    est = lambda c: c[0].endswith("_model")
+    states = []
+    nothing = cell("nothing")
+    states.append(("nothing", num(nothing), est(nothing), nothing[0].removesuffix("_model")))
+    if host_ok:
+        off = cell("off")
+        states.append(("off", num(off), est(off), off[0].removesuffix("_model")))
+        base = num(off)
+        dm = (base - D, True) if base is not None else (None, True)
+        states.append(("dm", dm[0], True, None))
+        attn = cell("seloff")
+    else:
+        states.append(("off", None, False, "host"))
+        m = cell("none")
+        states.append(("dm", num(m), est(m), m[0].removesuffix("_model")))
+        attn = cell("sel")
+    states.append(("attn", num(attn), est(attn), attn[0].removesuffix("_model")))
+    full = cell("full")
+    v_full, e_full, st_full = num(full), est(full), full[0].removesuffix("_model")
+    if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):  # full remat is at the line; offloading the block inputs fits
+        v_full = _bench("ladder_32k/eager_runs.json")["runs"]["full_block"]["peak_reserved_gib"]
+        e_full, st_full = False, "fit"
+    states.append(("full", v_full, e_full, st_full))
+    pick, back, final = None, 0.0, None
+    for key, v, e, st in states:
+        if v is not None and v <= budget:
+            pick, final = key, v
+            break
+    if pick in ("dm", "attn", "full"):
+        back = min(1.0, int((budget - final) / D * 20) / 20)
+        final += back * D
+    return {"states": states, "pick": pick, "back": back, "final": final}
 
 
 def fit_configs_table() -> str:
-    """Which remat / offload settings fit, per FSDP + EP 64 config: the
-    measured peak per GPU of each setting against one GPU's 288 GB, with the
-    lightest setting that fits outlined. Rows: context x CP x TP."""
+    """Each config's greedy path to under one GPU's 288 GB: the peak per GPU of
+    every state up to the first that fits (the pick), 'not needed' after it, and
+    the pick's final peak once the memory left over buys back DistMoE's buffer.
+    The ranking uses each config's pick."""
     green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
-    out_style = "font-size: 12px;"
-    amber = "background: rgba(237, 161, 0, 0.16);"
-    pick = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
+    pick_style = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
     out = ['<table class="dtable"><tr><th>Config</th>'
-           + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Greedy, with buy-back</th></tr>"]
+           + "".join(f"<th>{lab}</th>" for _, lab in GREEDY_STATES) + "</tr>"]
+    gb = lambda v: f"{v * 2**30 / 1e9:.0f} GB"
     for ctx, cp, tp, pp in FIT_ROWS:
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
             split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "")
-        cells, chosen = "", None
-        for pol, lab in FIT_POLICIES:
-            st, v = _fit_cell(ctx, cp, tp, pol, pp)
-            model = st.endswith("_model")
-            st = st.removesuffix("_model")
-            txt = (f"{'~' if model else ''}{v * 2**30 / 1e9:.0f} GB" if st in ("fit", "over") else
-                   f"{v * 2**30 / 1e9:.0f} GB (line)" if st == "line" else
-                   {"oom": "OOM", "host": "host full", "est": "~over", "none": "no data"}[st])
-            style = (green if st == "fit" else amber if st == "line" else
-                     red if st in ("over", "oom", "est", "host") else "")
-            cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
-        g = greedy_fit(ctx, cp, tp, pp)
-        if g is None:
-            chosen = "does not fit"
-        else:
-            short = {"attention": "attn", "full remat": "full remat"}
-            chosen = (", ".join(short.get(x, x) for x in g["steps"]) or "no remat") + (
-                f"; +{g['back']:.0%} buffer" if g["back"] else "")
         dp = 512 // (pp * cp * tp)
         mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
                          + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
-        out.append(f'<tr><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}'
-                   f'<td style="white-space: normal; max-width: 170px;">{chosen or "-"}</td></tr>')
+        g = greedy_fit(ctx, cp, tp, pp)
+        cells, done = "", False
+        for key, v, e, st in g["states"]:
+            if done:
+                cells += '<td style="color: var(--muted);">not needed</td>'
+                continue
+            if key == g["pick"]:
+                txt = gb(v) if not g["back"] else f"{gb(v)} &rarr; {gb(g['final'])}"
+                note = (f"+{g['back']:.0%} DistMoE buffer" if g["back"] else
+                        "+ block offload" if (ctx, cp, tp, pp) == ("32K", 1, 1, 1) else "")
+                sub = f'<span class="sub">{note}</span>' if note else ""
+                cells += f'<td style="{green}{pick_style}">{"~" if e else ""}{txt}{sub}</td>'
+                done = True
+                continue
+            if st == "host":
+                txt = "host full"
+            elif st == "oom":
+                txt = "OOM"
+            elif v is None:
+                txt = "~over"
+            else:
+                txt = f"{'~' if e else ''}{gb(v)}"
+            cells += f'<td style="{red}">{txt}</td>'
+        out.append(f'<tr><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}</tr>')
     out.append("</table>")
     return "".join(out)
+
+
+# Doubling the microbatch: (context, CP, sequences per microbatch) -> the fit-table
+# row with the same tokens per GPU per microbatch. CP leaves the weight footprint
+# unchanged and the activations scale with tokens per GPU, so memory carries over.
+MICROBATCH_ROWS = [(("8K", 2, 2), ("8K", 1, 1, 1)), (("8K", 4, 2), ("8K", 2, 1, 1)),
+                   (("8K", 4, 4), ("8K", 1, 1, 1)), (("32K", 4, 2), ("32K", 2, 1, 1))]
+
+
+def fit_microbatch_table() -> str:
+    """Larger microbatches for configs with memory to spare: each FSDP + EP 64
+    CP config with 2 or 4 sequences per microbatch has the same tokens per GPU
+    per microbatch, and so the same memory, as a row of the fit table; its
+    greedy pick carries over. Fewer microbatches per step means fewer rounds of
+    FSDP's per-microbatch all-gathers and reduce-scatters."""
+    out = ['<table class="dtable"><tr><th>Config</th><th>Sequences per microbatch</th>'
+           "<th>Tokens per GPU per microbatch</th><th>Microbatches per step</th><th>Same memory as</th>"
+           "<th>Greedy pick</th></tr>"]
+    for (ctx, cp, mb), (rc, rcp, rtp, rpp) in MICROBATCH_ROWS:
+        seq = 8192 if ctx == "8K" else 32768
+        tokens = seq * mb // cp
+        base_mbs = GLOBAL_TOKENS_PER_GPU * cp // seq
+        g = greedy_fit(rc, rcp, rtp, rpp)
+        taken = {"nothing": [], "off": ["offload"], "dm": ["offload", "DistMoE"], "attn": ["offload", "DistMoE", "attn"],
+                 "full": ["full remat"]}[g["pick"]]
+        if g["pick"] in ("dm", "attn") and g["states"][1][3] == "host":
+            taken = [t for t in taken if t != "offload"]
+        summary = (", ".join(taken) or "no remat") + (f"; +{g['back']:.0%} buffer" if g["back"] else "")
+        split = f"CP {rcp}" if rcp > 1 else "no split"
+        out.append(f"<tr><td>{ctx}, CP {cp}</td><td>{mb}</td><td>{tokens:,}</td>"
+                   f"<td>{base_mbs // mb} (from {base_mbs})</td><td>{rc}, {split}, 1 sequence</td>"
+                   f"<td>{summary} ({g['final'] * 2**30 / 1e9:.0f} GB)</td></tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
+GLOBAL_TOKENS_PER_GPU = 16 * 1024 * 1024 // 512  # tokens each GPU processes per optimizer step
 
 
 # Steps of the fit tree, in the order the post reaches them; each `::: tree-step
@@ -3174,6 +3222,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "ep-tp-table": ep_tp_table,
                 "pp-weight-table": pp_weight_table,
                 "fit-configs": fit_configs_table,
+                "fit-microbatch": fit_microbatch_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),
