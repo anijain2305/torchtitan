@@ -467,12 +467,15 @@ for (const btn of document.querySelectorAll(".ctx-toggle button"))
 const treeBox = document.querySelector(".fit-tree");
 if (treeBox) {{
   const order = {json.dumps(blog_figures.TREE_STEPS)};
-  const markers = [...document.querySelectorAll(".tree-step")], end = document.querySelector(".tree-end");
+  // steps and ends in document order; the tree shows while the last one passed is a step
+  const marks = [...document.querySelectorAll(".tree-step, .tree-end")];
+  const markers = marks.filter(m => m.classList.contains("tree-step"));
   const update = () => {{
     const mid = window.innerHeight * 0.5;
+    const passedAll = marks.filter(m => m.getBoundingClientRect().top < mid);
+    const last = passedAll[passedAll.length - 1];
+    treeBox.classList.toggle("on", !!last && last.classList.contains("tree-step"));
     const passed = markers.filter(m => m.getBoundingClientRect().top < mid);
-    const done = end && end.getBoundingClientRect().top < mid;
-    treeBox.classList.toggle("on", passed.length > 0 && !done);
     if (!passed.length) return;
     const cur = order.indexOf(passed[passed.length - 1].dataset.step);
     for (const row of treeBox.querySelectorAll(".ft-row")) {{

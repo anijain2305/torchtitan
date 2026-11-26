@@ -518,6 +518,8 @@ final peak once the memory left over buys back DistMoE's buffer ("+45% DistMoE
 buffer": 45% of the layers keep their DistMoE intermediates). A row with no
 outlined cell does not fit. The ranking uses each config's pick.
 
+::: tree-step acts snapshot
+
 **FSDP + EP 64.** The shaded row takes a larger microbatch, as the recipe's step
 2 suggests: 2 sequences per microbatch halve the microbatches per step, and with
 them the rounds of FSDP's gathers and reduce-scatters. It holds 16K tokens per
@@ -557,6 +559,8 @@ What the table says:
 - **PP does not save activations.** Its first stage holds about one whole
   sequence's activations in flight, so PP needs the same remat as FSDP without
   a split, on top of its stage's weights. At 32K, PP fits only with CP 4.
+
+::: tree-end
 
 <!--
 ### Context Parallelism

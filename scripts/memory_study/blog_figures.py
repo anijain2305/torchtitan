@@ -1442,7 +1442,21 @@ GLOBAL_TOKENS_PER_GPU = 16 * 1024 * 1024 // 512  # tokens each GPU processes per
 
 # Steps of the fit tree, in the order the post reaches them; each `::: tree-step
 # <name>` marker in blog/*.md switches the tree to that step.
-TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp", "pp"]
+TREE_STEPS = ["dp", "zero1", "zero2", "zero3", "ep", "tp", "pp", "acts"]
+
+
+def _acts_dots(ctx: str, pp: int, cp: int = 1) -> list:
+    """Tree dots for 3.5: each config's peak at its greedy pick (or over the
+    budget if nothing fits). pp == 1: FSDP + EP 64 at no split, CP 2 / 4, TP 2 /
+    4; pp > 1: ZeRO-1 + PP 4 / 8 / 16 (with cp, only PP 8 / 16)."""
+    def peak(*cfg):
+        g = greedy_fit(*cfg)
+        return g["final"] * 2**30 if g["pick"] else 10 * GPU_BYTES
+    if pp == 1:
+        return [(lab, peak(ctx, c, t, 1)) for lab, c, t in
+                (("1", 1, 1), ("C2", 2, 1), ("C4", 4, 1), ("T2", 1, 2), ("T4", 1, 4))]
+    degrees = (8, 16) if cp > 1 else (4, 8, 16)
+    return [(str(P), peak(ctx, cp, 1, P)) for P in degrees]
 
 
 def _tree_rows() -> list[dict]:
@@ -1458,9 +1472,15 @@ def _tree_rows() -> list[dict]:
         {"label": "+ EP 64 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 64)},
         {"label": "+ EP 128 + TP", "depth": 2, "step": "tp", "dots": tp_dots(1, 128)},
         {"label": "+ PP", "depth": 2, "step": "pp", "dots": pp_dots},
+        {"label": "acts, 8K", "depth": 3, "step": "acts", "dots": _acts_dots("8K", 4)},
+        {"label": "acts, 32K", "depth": 3, "step": "acts", "dots": _acts_dots("32K", 4)},
+        {"label": "acts, 32K CP4", "depth": 3, "step": "acts", "dots": _acts_dots("32K", 4, cp=4)},
         {"label": "ZeRO-2", "depth": 1, "step": "zero2", "value": z["ZeRO-2"]},
         {"label": "ZeRO-3 / FSDP", "depth": 1, "step": "zero3", "value": z["ZeRO-3 / FSDP"]},
         {"label": "+ EP 64", "depth": 2, "step": "ep", "value": z["FSDP + EP 64"]},
+        # 3.5: weights + activations, each config at its greedy pick (C = CP, T = TP)
+        {"label": "acts, 8K", "depth": 3, "step": "acts", "dots": _acts_dots("8K", 1)},
+        {"label": "acts, 32K", "depth": 3, "step": "acts", "dots": _acts_dots("32K", 1)},
     ]
 
 
@@ -1478,7 +1498,7 @@ def fit_tree(cur: str | None = None) -> str:
     out = [f'<svg class="fit-tree-svg" viewBox="0 0 {w} {h}" width="{w}" role="img" '
            'aria-label="which configs fit their weight footprint in one GPU so far">',
            _text(0, 14, "What fits so far", 13, INK, weight=700),
-           _text(0, 28, "weight footprint per GPU vs 288 GB", 11, MUTED)]
+           _text(0, 28, "per GPU vs 288 GB: weights, then + activations", 11, MUTED)]
     # branch lines: from each row up to its parent (the nearest row above with depth - 1)
     for i, r in enumerate(rows):
         if r["depth"] == 0:
@@ -1527,7 +1547,7 @@ def fit_tree(cur: str | None = None) -> str:
     out.append(f'<circle cx="6" cy="{ly - 4}" r="5" fill="{fit_c}"/>')
     out.append(_text(15, ly, "fits", 11, INK2))
     out.append(f'<circle cx="52" cy="{ly - 4}" r="5" fill="{SURFACE}" stroke="{over_c}" stroke-width="1.5"/>')
-    out.append(_text(61, ly, "over (dots: TP or PP degree)", 11, INK2))
+    out.append(_text(61, ly, "over (dots: degree; C = CP, T = TP)", 11, INK2))
     out.append("</svg>")
     return "".join(out)
 
