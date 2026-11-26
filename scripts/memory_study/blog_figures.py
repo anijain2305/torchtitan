@@ -1305,50 +1305,70 @@ GREEDY_STATES = [("nothing", "No remat"), ("off", "+ offload"), ("dm", "+ DistMo
                  ("attn", "+ recompute attention"), ("full", "Full remat")]
 
 
+def _setting_estimates(ctx: str, cp: int, tp: int, pp: int) -> dict:
+    """Peak (bytes) of every remat setting of one config, measured or not:
+    FSDP rows anchor on the config's first measured setting and add the stash
+    differences from its 8-layer inventory; PP rows use the calibrated PP model.
+    Keys: none (DistMoE recomputes), sel (+ recompute attention), full."""
+    if pp > 1:
+        return {pol: pp_peak_estimate(ctx, pp, pol, cp) for pol in ("none", "sel", "full")}
+    for a in ("none", "sel", "full"):
+        st, v = _fit_cell_measured(ctx, cp, tp, a, pp)
+        if st in ("fit", "line", "over") and v is not None:
+            break
+    else:
+        raise ValueError(f"no measured setting for {ctx} CP {cp} TP {tp}")
+    return {pol: v * 2**30 + _split_stash(ctx, cp, tp, pol) - _split_stash(ctx, cp, tp, a)
+            for pol in ("none", "sel", "full")}
+
+
 def greedy_fit(ctx: str, cp: int, tp: int, pp: int) -> dict:
     """The greedy approach of 3.4.1 for one config, state by state: no remat;
     + offload the attention projections and feed-forward (if the host can hold
     it); + DistMoE recomputes; + recompute attention; and if still over, full
     remat (+ offloading the block inputs where that is what fits). The first
     state under the budget is the pick; then the memory left over buys back
-    DistMoE's buffer in 5% steps. Each state uses its measured peak where one
-    exists, else an estimate anchored on the config's measured settings.
-    Returns {"states": [(key, status, GiB, estimated)], "pick": key or None,
-    "back": fraction, "final": GiB}."""
+    DistMoE's buffer in 5% steps. Every state has a peak: measured where a run
+    exists, else estimated; a note marks states whose run ran out of memory or
+    whose offload would not fit the host. Returns {"states": [(key, GiB,
+    estimated, note)], "pick": key or None, "back": fraction, "final": GiB}."""
     budget = GPU_BYTES / 2**30
     tokens = (8192 if ctx == "8K" else 32768) / (cp * tp)
     inflight = pp * -(-93 // pp) / 93 if pp > 1 else 1.0
     D = inflight * _distmoe_keep_bytes(tokens) / 2**30
     O = inflight * _offload_bytes(tokens) / 2**30
     host_ok = O * 2**30 <= HOST_BYTES_PER_GPU
-    cell = lambda pol: _fit_cell(ctx, cp, tp, pol, pp)
-    num = lambda c: c[1] if c[1] is not None and c[0].removesuffix("_model") in ("fit", "line", "over") else None
-    est = lambda c: c[0].endswith("_model")
-    states = []
-    nothing = cell("nothing")
-    states.append(("nothing", num(nothing), est(nothing), nothing[0].removesuffix("_model")))
+    E = {k: v / 2**30 for k, v in _setting_estimates(ctx, cp, tp, pp).items()}
+
+    def measured(pol):
+        """(GiB or None, note) of a measured run of this setting."""
+        st, v = _fit_cell_measured(ctx, cp, tp, pol, pp)
+        if st == "oom":
+            return None, "OOM"
+        return (v, "") if st in ("fit", "line", "over") and not str(st).endswith("_model") else (None, "")
+
+    def state(key, est_value, pol=None):
+        v, note = measured(pol) if pol else (None, "")
+        return (key, v, False, note) if v is not None else (key, est_value, True, note)
+
+    states = [("nothing", E["none"] + D, True, "")]
+    off_note = "" if host_ok else "host full"
+    states.append(("off", E["none"] + D - O, True, off_note))
     if host_ok:
-        off = cell("off")
-        states.append(("off", num(off), est(off), off[0].removesuffix("_model")))
-        base = num(off)
-        dm = (base - D, True) if base is not None else (None, True)
-        states.append(("dm", dm[0], True, None))
-        attn = cell("seloff")
+        states.append(("dm", E["none"] - O, True, ""))
+        states.append(state("attn", E["sel"] - O, "seloff"))
     else:
-        states.append(("off", None, False, "host"))
-        m = cell("none")
-        states.append(("dm", num(m), est(m), m[0].removesuffix("_model")))
-        attn = cell("sel")
-    states.append(("attn", num(attn), est(attn), attn[0].removesuffix("_model")))
-    full = cell("full")
-    v_full, e_full, st_full = num(full), est(full), full[0].removesuffix("_model")
+        states.append(state("dm", E["none"], "none"))
+        states.append(state("attn", E["sel"], "sel"))
+    states.append(state("full", E["full"], "full"))
     if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):  # full remat is at the line; offloading the block inputs fits
-        v_full = _bench("ladder_32k/eager_runs.json")["runs"]["full_block"]["peak_reserved_gib"]
-        e_full, st_full = False, "fit"
-    states.append(("full", v_full, e_full, st_full))
+        states[-1] = ("full", _bench("ladder_32k/eager_runs.json")["runs"]["full_block"]["peak_reserved_gib"],
+                      False, "")
     pick, back, final = None, 0.0, None
-    for key, v, e, st in states:
-        if v is not None and v <= budget:
+    for key, v, e, note in states:
+        if note:  # ran out of memory, or the host cannot hold the offload
+            continue
+        if v <= budget:
             pick, final = key, v
             break
     if pick in ("dm", "attn", "full"):
@@ -1381,28 +1401,20 @@ def fit_configs_table() -> str:
         mesh += f"<br>microbatch: {mb} sequence{'s' if mb > 1 else ''}"
         g = greedy_fit(*(FIT_MICROBATCH[(ctx, cp, mb)] if mb > 1 else (ctx, cp, tp, pp)))
         cells, done = "", False
-        for key, v, e, st in g["states"]:
+        for key, v, e, note in g["states"]:
             if done:
                 cells += '<td style="color: var(--muted);">not needed</td>'
                 continue
             if key == g["pick"]:
                 txt = gb(v) if not g["back"] else f"{gb(v)} &rarr; {gb(g['final'])}"
-                note = (f"+{g['back']:.0%} DistMoE buffer" if g["back"] else
-                        "+ block offload" if g["states"][4][1] is not None and (ctx, cp, tp, pp, mb) == ("32K", 1, 1, 1, 1)
-                        else "")
-                sub = f'<span class="sub">{note}</span>' if note else ""
+                pnote = (f"+{g['back']:.0%} DistMoE buffer" if g["back"] else
+                         "+ block offload" if (ctx, cp, tp, pp, mb) == ("32K", 1, 1, 1, 1) else "")
+                sub = f'<span class="sub">{pnote}</span>' if pnote else ""
                 cells += f'<td style="{green}{pick_style}">{"~" if e else ""}{txt}{sub}</td>'
                 done = True
                 continue
-            if st == "host":
-                txt = "host full"
-            elif st == "oom":
-                txt = "OOM"
-            elif v is None:
-                txt = "~over"
-            else:
-                txt = f"{'~' if e else ''}{gb(v)}"
-            cells += f'<td style="{red}">{txt}</td>'
+            sub = f'<span class="sub">{note}</span>' if note else ""
+            cells += f'<td style="{red}">{"~" if e else ""}{gb(v)}{sub}</td>'
         tint = ' style="background: rgba(42, 120, 214, 0.05);"' if mb > 1 else ""
         out.append(f'<tr{tint}><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}</tr>')
     out.append("</table>")

@@ -526,7 +526,8 @@ and greedy path. We only grow the microbatch where there is no split to lower:
 under CP or TP, a microbatch of 2 sequences holds as many tokens per GPU as half
 the degree, while still paying the split's communication. Offload moves the attention projections and
 feed-forward to CPU memory; "host full": it would not fit in a GB300 node's CPU
-memory, so the path continues without it. Peaks are measured at full depth with
+memory, so the path continues without it; "OOM": that setting's run ran out
+of memory. Peaks are measured at full depth with
 a fake process group (CP runs report their first step's peak); "~" marks
 estimates, anchored on the config's own measured settings, and PP 8 / 16 use a
 PP model that matches the measured PP 4 to 0.2 GiB. The ranking uses each
