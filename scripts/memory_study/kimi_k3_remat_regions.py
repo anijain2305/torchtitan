@@ -291,6 +291,11 @@ def remat_perf_8k(make=None) -> Trainer.Config:
     return config
 
 
+def remat_regions_32k_cp2() -> Trainer.Config:
+    """remat_regions_8k at 32K with CP 2 (mem_fsdp_ep64_32k_cp2; eager)."""
+    return remat_regions_8k(base.mem_fsdp_ep64_32k_cp2)
+
+
 def remat_regions_32k() -> Trainer.Config:
     """remat_regions_8k at 32K (mem_fsdp_ep64_32k)."""
     return remat_regions_8k(base.mem_fsdp_ep64_32k)
