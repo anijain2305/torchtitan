@@ -168,6 +168,12 @@ def _measured_block(region_name, fn, *a, **kw):
     return out
 
 
+# Fake CP runs: peers' halves of a sequence are fake, so the loss can come out
+# non-finite and the optimizer's finiteness guard would stop the run before the
+# first step is measured. These runs only measure memory and time, so skip it.
+if int(os.environ.get("KIMI_K3_CP", "1")) > 1:
+    torch._assert_async = lambda *a, **kw: None
+
 # KIMI_K3_INVENTORY_PLAIN=1: no instrumentation (CUDA-graphed runs; event
 # timing inside a graph capture is not meaningful).
 _PLAIN = os.environ.get("KIMI_K3_INVENTORY_PLAIN") == "1"
