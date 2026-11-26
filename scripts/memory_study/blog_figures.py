@@ -1123,10 +1123,12 @@ FIT_ROWS = [("8K", 1, 1, 1), ("8K", 2, 1, 1), ("8K", 4, 1, 1), ("8K", 1, 2, 1), 
             ("32K", 4, 1, 8), ("32K", 4, 1, 16)]
 # Fit-table rows with larger microbatches, each placed after its one-sequence row:
 # (context, CP, sequences per microbatch) -> the row with the same tokens per GPU
-# per microbatch (CP leaves the weight footprint unchanged and the activations
-# scale with tokens per GPU, so its memory and greedy path carry over).
-FIT_MICROBATCH = {("8K", 2, 2): ("8K", 1, 1, 1), ("8K", 4, 2): ("8K", 2, 1, 1),
-                  ("8K", 4, 4): ("8K", 1, 1, 1), ("32K", 4, 2): ("32K", 2, 1, 1)}
+# per microbatch and the same weight footprint, whose memory and greedy path
+# carry over. Only configs without CP or TP: under CP or TP, a larger microbatch
+# is just a lower degree that keeps paying the split's communication. 8K with 2
+# sequences holds 16K tokens per GPU, as 32K CP 2 does (CP leaves the FSDP + EP
+# 64 weights unchanged).
+FIT_MICROBATCH = {("8K", 1, 2): ("32K", 2, 1, 1)}
 
 
 def _fsdp_stash(ctx: str, pol: str) -> float:

@@ -518,10 +518,13 @@ to the first that fits one GPU's 288 GB, which is the config's pick, and "not
 needed" after it. The pick shows its peak, then its final peak once the memory
 left over buys back DistMoE's buffer ("+45% DistMoE buffer": 45% of the layers
 keep their DistMoE intermediates). A row with no outlined cell does not fit.
-Shaded rows take a larger microbatch, as the recipe's step 2 suggests: fewer
-microbatches per step mean fewer rounds of FSDP's gathers and reduce-scatters.
-With CP, a microbatch of 2 or 4 sequences holds as many tokens per GPU as a
-config with less CP, so its memory and greedy path are that config's. Offload moves the attention projections and
+The shaded row takes a larger microbatch, as the recipe's step 2 suggests: 2
+sequences per microbatch halve the microbatches per step, and with them the
+rounds of FSDP's gathers and reduce-scatters. It holds 16K tokens per GPU with
+FSDP + EP 64's weights, as 32K with CP 2 does, so it borrows that config's memory
+and greedy path. We only grow the microbatch where there is no split to lower:
+under CP or TP, a microbatch of 2 sequences holds as many tokens per GPU as half
+the degree, while still paying the split's communication. Offload moves the attention projections and
 feed-forward to CPU memory; "host full": it would not fit in a GB300 node's CPU
 memory, so the path continues without it. Peaks are measured at full depth with
 a fake process group (CP runs report their first step's peak); "~" marks
