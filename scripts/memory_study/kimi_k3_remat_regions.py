@@ -328,6 +328,8 @@ def remat_generic() -> Trainer.Config:
     make = (lambda: base._perf(name, seq, par, cp=cp > 1)) if graphs else (
         lambda: base._memory_study(name, seq, par, cp=cp > 1))
     config = remat_regions_8k(make)
+    if pp > 1:  # stages compile at different times, so the first step's P2P can wait for minutes
+        config.comm = replace(config.comm, init_timeout_seconds=3600, train_timeout_seconds=1800)
     if graphs:
         prof = os.environ.get("KIMI_K3_INVENTORY_PROFILE")
         if prof:
