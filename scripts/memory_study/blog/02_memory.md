@@ -516,7 +516,22 @@ budget:
 *Peak memory per GPU of each setting against one GPU's 288 GB, measured at full
 depth with a fake process group (CP runs report their first step's peak). The
 outlined cell is the lightest setting that fits. "Needs more host memory": the
-offload would not fit in a GB300 node's CPU memory.*
+offload would not fit in a GB300 node's CPU memory. PP 4 runs with real
+pipeline stages on four GPUs; "(est.)" marks modeled values: the stage's
+weights, plus the stash of the microbatches the first stage holds in flight,
+plus the overheads measured for FSDP at the same tokens per GPU.*
+
+What the table says:
+
+- **Splitting the sequence buys you out of remat.** At 8K, CP 2, CP 4 and TP 4
+  fit with no remat at all; without a split, even recomputing attention is
+  right at the line.
+- **At 32K, CP beats TP for memory too.** CP 4 fits by recomputing attention
+  alone; TP 4 also needs the offload. Without a split, or with a split of 2,
+  only full remat fits, and offload runs out of host memory.
+- **PP does not save activations.** Its first stage holds about one whole
+  sequence's activations in flight, so PP needs the same remat as FSDP without
+  a split, on top of its stage's weights. At 32K, PP fits only with CP 4.
 
 <!--
 ### Context Parallelism
