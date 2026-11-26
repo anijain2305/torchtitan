@@ -1114,20 +1114,80 @@ def pp_weight_table() -> str:
     return "".join(out)
 
 
-# Fit sweep rows: (context, CP, TP) for FSDP 512 + EP 64.
-FIT_ROWS = [("8K", 1, 1), ("8K", 2, 1), ("8K", 4, 1), ("8K", 1, 2), ("8K", 1, 4),
-            ("32K", 1, 1), ("32K", 2, 1), ("32K", 4, 1), ("32K", 1, 2), ("32K", 1, 4), ("32K", 2, 2)]
+# Fit table rows: (context, CP, TP, PP). PP 1 is FSDP 512 + EP 64; PP > 1 is
+# ZeRO-1 + PP with EP = the stage's GPUs (PP 4 measured, PP 8 / 16 modeled).
+FIT_ROWS = [("8K", 1, 1, 1), ("8K", 2, 1, 1), ("8K", 4, 1, 1), ("8K", 1, 2, 1), ("8K", 1, 4, 1),
+            ("8K", 1, 1, 4), ("8K", 1, 1, 8), ("8K", 1, 1, 16),
+            ("32K", 1, 1, 1), ("32K", 2, 1, 1), ("32K", 4, 1, 1), ("32K", 1, 2, 1), ("32K", 1, 4, 1),
+            ("32K", 2, 2, 1), ("32K", 1, 1, 4), ("32K", 1, 1, 8), ("32K", 1, 1, 16),
+            ("32K", 4, 1, 8), ("32K", 4, 1, 16)]
+
+
+def _fsdp_stash(ctx: str, pol: str) -> float:
+    """One sequence's stash at CP 1 (whole model, 93 layers) for a setting,
+    from the 8-layer policy runs; + offload: recompute attention's stash minus
+    what offloading attention + FF moved off the GPU in the measured 8K runs
+    (scaled by context)."""
+    runs = {"8K": {"none": "remat_policy_8k_none_fixedptrs.json", "sel": "remat_policy_8k_selective_fixedptrs.json",
+                   "full": "remat_policy_8k_full_fixedptrs.json"},
+            "32K": {"none": "remat_policy_32k_none.json", "sel": "remat_policy_32k_sel.json",
+                    "full": "remat_policy_32k_full.json"}}[ctx]
+    if pol == "seloff":
+        peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
+        moved = (peaks["rperf_sel"] - peaks["rperf_off_attn_ff"]) * 2**30 * (4 if ctx == "32K" else 1)
+        return scaled_stash(runs["sel"]) - moved
+    return scaled_stash(runs[pol])
+
+
+def _fsdp_extras(ctx: str) -> float:
+    """What a step holds beyond the weight footprint and the stash (DistMoE's
+    scratch, the recompute working set, the loss, allocator slack), backed out
+    of the measured CP 1 full-remat peak at this context."""
+    fsdp = zero_parts("8K")[-1]
+    weights = sum(fsdp["persistent"]) + sum(fsdp["working"])
+    peak = (_bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]["rperf_full"] if ctx == "8K"
+            else _bench("ladder_32k/eager_runs.json")["runs"]["full"]["peak_reserved_gib"]) * 2**30
+    return peak - weights - _fsdp_stash(ctx, "full")
+
+
+def pp_peak_estimate(ctx: str, P: int, pol: str, cp: int = 1) -> float:
+    """Modeled peak per GPU on the first stage of ZeRO-1 + PP P (1F1B, EP = the
+    stage), optionally with CP: the stage's weight footprint (pp_weight_parts;
+    CP leaves it unchanged) + the stash of the microbatches in flight (P
+    microbatches x ceil(93 / P) layers, as a share of one sequence's 93-layer
+    stash) + the extras. With CP, the stash and extras are those of the context
+    with the same tokens per GPU (32K with CP 4 holds 8K tokens per GPU), so the
+    measured 8K values apply."""
+    if cp > 1:
+        assert (ctx, cp) == ("32K", 4), "only 32K CP 4 maps onto a measured context"
+        ctx = "8K"
+    inflight = P * -(-93 // P) / 93
+    return pp_weight_parts(P)["total"] + inflight * _fsdp_stash(ctx, pol) + _fsdp_extras(ctx)
 FIT_POLICIES = [("none", "No remat"), ("sel", "Recompute attention"),
                 ("seloff", "+ offload attention + FF"), ("full", "Full remat")]
 
 
-def _fit_cell(ctx: str, cp: int, tp: int, pol: str) -> tuple[str, float | None]:
+def _fit_cell(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tuple[str, float | None]:
     """(status, peak GiB) of one measured setting: status is fit, over, oom,
     host (offload needs more host memory than a GB300 node has), est (not run,
     estimated over) or none (no data). Peaks are full-depth, fake process group;
     CP runs report their first step's peak."""
     budget = GPU_BYTES / 2**30
-    if (ctx, cp, tp) == ("8K", 1, 1):  # the 3.4.1 ladder (CUDA graphs)
+    if pp > 1:
+        r = _bench("fit_sweep/fd_runs.json")["runs"].get(f"fd_{ctx.lower()}_pp{pp}_{pol}")
+        if r is not None:  # measured (PP 4, hybrid: real PP, fake everything else)
+            if r["oom"]:
+                return "oom", None
+            if r["peak_reserved_gib"] is None:
+                return "none", None
+            v = r["peak_reserved_gib"]
+        else:
+            if pol == "seloff" and ctx == "32K" and cp == 1:
+                return "host", None
+            v = pp_peak_estimate(ctx, pp, pol, cp) / 2**30
+            st = "fit" if v <= budget else "line" if v <= budget * 1.005 else "over"
+            return st + "_model", v
+    elif (ctx, cp, tp) == ("8K", 1, 1):  # the 3.4.1 ladder (CUDA graphs)
         peaks = _bench("ladder_8k/peak_memory.json")["peak_reserved_gib"]
         run = {"sel": "rperf_sel", "seloff": "rperf_off_attn_ff", "full": "rperf_full"}.get(pol)
         if run is None:
@@ -1162,14 +1222,18 @@ def fit_configs_table() -> str:
     green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
     amber = "background: rgba(237, 161, 0, 0.16);"
     pick = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
-    out = ['<table class="dtable"><tr><th>FSDP + EP 64</th>'
+    out = ['<table class="dtable"><tr><th>Config</th>'
            + "".join(f"<th>{lab}</th>" for _, lab in FIT_POLICIES) + "<th>Lightest that fits</th></tr>"]
-    for ctx, cp, tp in FIT_ROWS:
+    for ctx, cp, tp, pp in FIT_ROWS:
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
+        if pp > 1:
+            split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "")
         cells, chosen = "", None
         for pol, lab in FIT_POLICIES:
-            st, v = _fit_cell(ctx, cp, tp, pol)
-            txt = (f"{v * 2**30 / 1e9:.0f} GB" if st in ("fit", "over") else
+            st, v = _fit_cell(ctx, cp, tp, pol, pp)
+            model = st.endswith("_model")
+            st = st.removesuffix("_model")
+            txt = (f"{v * 2**30 / 1e9:.0f} GB{' (est.)' if model else ''}" if st in ("fit", "over") else
                    f"{v * 2**30 / 1e9:.0f} GB, at the line" if st == "line" else
                    {"oom": "out of memory", "host": "needs more host memory", "est": "over (est.)",
                     "none": "no data"}[st])
@@ -1179,7 +1243,7 @@ def fit_configs_table() -> str:
                 chosen = lab
                 style += pick
             cells += f'<td style="{style}">{txt}</td>' if style else f"<td>{txt}</td>"
-        if (ctx, cp, tp) == ("32K", 1, 1):
+        if (ctx, cp, tp, pp) == ("32K", 1, 1, 1):
             chosen = "Full remat + offload block inputs"
         out.append(f"<tr><td>{ctx}, {split}</td>{cells}<td>{chosen or '-'}</td></tr>")
     out.append("</table>")
