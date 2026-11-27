@@ -502,21 +502,14 @@ for each we care about its bubble and its activation footprint.
 alive on the first stage, so it holds about one whole sequence's activations:
 the same as without PP.
 
-**Interleaved 1F1B.** 1F1B suffers from pipeline bubbles. The natural
-alternative is Interleaved 1F1B: still P ranks, but the model is cut into
-`P x v` smaller chunks (virtual stages), dealt to the ranks round robin. With
-PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers 6-11 and
-54-59, and so on, so each microbatch loops through the ranks `v` times. Each
-rank still stores the same weights, just in `v` pieces. Smaller chunks let the
-next one start sooner, which shrinks the bubble by about `v` (we come back to
-this with the step time). The price is memory: more microbatches are alive at a
-time. Before its first backward, rank 0 runs `(v - 1) x P + 2 x (P - 1)` forward
-chunks (PyTorch's `ScheduleInterleaved1F1B`), each of `93 / (P v)` layers. In
-layers, that is about `(v + 1) / v` times 1F1B's: 1.5x at `v = 2`, 1.25x at
-`v = 4`. So a larger `v` holds less, because each chunk is smaller and a
-microbatch is released sooner. Everything stashed per layer and microbatch
-grows with it: the activations, DistMoE's routing indices, and its stashed
-inputs and outputs.
+**Interleaved 1F1B.** To shrink 1F1B's bubble, Interleaved 1F1B cuts the
+model into `v` times more, smaller chunks and deals them to the ranks round
+robin. With PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers
+6-11 and 54-59, and so on. Each rank stores the same weights, just in `v`
+pieces, and the bubble shrinks by about `v` (we come back to this with the step
+time). The price is memory: to keep every rank busy, the first rank starts more
+microbatches before its first backward, so more activations are alive at once.
+A larger `v` gives some of that back, since its chunks are smaller.
 
 On the first rank, with attention recomputed at 8K:
 
