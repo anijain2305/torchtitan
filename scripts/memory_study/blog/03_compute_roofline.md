@@ -211,7 +211,7 @@ microbatches. At 8K, CP 4 grows the memory-bound work from 5.4 to 11.7 s.
 
 **PP's ZeRO-1 removes that cost.** The stage's weights stay gathered for the
 whole step, so the weight work happens once: with TP 2 at 8K, PP 8 needs
-18.9 s against 22.1 s for FSDP 512, and CP and TP cost far less. What they still cost is
+19.5 s against 22.6 s for FSDP 512, and CP and TP cost far less. What they still cost is
 smaller shapes: KDA under CP and TP, and the experts at CP 4 or TP 4.
 
 **PP 16 (EP 32 per stage):**
@@ -231,14 +231,14 @@ ran them all (PP needs one GPU per stage, so its configs are not here):
 
 ::: figure sweep-table
 
-- **Within 8% everywhere**: 3% over at 8K without a split, 3-6% over at 32K
+- **Within 8% everywhere**: 3% over at 8K without a split, 6-8% over at 32K
   with CP 2, CP 4 or TP 2.
 - **Optimistic where KDA splits or the microbatches multiply** (CP 4 and TP 4
-  at 8K, TP 4 at 32K), by 6-8%: those configs run KDA at its least efficient
+  at 8K, TP 4 at 32K), by 4-5%: those configs run KDA at its least efficient
   and redo FSDP's weight work more often, and those kernels run a little slower
   than calibrated.
 - **The order holds at 8K**, which is what the ranking needs. At 32K the four
-  splits sit within 2.5 s and the model swaps one: it puts TP 4 second, the
+  splits sit within about 3 s and the model swaps one: it puts TP 4 third, the
   measurement last.
 
 The experts are not an independent check here: their times come from these

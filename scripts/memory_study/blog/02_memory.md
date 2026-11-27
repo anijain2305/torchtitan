@@ -452,12 +452,12 @@ reduce-scatter sits around each TP GEMM. So TP also cuts the activation memory,
 roughly by its degree.
 
 *Context parallelism* (CP), on the other hand, targets long sequences. It
-shards each sequence across the CP ranks, and adds a mechanism so that
-attention still sees the whole sequence, such as an all-to-all (Ulysses) or a
+shards each sequence across the CP ranks, and adds a mechanism so that attention
+operation still sees the whole sequence, such as an all-to-all (Ulysses) or a
 ring of all-gathers for dense attention. We use Ulysses for MLA, and for KDA we
 pass only its small recurrent state between ranks. So CP also cuts the
-activation memory roughly by its degree, just like TP, but it leaves the
-weights untouched.
+activation memory roughly by its degree, just like TP, but it leaves the weights
+untouched.
 
 I admit this is a very short explanation of CP and TP. The topic, especially CP
 with linear attention, deserves a post of its own. Here, the one takeaway is
@@ -465,6 +465,7 @@ that both cut the activations by their degree. For the details, read the
 [Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)
 and the background on linear attention.
 
+I know that we are relying on rankings to tell us which one is better. But its a good mental exercise at this stage to think this.
 So which one should be faster? Before looking at the rankings, a first-order
 estimate: count the bytes each one moves between ranks. TP communicates around
 its GEMMs, so it pays in all 93 layers, KDA and MLA alike. CP communicates only

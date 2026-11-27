@@ -1025,23 +1025,27 @@ def ep_tp_table() -> str:
     return "".join(out)
 
 
-def pp_weight_parts(P: int) -> dict:
-    """ZeRO-1 + PP P (EP = the stage's 512 / P GPUs, no TP), first stage: the
+def pp_weight_parts(P: int, tp: int = 1) -> dict:
+    """ZeRO-1 + PP P (EP = the stage's 512 / P GPUs), first stage: the
     weight footprint split as in ep-tp-table. From pp_parts' rules: each stage
     holds ceil(93 / P) layers; master weights + optimizer state are 8 B/param
     over the stage's GPUs (4 + 4: fp32 master, Muon's fp32 momentum); ZeRO-1
     keeps the stage's gradients unsharded (fp32) and its compute weights
-    gathered (MXFP8 experts, bf16 dense) all step."""
+    gathered (MXFP8 experts, bf16 dense) all step. TP (as in ep_tp_parts)
+    splits the dense compute weights and gradients tp ways, except the
+    TP-whole ones, whose master weights and optimizer state are then sharded
+    over only g / tp GPUs; the experts stay whole (TP folds into EP)."""
     d = _data()
     lay = {r["key"]: r["numel"] for r in d["layers"][0]["scope"]["stored"]}
     routed_n = lay["routed"]
     dense_n = sum(lay.values()) - routed_n
     q = dense_quantized_params()
     g, ls = 512 // P, -(-93 // P)
-    mo = 8 * ls * (routed_n + dense_n) / g
-    exp_g, dense_g = 4 * ls * routed_n / g, 4 * ls * dense_n
+    frac = (1 - TP_WHOLE_FRACTION) / tp + TP_WHOLE_FRACTION  # dense params held per TP rank
+    mo = 8 * ls * (routed_n + dense_n * ((1 - TP_WHOLE_FRACTION) + TP_WHOLE_FRACTION * tp)) / g
+    exp_g, dense_g = 4 * ls * routed_n / g, 4 * ls * dense_n * frac
     exp_w = MXFP8_WEIGHT_BYTES * ls * routed_n / g
-    dense_w = ls * (MXFP8_WEIGHT_BYTES * q + 2 * (dense_n - q))
+    dense_w = ls * (MXFP8_WEIGHT_BYTES * q + 2 * (dense_n - q)) * frac
     return {"P": P, "layers": ls, "gpus": g, "master": mo / 2, "optim": mo / 2, "exp_g": exp_g, "dense_g": dense_g,
             "exp_w": exp_w, "dense_w": dense_w, "total": mo + exp_g + dense_g + exp_w + dense_w}
 
@@ -1120,7 +1124,9 @@ FIT_ROWS = [("8K", 1, 1, 1), ("8K", 2, 1, 1), ("8K", 4, 1, 1), ("8K", 1, 2, 1), 
             ("8K", 1, 1, 4), ("8K", 1, 1, 8), ("8K", 1, 1, 16),
             ("32K", 1, 1, 1), ("32K", 2, 1, 1), ("32K", 4, 1, 1), ("32K", 1, 2, 1), ("32K", 1, 4, 1),
             ("32K", 2, 2, 1), ("32K", 1, 1, 4), ("32K", 1, 1, 8), ("32K", 1, 1, 16),
-            ("32K", 4, 1, 8), ("32K", 4, 1, 16)]
+            ("32K", 4, 1, 8), ("32K", 4, 1, 16),
+            # PP with CP or TP: CP-vs-TP pairs under PP
+            ("8K", 2, 1, 8), ("8K", 1, 2, 8), ("8K", 2, 1, 16), ("8K", 1, 2, 16), ("32K", 1, 4, 8), ("32K", 1, 4, 16)]
 # Fit-table rows with larger microbatches, each placed after its one-sequence row:
 # (context, CP, sequences per microbatch) -> the row with the same tokens per GPU
 # per microbatch and the same weight footprint, whose memory and greedy path
@@ -1165,18 +1171,24 @@ def _pp_inflight_share(P: int, v: int = 1) -> float:
     return pp_inflight(P, v, 10**6) * rank0_chunk_layers(P, v) / 93
 
 
-def pp_peak_estimate(ctx: str, P: int, pol: str, cp: int = 1, v: int = 1) -> float:
+def pp_peak_estimate(ctx: str, P: int, pol: str, cp: int = 1, v: int = 1, tp: int = 1) -> float:
     """Modeled peak per GPU on the first stage of ZeRO-1 + PP P (1F1B, EP = the
     stage), optionally with CP: the stage's weight footprint (pp_weight_parts;
     CP leaves it unchanged) + the stash of the microbatches in flight (P
     microbatches x ceil(93 / P) layers, as a share of one sequence's 93-layer
     stash) + the extras. With CP, the stash and extras are those of the context
     with the same tokens per GPU (32K with CP 4 holds 8K tokens per GPU), so the
-    measured 8K values apply."""
-    if cp > 1:
-        assert (ctx, cp) == ("32K", 4), "only 32K CP 4 maps onto a measured context"
-        ctx = "8K"
-    return _pp_model(ctx, P, pol, v) + _pp_calibration()
+    measured 8K values apply. Other splits: the stage's weights with TP
+    (pp_weight_parts), the split's own 93-layer stash from its 8-layer
+    inventory, and the 8K extras scaled by tokens per GPU (DistMoE's scratch
+    and the recompute working set grow with them)."""
+    if (ctx, cp, tp) == ("32K", 4, 1):
+        ctx, cp = "8K", 1
+    if (cp, tp) == (1, 1):
+        return _pp_model(ctx, P, pol, v) + _pp_calibration()
+    tokens = (8192 if ctx == "8K" else 32768) / (cp * tp)
+    return (pp_weight_parts(P, tp)["total"] + _pp_inflight_share(P, v) * _split_stash(ctx, cp, tp, pol)
+            + _fsdp_extras("8K") * tokens / 8192 + _pp_calibration())
 
 
 def _pp_model(ctx: str, P: int, pol: str, v: int = 1) -> float:
@@ -1200,6 +1212,8 @@ def _split_stash(ctx: str, cp: int, tp: int, pol: str) -> float:
     split, from its 8-layer inventory (CP 1 / TP 1: the 3.4.1 policy runs)."""
     if (cp, tp) == (1, 1):
         return _fsdp_stash(ctx, pol)
+    if pol == "seloff":  # recompute attention + offload
+        return _split_stash(ctx, cp, tp, "sel") - _offload_bytes((8192 if ctx == "8K" else 32768) / (cp * tp))
     name = f"{ctx.lower()}_{'cp%d' % cp if cp > 1 else ''}{'tp%d' % tp if tp > 1 else ''}"
     return scaled_stash(f"fit_sweep/inv_{name}_{pol}.json")
 
@@ -1236,7 +1250,7 @@ def _fit_cell_estimated(ctx: str, cp: int, tp: int, pol: str, pp: int) -> tuple[
     tokens = seq / (cp * tp)
     if pp > 1:
         inflight = pp * -(-93 // pp) / 93
-        base = pp_peak_estimate(ctx, pp, "none", cp)
+        base = pp_peak_estimate(ctx, pp, "none", cp, tp=tp)
         nothing = base + inflight * _distmoe_keep_bytes(tokens)
         host = inflight * _offload_bytes(tokens)
     else:
@@ -1266,7 +1280,8 @@ def _fit_cell_measured(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tup
     CP runs report their first step's peak."""
     budget = GPU_BYTES / 2**30
     if pp > 1:
-        r = _bench("fit_sweep/fd_runs.json")["runs"].get(f"fd_{ctx.lower()}_pp{pp}_{pol}")
+        r = (_bench("fit_sweep/fd_runs.json")["runs"].get(f"fd_{ctx.lower()}_pp{pp}_{pol}")
+             if (cp, tp) == (1, 1) else None)
         if r is not None:  # measured (PP 4, hybrid: real PP, fake everything else)
             if r["oom"]:
                 return "oom", None
@@ -1276,7 +1291,7 @@ def _fit_cell_measured(ctx: str, cp: int, tp: int, pol: str, pp: int = 1) -> tup
         else:
             if pol == "seloff" and ctx == "32K" and cp == 1:
                 return "host", None
-            v = pp_peak_estimate(ctx, pp, pol, cp) / 2**30
+            v = pp_peak_estimate(ctx, pp, pol, cp, tp=tp) / 2**30
             st = "fit" if v <= budget else "line" if v <= budget * 1.005 else "over"
             return st + "_model", v
     elif (ctx, cp, tp) == ("8K", 1, 1):  # the 3.4.1 ladder (CUDA graphs)
@@ -1317,7 +1332,7 @@ def _setting_estimates(ctx: str, cp: int, tp: int, pp: int, v: int = 1) -> dict:
     differences from its 8-layer inventory; PP rows use the calibrated PP model.
     Keys: none (DistMoE recomputes), sel (+ recompute attention), full."""
     if pp > 1:
-        return {pol: pp_peak_estimate(ctx, pp, pol, cp, v) for pol in ("none", "sel", "full")}
+        return {pol: pp_peak_estimate(ctx, pp, pol, cp, v, tp) for pol in ("none", "sel", "full")}
     for a in ("none", "sel", "full"):
         st, v = _fit_cell_measured(ctx, cp, tp, a, pp)
         if st in ("fit", "line", "over") and v is not None:
@@ -1423,7 +1438,8 @@ def fit_configs_table(kind: str = "fsdp") -> str:
     # kind: fsdp (no PP), zero1 (ZeRO-1 + EP 128 + TP, modeled), pp (1F1B),
     # interleaved (PP rows that fit with 1F1B, v 2 and 4); PP rows grouped by degree
     rows = [((ctx, 1, tp, 1), 1, 1) for ctx in ("8K", "32K") for tp in (4, 8)] if kind == "zero1" else []
-    for r in (FIT_ROWS if kind == "fsdp" else sorted(FIT_ROWS, key=lambda r: r[3]) if kind != "zero1" else []):
+    pp_order = lambda r: (r[3], r[0] != "8K", r[1] * r[2], r[2])  # PP degree, context, split, CP before TP
+    for r in (FIT_ROWS if kind == "fsdp" else sorted(FIT_ROWS, key=pp_order) if kind != "zero1" else []):
         if kind == "fsdp" and r[3] == 1:
             rows.append((r, 1, 1))
             rows += [((ctx, cp, 1, 1), mb, 1) for (ctx, cp, mb) in FIT_MICROBATCH if (ctx, cp, 1, 1) == r]
@@ -1439,7 +1455,7 @@ def fit_configs_table(kind: str = "fsdp") -> str:
             last_pp = pp
         split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if pp > 1:
-            split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "")
+            split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "") + (f", TP {tp}" if tp > 1 else "")
         dp = 512 // (pp * cp * tp)
         mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
                          + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
@@ -2011,9 +2027,15 @@ def nonmatmul_bytes(ctx: str = "8K", cp: int = 1, tp: int = 1, ep: int = 64, P: 
     # ZeRO-3: every layer, every microbatch; PP ZeRO-1: the stage's 93 / P layers once per step
     copies = mb * layers if P == 1 and not zero1 else layers / P
     out["FSDP buffer copies"] = (2 * 4 + 6) * gathered * copies
-    norm_el = 69 * (2 * D + 12288 / tp) + 24 * (2 * D + 1536 + 512)
+    # Under TP + SP, the residual-stream ops (RMSNorms, residual adds) run on the
+    # GPU's tok local tokens; the ops between a TP layer's GEMMs (KDA's gated
+    # norm, the output gate, the shared expert's SwiGLU) on 1 / tp of the width
+    # but all tp x tok gathered tokens, so their bytes per GPU do not shrink with
+    # TP; MLA's q / kv norms follow the replicated low-rank projections, whole
+    # width on the gathered tokens.
+    norm_el = 69 * (2 * D + 12288) + 24 * (2 * D + (1536 + 512) * tp)
     out["Norms (RMSNorm, L2)"] = 14 * norm_el * tok
-    out["Other elementwise, casts, reductions"] = (32 * D + 22 * 12288 / tp + 22 * 6144 / tp) * layers * tok
+    out["Other elementwise, casts, reductions"] = (32 * D + 22 * 12288 + 22 * 6144) * layers * tok
     return out
 
 
@@ -3066,9 +3088,10 @@ def overlap_tp_cp_table() -> str:
     for ctx in ("8K", "32K"):
         base = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan"), 1)}
         over = {r["name"]: (i, r) for i, r in enumerate(_ranked(ctx, "titan", overlap_tp_cp=True), 1)}
-        # the top 3 either way, and every config overlapping gains a second or more
+        # the top 3 either way, and every config that gains a second or more and
+        # lands in the top 8 when overlapped
         names = ({n for n, (i, _) in base.items() if i <= 3} | {n for n, (i, _) in over.items() if i <= 3}
-                 | {n for n in base if base[n][1]["step"] - over[n][1]["step"] >= 1.0})
+                 | {n for n in base if base[n][1]["step"] - over[n][1]["step"] >= 1.0 and over[n][0] <= 8})
         for n in sorted(names, key=lambda n: over[n][0]):
             rows.append((ctx, n, base[n], over[n]))
     head = ["Context", "Config", "TP / CP exposed (today)", "TP / CP overlapped"]

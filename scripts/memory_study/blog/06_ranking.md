@@ -55,16 +55,17 @@ family and schedule, and sort by the parts the sections below look at):
   hide behind ([[memory.2.4]]).
 - **Optimizer**: DistMuon's step, at the GPU time it needs ([[compute_roofline.2.3]]).
 
-The bars share one axis at both contexts; the four slowest 8K configs and the
+The bars share one axis at both contexts; the five slowest 8K configs and the
 slowest 32K one run past it (marked &raquo;).
 
 ::: figure ranking-chart
 
 First, the winners:
 
-- **At 8K, interleaved PP 8 leads, without a split:** 19.1 s at `v = 4`, 19.8 s
-  at `v = 2`. It recomputes attention, offloads, and buys back a fifth to a
-  quarter of DistMoE's buffer.
+- **At 8K, interleaved PP 8 at `v = 4` leads, and the split barely matters:**
+  with CP 2 or without a split it takes 19.1 s, with TP 2 19.4 s. It offloads,
+  recomputes attention (or only DistMoE, with TP 2), and buys back part of
+  DistMoE's buffer.
 - **At 32K, two very different configs tie** within 0.3 s: FSDP 512 without a
   split (23.1 s), and PP 8 interleaved with CP 4 (23.4 s).
 
@@ -130,8 +131,8 @@ GPUs per stage instead of 64, so the stage's SPMD mesh, and with it EP, halves
 
 > INSIGHT: Raising the PP degree shrinks everything inside a stage too. With a fixed number of GPUs, more stages mean fewer GPUs per stage, so smaller EP and smaller expert GEMMs.
 
-At 32K the same holds: both need CP 4 to fit, and PP 16 is 1.3 s slower at
-`v = 2`. PP 16's one advantage, half the layers per stage, buys memory that PP 8
+At 32K the same holds: both need a 4-way split to fit, and with CP 4 PP 16 is
+1.3 s slower at `v = 2`. PP 16's one advantage, half the layers per stage, buys memory that PP 8
 does not need.
 
 **And PP 4?** It holds twice the layers per stage, so it fits only at 8K, and
@@ -200,15 +201,46 @@ the same NVLink penalties:
 
 ::: figure overlap-tp-cp-table
 
-- **At 8K nothing changes at the top:** the leaders run without a split.
-  ZeRO-1 + EP 128 + TP 8 gains the most, 3.6 s, but stays far behind.
-- **TP gains more than CP,** since it exposed more: FSDP 128 with TP 4 gains
-  1.2 s at 32K, CP 4 configs about half a second.
-- **The 32K tie flips:** PP 8 interleaved with CP 4 edges ahead of FSDP 512, and
-  FSDP 128 with TP 4 moves up to third.
+- **TP gains more than CP,** since it exposed more: half a second for TP 2 at
+  8K, about 1.2 s for TP 4 at 32K, against a tenth to half a second for CP.
+- **The near-ties flip:** at 8K, PP 8 with TP 2 edges ahead of CP 2; at 32K, PP
+  8 with CP 4 edges ahead of FSDP 512, and PP 8 with TP 4 moves up to third.
 
 Overall, overlapping helps TP far more than CP, but it reorders only near-ties.
-An overlapped TP would make FSDP with TP 4 a real contender at 32K.
+
+## TP or CP?
+
+Both cut the activations by their degree ([[memory.4.2]]), so which one to pick?
+The ranking says it depends on whether FSDP's communication is the bottleneck:
+
+| Config | TP | CP | Faster |
+|---|---|---|---|
+| 8K, FSDP + EP 64, degree 2 | 40.6 s | 46.1 s | TP, by 5.5 s |
+| 32K, FSDP + EP 64, degree 4 | 25.1 s | 27.7 s | TP, by 2.6 s |
+| 8K, PP 8 interleaved `v = 4`, degree 2 | 19.4 s | 19.1 s | CP, by 0.3 s |
+| 32K, PP 8 interleaved `v = 4`, degree 4 | 24.5 s | 23.4 s | CP, by 1.1 s |
+
+- **When FSDP's communication is the bottleneck, TP helps memory and speed.**
+  Without PP, FSDP gathers and reduce-scatters every layer every microbatch.
+  With EP, the experts are already split, so the dense weights are a big part
+  of what FSDP moves (the working set flipped in [[memory.2.2]]). TP splits
+  exactly those, so FSDP has less to move and less weight work to repeat. CP
+  leaves the weights alone and only multiplies the microbatches, so it makes
+  FSDP's problem worse.
+- **When it is not, the question becomes what the split itself costs.** Under
+  PP's ZeRO-1 the weights move once per step, so TP's smaller weights save
+  little. What matters is how much each split communicates, how much of it
+  overlaps, and how well the computation it splits still runs. CP communicates
+  far less: only around attention, and in the KDA layers just a small state,
+  where TP communicates around every dense layer, exposed (0.7 s against 0.1 s
+  at 8K). CP's cost is a slower KDA kernel, which nearly evens it out at 8K.
+  At 32K TP 4 exposes 2 s, and its stash shrinks less than CP 4's, so it needs
+  more remat.
+
+> NUGGET: TP or CP depends on how often the weights move. When FSDP gathers every layer every microbatch, TP wins: it shrinks the dense weights that dominate FSDP's traffic once EP has split the experts. When the weights move once per step (ZeRO-1 under PP), CP wins: with linear attention it communicates far less.
+
+An overlapped TP ([[ranking.5]]) narrows the second case: it flips the 8K
+near-tie to TP, but CP still leads at 32K.
 
 ## How Far to Trust the Ranking
 
