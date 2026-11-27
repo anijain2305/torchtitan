@@ -449,11 +449,7 @@ to the activations. In pretraining, TP usually comes with *sequence
 parallelism* (SP): the TP ranks share one microbatch, each keeps a shard of it
 for the ops outside the TP GEMMs (norms, residual adds), and an all-gather or
 reduce-scatter sits around each TP GEMM. So TP also cuts the activation memory,
-though by a little less than its degree: each TP GEMM needs its all-gathered
-input again for the weight gradient, so it keeps the whole sequence's copy
-around for backward. TorchTitan's async TP linears keep only a shard of it and
-gather it again in backward, but in Kimi K3 they cover only some of the
-projections.
+roughly by the same degree.
 
 *Context parallelism* (CP), on the other hand, targets long sequences. It
 shards each sequence across the CP ranks, and adds a mechanism so that
@@ -463,10 +459,9 @@ pass only its small recurrent state between ranks. So CP also cuts the
 activation memory by its degree, inputs included, but it leaves the weights
 untouched.
 
-I admit this is a very short explanation of CP and TP. The topic, especially CP
-with linear attention, deserves a deeper dive than I can give it yet. Here, the
-one takeaway is that both cut the activations by about their degree. For the
-details, read the [Ultra-Scale
+I admit this is a very short explanation of CP and TP.  Here, the one takeaway
+is that both cut the activations by about their degree. For the details, read
+the [Ultra-Scale
 Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and the
 background on linear attention.
 
@@ -476,7 +471,7 @@ mental exercise to think it through first. The answer: it depends.
 - **What favors TP.** Suppose your config pays for FSDP's communication, either
   bound by it or slowed down by overlapping it. And suppose you also use EP, so
   the dense weights are a big part of what FSDP moves (the working set flipped
-  in [[memory.2.2]]). Then TP helps: it shrinks every all-gather and
+  in [[memory.2.2]]). TP can help. It shrinks every all-gather and
   reduce-scatter to the TP shard, cutting FSDP's overhead, and the memory it
   frees can buy back some remat.
 - **What it costs.** TP splits every GEMM, and split too far, the GEMMs run less
@@ -489,10 +484,26 @@ So CP is an attractive choice for long contexts with linear attention, unless
 FSDP's communication is what holds you back. And if you have been following
 along, you guessed it: nugget time.
 
-> NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
+> NUGGET: With linear attention, CP communicates far less than TP. A linear-attention layer like KDA hands only a small recurrent state to the other CP ranks, however long the sequence, while TP communicates activations around every dense layer.
 
 We follow the same approach for every config: go to reasonable CP and TP
 degrees, and run the greedy search to fit each one into its activation budget.
+
+### Effect on Pipeline Parallelism on Activation Footprint
+
+As a reminder, we brought in PP makes Zero-1 affordable, preventing FSDP comms. THe question that we are tyring to understand is that how it affects the activation footprint. Answer: it depens on the pipeline schedule.
+
+PP schedules are an active area of research. And my plans for this study initially included many of these schedules, but because of limited time, and also limited support in Titan and PyTorch and my knowledge, I decided to keep only 2 schedules - 1F1B and Interleaved 1F1B.
+
+A schedule decides a lot of factors - here we care about two - bubble latency and activation footprint.
+
+Broadly speaking, suppose have P stages (PP degree is P). Each stage, roughly, contains 1/P of the activation footprint. But thats not all, there are multiple microbatches alive at a time, which in accumulation contorl the total memry footprint.
+
+1F1B is chosen in a way that there are only maximum P microbatches alive at a time. Note that you can definitely chhose to have more than P microbatches alive in 1F1B-like schedule, and this can help you fill the bubble. But the name "1F1B" is specially linked the schedule that only keeps P microbatches alive max at a time.
+
+1F1B suffers from pipeline bubbles. The natural alternative to that is Interleaved 1F1B where you still have P ranks, but each stage is divided into chunks, and then chunks are assinged to the ranks in round robin manner. The main goal of this is to reduce bubble latency, the next chunk can start sooner. Howerve, it keeps more microbatches alive at a time. Inrelieaved 1F1B there has a an extra argument `v` that defines how many chunks per rank. Higher then v, the lower the memory footprint, because you end up releasing the microbatch sooner.
+
+If you are new to PP, the last few lines would feel very confusing. If you know about PP, then hopefully this is a short recap. There is a fascinating PP world out there, which I have yet to explore myself. But the key takeway is that 1F1B has same memory footprint as if there was no PP. And Interleave 1F1B take more memory footprint, but it keeps on reducing as you increase the value of v.
 
 ### Interleaved Pipeline Parallelism
 

@@ -208,8 +208,10 @@ both like FSDP, overlapped with the same NVLink penalties:
 - **The 32K near-tie flips:** PP 8 with CP 4 edges ahead of FSDP 512.
 
 So CP's exposed communication is not what makes it slow. Its real costs are
-elsewhere: KDA's CP kernel is slower than the plain one (half a second at 8K
-with CP 2), and without PP every extra microbatch repeats FSDP's gathers.
+elsewhere: folding in the earlier ranks' recurrent state makes KDA's CP kernel
+scale worse than its degree (CP 4 speeds KDA up by only 2.1-2.5x, where TP 4's
+head split gets 2.9-3.1x), and without PP every extra microbatch repeats
+FSDP's gathers.
 
 ## TP or CP?
 
