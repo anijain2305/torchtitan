@@ -498,13 +498,9 @@ the activation footprint. The answer: it depends on the pipeline schedule.
 Of the many PP schedules, this study keeps two, 1F1B and Interleaved 1F1B, and
 for each we care about its bubble and its activation footprint.
 
-**1F1B.** With PP degree P, each stage holds roughly 1/P of the layers, and so
-1/P of one microbatch's activations. But several microbatches are alive at a
-time, and together they set the footprint. 1F1B keeps at most P microbatches
-alive, on the first stage (later stages hold fewer). P microbatches times 1/P of
-the layers is about one whole sequence's activations: the same as without PP.
-You could keep more than P microbatches alive in a 1F1B-like schedule to fill
-the bubble, but the name 1F1B refers to the schedule that keeps at most P.
+**1F1B.** Each stage holds 1/P of the layers, but up to P microbatches are
+alive on the first stage, so it holds about one whole sequence's activations:
+the same as without PP.
 
 **Interleaved 1F1B.** 1F1B suffers from pipeline bubbles. The natural
 alternative is Interleaved 1F1B: still P ranks, but the model is cut into
