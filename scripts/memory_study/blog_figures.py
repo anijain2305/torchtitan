@@ -3317,6 +3317,24 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
     return "".join(out)
 
 
+def pp_schedule_acts_table() -> str:
+    """Activations only, on the first PP rank (which holds the most): the stash of
+    the layer-microbatches in flight under 1F1B and Interleaved 1F1B (v = 2, 4),
+    next to no PP (one microbatch, all 93 layers). One setting: recompute
+    attention at 8K (32K with CP 4 holds the same tokens per GPU, so the same)."""
+    seq = _fsdp_stash("8K", "sel")
+    scheds = [("1F1B", 1), ("Interleaved, v = 2", 2), ("Interleaved, v = 4", 4)]
+    out = ['<table class="dtable"><tr><th>Schedule</th>' + "".join(f"<th>PP {P}</th>" for P in (4, 8, 16))
+           + "</tr>", f'<tr style="color: var(--muted);"><td>No PP</td><td colspan="3" style="text-align: center;">'
+           f"{_dec(seq)} (one microbatch)</td></tr>"]
+    for lab, v in scheds:
+        cells = "".join(f'<td>{_dec(_pp_inflight_share(P, v) * seq)}<span class="sub">'
+                        f'{_pp_inflight_share(P, v):.2f}x no PP</span></td>' for P in (4, 8, 16))
+        out.append(f"<tr><td>{lab}</td>{cells}</tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
 FIT_SPLITS = [(1, 1), (2, 1), (1, 2), (4, 1), (1, 4)]
 
 
@@ -3375,6 +3393,7 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "fit-configs-pp": lambda: fit_configs_table("pp"),
                 "fit-configs-interleaved": lambda: fit_configs_table("interleaved"),
                 "fit-configs-zero1": lambda: fit_configs_table("zero1"),
+                "pp-schedule-acts": pp_schedule_acts_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
                 "pp8-table": by_context(lambda c: pp_table(c, (8,))),

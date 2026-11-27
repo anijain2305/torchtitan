@@ -525,6 +525,10 @@ microbatch is released sooner. Everything stashed per layer and microbatch
 grows with it: the activations, DistMoE's routing indices, and its stashed
 inputs and outputs.
 
+On the first rank, with attention recomputed at 8K:
+
+::: figure pp-schedule-acts
+
 If you are new to PP, the last few paragraphs may feel confusing; if you know
 PP, hopefully they were a short recap. There is a fascinating PP world out
 there that I have yet to explore myself. The key takeaway: **1F1B holds about
