@@ -351,31 +351,15 @@ shrink the activations to fit.
 
 Here is the general recipe I followed:
 
-1. **Start simple:** no rematerialization, no offloading, one sequence per
-   microbatch. Check whether it fits the budget.
-2. **If it fits** (rare for LLMs of this size), increase the microbatch size as
-   long as it still fits, up to the GPU's share of the local batch size. This may seem
-   confusing now, but it pays off under FSDP: FSDP
-   gathers the weights and reduce-scatters the gradients for every microbatch,
-   so fewer, larger microbatches mean less communication.
-3. **If it does not fit** (our case: a single 8K sequence is already more than a
-   GPU), there are two levers:
-    - **Rematerialization and offloading.** There are many ways to get under
-      the budget ([[memory.4.1]] shows a few). We apply a greedy approach for now:
-      incrementally apply these optimizations in the order that frees the most memory for the least time,
-      starting with offloads the GPU can hide behind compute, until the config
-      fits. If the last step overshoots by a lot, undo some of the steps you
-      took, buying back recompute or offload time with the memory you do not
-      need.
-    - **Context and tensor parallelism.** They split
-      every sequence across their GPUs and shrink the activations roughly by
-      their degree, at the cost of communication on the critical path (and,
-      under FSDP, more microbatches per GPU, so more FSDP communication). A
-      high enough degree can remove the need for rematerialization altogether:
-      CP 1 with full remat versus CP 4 with none is a real trade. So for each
-      CP or TP degree, find its best remat and offload setting as above, and
-      let the ranking pick.
-
+1. **Start simple:** no remat, no offload, one sequence per microbatch.
+2. **If it fits** (rare at this size), grow the microbatch while it still fits:
+   under FSDP, fewer, larger microbatches mean fewer rounds of gathers and
+   reduce-scatters.
+3. **If it does not fit** (our case: one 8K sequence is already more than a
+   GPU), use two levers: rematerialization and offloading, applied greedily
+   ([[memory.4.1]]), and context or tensor parallelism, which split each
+   sequence ([[memory.4.2]]). For each CP or TP degree, find its best remat and
+   offload setting, and let the ranking pick.
 
 The rest of this section follows the recipe: the remat and offload frontier,
 then context and tensor parallelism. Last, we look at how pipeline schedules
@@ -468,17 +452,14 @@ background on linear attention.
 So which one should be faster? The rankings will tell us, but it is a good
 mental exercise to think it through first. The answer: it depends.
 
-- **What favors TP.** Suppose your config pays for FSDP's communication, either
-  bound by it or slowed down by overlapping it. And suppose you also use EP, so
-  the dense weights are a big part of what FSDP moves (the working set flipped
-  in [[memory.2.2]]). TP can help. It shrinks every all-gather and
-  reduce-scatter to the TP shard, cutting FSDP's overhead, and the memory it
+- **What favors TP.** If FSDP's communication holds your config back, and EP
+  has made the dense weights a big part of what FSDP moves ([[memory.2.2]]), TP
+  shrinks every all-gather and reduce-scatter to its shard, and the memory it
   frees can buy back some remat.
-- **What it costs.** TP splits every GEMM, and split too far, the GEMMs run less
-  efficiently. It also communicates around every dense layer, while CP
-  communicates only around attention. In Kimi K3 most layers are KDA, linear
-  attention, where CP passes just a small recurrent state, tiny next to TP's
-  collectives.
+- **What it costs.** TP splits every GEMM, which runs less efficiently when
+  split too far, and it communicates around every dense layer. CP communicates
+  only around attention, and in Kimi K3's KDA layers, most of the model, just a
+  small recurrent state.
 
 So CP is an attractive choice for long contexts with linear attention, unless
 FSDP's communication is what holds you back. And if you have been following
@@ -568,161 +549,5 @@ trade memory for speed. The [[ranking]] puts them in order.
 
 ::: tree-end
 
-<!--
-### Context Parallelism
-
-Context parallelism (CP) splits each sequence across GPUs: with CP 2, each GPU
-holds half of a sequence's tokens. Everything that works token by token -- the
-projections, the norms, the MoE layers -- runs on the local tokens with no extra
-communication. Only attention needs the other GPUs' tokens: MLA uses Ulysses,
-and KDA, being a recurrence, passes a small summary of each chunk's state along.
-What that costs in time comes later; here we only care about memory.
-
-For memory, CP is exactly the lever the previous step was missing. Activations
-scale with tokens per GPU, so CP divides them, DistMoE's stash, output and
-scratch included. Nothing else changes. **The CP ranks join the FSDP group**, so
-each GPU still stores 1/512 of the persistent state, and the layers in flight
-are the same weights and gradients whatever the token count. The work per GPU
-does not change either: each GPU now runs CP times as many microbatches, each
-1/CP of a sequence. In the table, "shards" are the 1/512 slices of the master
-weights, optimizer state and gradients.
-
-::: figure cp-table
-
-At 32K, CP 2 is not enough (230 GB), but CP 4 fits: 158 GB, the same as 8K
-without CP, since each GPU again holds 8,192 tokens per microbatch. DistMoE's
-index arrays shrink with CP too, because they scale with tokens per GPU.
-
-### Tensor Parallelism
-
-Tensor parallelism (TP), which we always pair with sequence parallelism, is the
-other lever for activations: like CP, it splits the tokens across GPUs. It also
-splits the dense weights (not the experts). Under FSDP over 512 GPUs, those are
-already tiny per GPU, so the extra saving is small.
-
-::: figure tp-table
-
-So under FSDP, TP and CP are interchangeable for memory: TP 2 and CP 2 differ by
-4 GB. TP's weight splitting pays off with pipeline parallelism, which keeps a
-stage's weights gathered all step.
-
-On memory, TP looks like a free win; on speed, it may not be. CP splits along
-the sequence, so it scales with attention, which grows with context length. TP
-splits the dense projections themselves, which are already small, and narrower
-matmuls run less efficiently. The performance roofline will have to weigh this.
-
-Putting it together, FSDP + EP 64 with each sequence split by CP or TP:
-
-::: figure split-steps
-
-> INSIGHT: For memory alone, when activations are what overflow, reach for CP or TP before pipeline parallelism. Both split the tokens of a sequence, and activations are the only part of GPU memory that grows with them, so they cut exactly the part that is too big. The sharding of weights, gradients and optimizer state stays as it was. For speed it is another matter: without PP, CP and TP are the slowest configs of all ([[ranking.1]]).
-
-### Pipeline Parallelism
-
-So far every parallelism has been SPMD: every GPU runs the same program on its
-own slice of the data, weights or tokens. FSDP and EP, with CP 4 or TP 4 at 32K,
-already fit the model this way. So why look further? Because memory is not the
-only thing that matters:
-
-1. Without PP, FSDP gathers and reduce-scatters every layer for every
-   microbatch, across all 512 GPUs. CP and TP multiply the microbatches, and
-   with them that traffic and the weight copies and re-quantization that come
-   with each gather.
-2. Those all-gathers and reduce-scatters run on the GPU's SMs and slow down the
-   compute they overlap with.
-
-We model both later. For now, take them as a reason to look, and see how the
-model shards with PP.
-
-Pipeline parallelism (PP) cuts the model into stages of consecutive layers and
-gives each stage its own group of GPUs. With PP 8, for example, there are eight
-stages of about 12 layers (93 does not divide evenly), each on 64 GPUs (one NVL
-domain). Inside a stage we use FSDP and EP as before, over the stage's GPUs, so
-EP stays 64 (it drops to 32 with PP 16, which the table below also shows).
-
-What PP does to memory:
-
-- **Each GPU only stores its stage.** But 1/P of the layers, sharded over 512/P
-  GPUs, is still about 1/512 of the model: *same memory as before*.
-- **Microbatches pile up on the first stage.** With the 1F1B schedule, the
-  first stage holds P microbatches in flight, each stashing activations for its
-  93/P layers. P microbatches x 93/P layers is about one whole-model
-  microbatch: *same memory as before*. This depends on the schedule, though:
-  interleaving, in the next section, keeps more in flight.
-- **ZeRO-1 becomes affordable.** Without PP, ZeRO-1 meant every GPU holding the
-  whole model's compute weights and gradients, 14 TB. With PP it only has to
-  hold one stage's, and that fits. This is FSDP's default under PP: a stage's
-  compute weights stay gathered and its gradients unsharded for the whole step,
-  instead of being regathered and reduce-scattered for every microbatch. That
-  is where the performance win can come from, at the cost of some memory.
-
-> INSIGHT: A ZeRO stage is really a choice of how much stays unsharded. PP shrinks that from the whole model to one stage, which turns ZeRO-1 from impossible (14 TB per GPU) into affordable, and with it, keeping weights gathered and gradients unsharded across microbatches instead of paying FSDP's communication on every one.
-
-Here are PP 8 and PP 16 under ZeRO-1, with each sequence split by
-CP or TP (master weights and optimizer state are 45 GB per GPU in every row):
-
-**PP 8** (eight stages of 11-12 layers, 64 GPUs each, so FSDP 64 and EP 64 within a stage):
-
-::: figure pp8-table
-
-**PP 16** (sixteen stages of 5-6 layers, 32 GPUs each, so FSDP 32 and EP 32 within a stage):
-
-::: figure pp16-table
-
-> NOTE: PP 16's activations are 7 GB smaller than PP 8's only because DistMoE's routing indices shrink with EP (32 instead of 64). Everything else in flight is the same: the first stage holds 8 microbatches x 12 layers with PP 8, and 16 x 6 with PP 16, 96 layer-microbatches either way.
-
-At 8K everything fits but PP 8 without a split, which lands right on the
-192 GB line (192.03 GB; we count it as not fitting). At 32K, every config needs
-CP 4 or TP 4, and PP 8 with CP 4 sits on the same line: ZeRO-1's unsharded
-stage (73 GB with PP 8: bf16 dense weights and fp32 gradients) comes on top of
-the activations and of DistMoE's index arrays, which with 1F1B pile up for
-every microbatch in flight. And TP finally pays off: TP 2 beats CP 2 by about
-22 GB with PP 8, 133 against 155 GB at 8K.
-
-> INSIGHT: Once EP shrinks the routed experts on each GPU, and ZeRO-1 (common with PP) keeps the stage's weights and gradients unsharded all step, the dense weights become a large share of what each GPU holds, and only TP splits them. Under FSDP alone, only two layers are ever gathered, so TP gains little over CP for memory. Details in [[methodology.3]].
-
-### What Fits
-
-Putting it all together, every config in this section (green: fits in 192 GB,
-red: does not):
-
-::: figure fit-map
-
-32 of the 35 fit at 8K, and 11 of the 35 at 32K. Interleaving never changes
-the answer: what fits with 1F1B fits interleaved, and what does not, does not.
-
-### How Close Are We to a Real Run?
-
-Every number so far comes from the model. Checking it on 512 GPUs would be
-expensive, but PyTorch has a neat trick: a **fake process group**. One process
-plays a single rank of the 512-GPU job. Collectives do no communication, but
-every tensor that rank would allocate is allocated for real, so the step's peak
-memory can be measured on a single GPU. For PP, a hybrid mode runs one real
-process per stage, with real send/recv between them, and fakes everything
-else. TorchTitan exposes both modes (`--comm-backend fake` and
-`real_pp_fake_spmd`).
-
-Peak allocated memory per GPU, model vs fake run:
-
-| Config | Model | Fake run |
-|---|---|---|
-| FSDP 512, EP 64, 8K | 158 GB | 157 GB |
-| FSDP 512, EP 64, CP 2, 32K | 230 GB | 228 GB |
-| PP 4, ZeRO-1, 8K (first stage) | 237 GB | 228 GB |
-
-The model lands within about 4% of the measured peak. Two things it leaves out:
-
-- **Fragmentation.** The caching allocator reserves more than it hands out.
-  In the PP 4 run it reserved 279 GB to serve a 228 GB peak.
-- **Communication buffers.** NCCL's own buffers are not allocated in a
-  fake run. They add a few GB per GPU in a real job.
-
-So the model is accurate for what the program allocates. A config near
-192 GB still needs headroom for both.
-
-Memory alone does not pick a winner: next we build a performance model to rank
-the configs that fit.
-
--->
 
 ## Notes
