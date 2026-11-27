@@ -541,6 +541,10 @@ discussed earlier.
 
 ::: figure fit-configs
 
+Note that CP and TP let a config get away with less remat and offload. Whether
+that pays off, or the extra FSDP communication from more microbatches outweighs
+it, is for the rankings to tell.
+
 **ZeRO-1 + EP 128 + TP**, the 3.2.3 configs without FSDP. TorchTitan cannot
 run ZeRO-1 without PP, so these rows are modeled. TP 4 leaves so little memory
 for activations that it does not fit at all.
@@ -558,29 +562,9 @@ flight ([[memory.4.3]]), modeled the same way.
 
 ::: figure fit-configs-interleaved
 
-*In all four tables: offload moves the attention projections and feed-forward
-to CPU memory; "host full": it would not fit in a GB300 node's CPU memory, so
-the path continues without it; "OOM": that setting's run ran out of memory.
-Peaks are measured at full depth with a fake process group (CP runs report their
-first step's peak); "~" marks estimates, anchored on the config's own measured
-settings. TP rows run TorchTitan's async TP linears, which save a shard of the
-shared expert's gathered input instead of all of it; their plain-TP runs are
-corrected by that saving, measured with real TP.*
-
-What the table says:
-
-- **Splitting the sequence buys you out of remat.** At 8K, CP 4 needs no remat
-  at all and TP 4 only the free offload, while without a split the greedy path
-  has to recompute attention as well.
-- **At 32K, CP leaves more room than TP.** CP 4 and TP 4 both fit with the
-  offload and recomputing attention, but CP 4 has room to buy back half of
-  DistMoE's buffer, TP 4 only a fifth: each TP block saves its all-gathered
-  input. Without a split, or with a split of 2, only full remat fits, and
-  offload runs out of host memory.
-- **PP does not save activations.** Its first stage holds about one whole
-  sequence's activations in flight, so PP needs the same remat as FSDP without
-  a split, on top of its stage's weights. At 32K, PP fits only with a 4-way
-  split.
+That brings us to the end of this section. We now have every config that fits
+in memory, each with the remat and offload setting its greedy path picked to
+trade memory for speed. The [[ranking]] puts them in order.
 
 ::: tree-end
 
