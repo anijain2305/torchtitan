@@ -495,11 +495,8 @@ As a reminder, we brought in PP because it makes ZeRO-1 affordable, which
 saves FSDP's per-microbatch communication. The question now is how it affects
 the activation footprint. The answer: it depends on the pipeline schedule.
 
-PP schedules are an active area of research. My plans for this study initially
-included many of them, but with limited time, limited support in TorchTitan and
-PyTorch, and my own limited knowledge, I kept only two: 1F1B and Interleaved
-1F1B. A schedule decides many things; here we care about two, the pipeline
-bubble and the activation footprint.
+Of the many PP schedules, this study keeps two, 1F1B and Interleaved 1F1B, and
+for each we care about its bubble and its activation footprint.
 
 **1F1B.** With PP degree P, each stage holds roughly 1/P of the layers, and so
 1/P of one microbatch's activations. But several microbatches are alive at a
