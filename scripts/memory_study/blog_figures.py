@@ -823,8 +823,13 @@ def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
         new = ep and k == len(rows) - 1
         dim = ep and k < len(rows) - 2  # rows already discussed, kept for context
         cells = ""
+        floor = not ep and k == len(rows) - 1  # ZeRO-3: box its working set, the floor more GPUs cannot lower
+        box = "2px solid #2a78d6"
         for i, (v, pv) in enumerate(zip(vals, p)):
             style = (rule if i in (0, 3, 5) else "") + ("" if dim else shade(v, pv))
+            if floor and i in (3, 4):
+                style += (f"border-top: {box}; border-bottom: {box};"
+                          + (f"border-left: {box};" if i == 3 else f"border-right: {box};"))
             text = (f"<b>{_dec(v)}</b>" if i == 5 else _dec(v)) if v else "-"
             note = r["cell_notes"][i] if i < len(r["cell_notes"]) else ""
             if new and pv and v < pv / 1.5:
@@ -839,6 +844,12 @@ def zero_table(ctx: str = "8K", *, ep: bool = False) -> str:
         else:
             row_style = ' style="opacity: 0.4;"' if dim else ""
             out.append(f'<tr{row_style}><td>{r["label"]}</td>{cells}</tr>')
+        if floor:
+            ws = sum(r["working"])
+            out.append('<tr><td colspan="4" style="border-bottom: 0;"></td>'
+                       f'<td colspan="2" style="border-bottom: 0; color: #2a78d6; font-weight: 600; '
+                       f'white-space: normal;">&uarr; the floor: {_dec(ws)}, however many GPUs'
+                       '</td><td style="border-bottom: 0;"></td></tr>')
         prev = vals
     out.append("</table>")
     return "".join(out)

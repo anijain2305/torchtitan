@@ -133,9 +133,6 @@ this same wall. Their answer was expert parallelism.
 
 ### Shrinking the expert weights with EP
 
-Almost all of the working set is routed experts: 296 of the 304 GB. Expert
-parallelism (EP) goes after exactly that part.
-
 **How EP shards.** EP does not need GPUs of its own; it is carved out of the
 same 512 GPUs that FSDP shards over. Let's take EP 64 as an example. Each
 layer's 896 experts are divided into 64 groups of 14, and each group is then
