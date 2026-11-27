@@ -449,34 +449,45 @@ to the activations. In pretraining, TP usually comes with *sequence
 parallelism* (SP): the TP ranks share one microbatch, each keeps a shard of it
 for the ops outside the TP GEMMs (norms, residual adds), and an all-gather or
 reduce-scatter sits around each TP GEMM. So TP also cuts the activation memory,
-roughly by its degree.
+though by a little less than its degree: each TP GEMM needs its all-gathered
+input again for the weight gradient, so it keeps the whole sequence's copy
+around for backward. TorchTitan's async TP linears keep only a shard of it and
+gather it again in backward, but in Kimi K3 they cover only some of the
+projections.
 
 *Context parallelism* (CP), on the other hand, targets long sequences. It
-shards each sequence across the CP ranks, and adds a mechanism so that attention
-operation still sees the whole sequence, such as an all-to-all (Ulysses) or a
+shards each sequence across the CP ranks, and adds a mechanism so that
+attention still sees the whole sequence, such as an all-to-all (Ulysses) or a
 ring of all-gathers for dense attention. We use Ulysses for MLA, and for KDA we
 pass only its small recurrent state between ranks. So CP also cuts the
-activation memory roughly by its degree, just like TP, but it leaves the weights
+activation memory by its degree, inputs included, but it leaves the weights
 untouched.
 
 I admit this is a very short explanation of CP and TP. The topic, especially CP
-with linear attention, requires deeper dive, something that I don't understand
-yet. Here, the one takeaway is that both cut the activations by their degree.
-For the details, read the [Ultra-Scale
+with linear attention, deserves a deeper dive than I can give it yet. Here, the
+one takeaway is that both cut the activations by about their degree. For the
+details, read the [Ultra-Scale
 Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and the
 background on linear attention.
 
-I know that we are relying on rankings to tell us which one is better. But its a
-good mental exercise at this stage to think this. So which one should be faster?
-The answer is it depends. Let's think what goes in the favor of TP. Suppose your config has FSDP communication cost (so you are either FSDP comms bound, or just seeing high slowdown from the overlapped compute), and suppose you are also EP because of which the dense weights are a considerable portion of your weight related memory footprint, TP can be helpful here - it can reduce the size of all gather and reduce scatter to the TP shard, reducing the FSDP overheead. The extra memory can also be used to perhaps do less remat. But there are costs to TP. First, it shards the gemms, and if sharded a lot, TP gemms efficiency can be slower. Also in Kimi K3, majority of the layers are KDA - linear attention - where the CP communication is just a small recurrence layer transfer, tiney compared to the TP collectives. So, CP can be an attractive choice when you have high context length and have linear attention layers.
+So which one should be faster? The rankings will tell us, but it is a good
+mental exercise to think it through first. The answer: it depends.
 
+- **What favors TP.** Suppose your config pays for FSDP's communication, either
+  bound by it or slowed down by overlapping it. And suppose you also use EP, so
+  the dense weights are a big part of what FSDP moves (the working set flipped
+  in [[memory.2.2]]). Then TP helps: it shrinks every all-gather and
+  reduce-scatter to the TP shard, cutting FSDP's overhead, and the memory it
+  frees can buy back some remat.
+- **What it costs.** TP splits every GEMM, and split too far, the GEMMs run less
+  efficiently. It also communicates around every dense layer, while CP
+  communicates only around attention. In Kimi K3 most layers are KDA, linear
+  attention, where CP passes just a small recurrent state, tiny next to TP's
+  collectives.
 
-
-
-
-
-And if you have been
-following along, you guessed it: nugget time.
+So CP is an attractive choice for long contexts with linear attention, unless
+FSDP's communication is what holds you back. And if you have been following
+along, you guessed it: nugget time.
 
 > NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
 
