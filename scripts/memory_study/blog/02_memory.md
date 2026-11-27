@@ -1,16 +1,10 @@
 # The Memory Problem
 
 The blueprint is simple. First, find the parallelism configs that fit the
-weight-related memory: the sharded master weights, gradients and optimizer state.
-Whatever is left of the GPU's memory is that config's budget for activations.
-Then, for each config, find the best speed-memory trade-off within that budget
-using remat and offloading. We set step time aside until the next section. A
-tool could search memory and speed together, but separating them keeps the
-reasoning small enough to follow (at least for us humans!).
-
-The section follows the same order. We first look at how large the persistent
-state is, and the discussion grows from there into the sharding needed to fit
-it on our cluster; then we turn to activations:
+weight-related memory: the sharded master weights, gradients and optimizer
+state. Whatever is left of the GPU's memory is that config's budget for
+activations. Then, for each config, find the best speed-memory trade-off within
+that budget using remat and offloading. The section is organized as follows:
 
 - [What is the memory footprint we are dealing with?](#sec-memory-1)
 - [Shrinking the weight footprint: ZeRO/FSDP, EP, TP and PP](#sec-memory-2)
@@ -46,8 +40,7 @@ the norms and a few small projections), which is only 0.09% of the parameters.
 backward pass (through `save_for_backward` in an `autograd.Function`, and the
 same mechanism inside PyTorch's own ops). We look at them in detail later. Without
 any rematerialization or offloading, one sequence stashes 746 GB at 8K and
-3.0 TB at 32K (4x the footprint at 8K). We leave DistMoE out for now and bring
-it in when we get to shrinking activations. We measure them with a simple pair of
+3.0 TB at 32K (4x the footprint at 8K) without DistMoE. We measure them with a simple pair of
 [saved-tensor hooks](https://docs.pytorch.org/tutorials/intermediate/autograd_saved_tensors_hooks_tutorial.html).
 
 All of this is deliberately simple: no parallelism, no remat, no offloading yet.
@@ -84,7 +77,7 @@ ZeRO comes in three stages, each sharding one more thing:
 - **ZeRO-1** shards the master weights and the optimizer state.
 - **ZeRO-2** also shards the gradients.
 - **ZeRO-3** also shards the *compute weights*, the copy the matmuls run on and
-  part of the *working set* (more on that below). This is what PyTorch's FSDP (https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html) does by default, as
+  part of the *working set* (more on that below). This is what PyTorch's [FSDP](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html) does by default, as
   long as you are not using pipeline parallelism (why? we will see later), so I
   use "ZeRO-3" and "FSDP" interchangeably.
 
