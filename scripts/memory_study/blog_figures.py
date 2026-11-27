@@ -3317,33 +3317,6 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
     return "".join(out)
 
 
-FIT_SPLITS = [(1, 1), (2, 1), (1, 2), (4, 1), (1, 4)]
-
-
-def pp_vpp_table(ctx: str = "8K") -> str:
-    """Rank 0 of PP 8 / 16 under 1F1B and Interleaved 1F1B (v = 2, 4):
-    layer-microbatches in flight, activations, total (green if it fits). At 8K
-    with no split; at 32K with CP 4, since 32K without a split has only 8
-    microbatches per pipeline, all in flight under every schedule."""
-    cp = 1 if ctx == "8K" else 4
-    head = [f"Schedule (CP {cp})", "Microbatches per pipeline", "Chunk-microbatches in flight (rank 0)",
-            "Layers per chunk (rank 0)",
-            "Layer-microbatches in flight", "Activations", "Total"]
-    out = ['<table class="dtable"><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
-    for P in (8, 16):
-        for v in (1, 2, 4):
-            r = pp_parts(ctx, P, 1, cp, 1, v)
-            chunks = pp_inflight(P, v, int(r["microbatches"]))
-            fits = r["total"] <= GPU_BYTES
-            sched = "1F1B" if v == 1 else f"interleaved, v = {v}"
-            out.append(f"<tr><td>PP {P}, {sched}</td><td>{r['microbatches']:.0f}</td><td>{chunks}</td>"
-                       f"<td>{rank0_chunk_layers(P, v):g}</td>"
-                       f"<td>{r['held']}</td><td>{_dec(r['acts'])}</td>"
-                       f"<td{_GREEN if fits else _RED}><b>{_dec(r['total'])}</b></td></tr>")
-    out.append("</table>")
-    return "\n".join(out)
-
-
 def fit_map(ctx: str = "8K") -> str:
     """Every config of this section: FSDP + EP 64 and PP 8 / 16 (ZeRO-1), each
     with no split, CP 2 / 4 or TP 2 / 4. Green: fits in 288 GB; red: does not."""
@@ -3412,7 +3385,6 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
         "nonmatmul-table": nonmatmul_table,
         "overlap-table": overlap_table,
         "sweep-table": sweep_table,
-        "pp-vpp-table": by_context(pp_vpp_table),
         "one-way-table": one_way_table,
         "ib-bw-table": ib_bw_table,
         "xhost-overlap-table": xhost_overlap_table,

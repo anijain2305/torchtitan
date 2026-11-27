@@ -378,8 +378,8 @@ Here is the general recipe I followed:
 
 
 The rest of this section follows the recipe: the remat and offload frontier,
-then context and tensor parallelism. At the last, we also look at how pipeline
-parallelism schedules affects activation footprint.
+then context and tensor parallelism. Last, we look at how pipeline schedules
+affect the activation footprint.
 
 ### Rematerialization and offloading
 
@@ -489,51 +489,48 @@ along, you guessed it: nugget time.
 We follow the same approach for every config: go to reasonable CP and TP
 degrees, and run the greedy search to fit each one into its activation budget.
 
-### Effect on Pipeline Parallelism on Activation Footprint
+### Pipeline Schedules and the Activation Footprint
 
-As a reminder, we brought in PP makes Zero-1 affordable, preventing FSDP comms. THe question that we are tyring to understand is that how it affects the activation footprint. Answer: it depens on the pipeline schedule.
+As a reminder, we brought in PP because it makes ZeRO-1 affordable, which
+saves FSDP's per-microbatch communication. The question now is how it affects
+the activation footprint. The answer: it depends on the pipeline schedule.
 
-PP schedules are an active area of research. And my plans for this study initially included many of these schedules, but because of limited time, and also limited support in Titan and PyTorch and my knowledge, I decided to keep only 2 schedules - 1F1B and Interleaved 1F1B.
+PP schedules are an active area of research. My plans for this study initially
+included many of them, but with limited time, limited support in TorchTitan and
+PyTorch, and my own limited knowledge, I kept only two: 1F1B and Interleaved
+1F1B. A schedule decides many things; here we care about two, the pipeline
+bubble and the activation footprint.
 
-A schedule decides a lot of factors - here we care about two - bubble latency and activation footprint.
+**1F1B.** With PP degree P, each stage holds roughly 1/P of the layers, and so
+1/P of one microbatch's activations. But several microbatches are alive at a
+time, and together they set the footprint. 1F1B keeps at most P microbatches
+alive, on the first stage (later stages hold fewer). P microbatches times 1/P of
+the layers is about one whole sequence's activations: the same as without PP.
+You could keep more than P microbatches alive in a 1F1B-like schedule to fill
+the bubble, but the name 1F1B refers to the schedule that keeps at most P.
 
-Broadly speaking, suppose have P stages (PP degree is P). Each stage, roughly, contains 1/P of the activation footprint. But thats not all, there are multiple microbatches alive at a time, which in accumulation contorl the total memry footprint.
+**Interleaved 1F1B.** 1F1B suffers from pipeline bubbles. The natural
+alternative is Interleaved 1F1B: still P ranks, but the model is cut into
+`P x v` smaller chunks (virtual stages), dealt to the ranks round robin. With
+PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers 6-11 and
+54-59, and so on, so each microbatch loops through the ranks `v` times. Each
+rank still stores the same weights, just in `v` pieces. Smaller chunks let the
+next one start sooner, which shrinks the bubble by about `v` (we come back to
+this with the step time). The price is memory: more microbatches are alive at a
+time. Before its first backward, rank 0 runs `(v - 1) x P + 2 x (P - 1)` forward
+chunks (PyTorch's `ScheduleInterleaved1F1B`), each of `93 / (P v)` layers. In
+layers, that is about `(v + 1) / v` times 1F1B's: 1.5x at `v = 2`, 1.25x at
+`v = 4`. So a larger `v` holds less, because each chunk is smaller and a
+microbatch is released sooner. Everything stashed per layer and microbatch
+grows with it: the activations, DistMoE's routing indices, and its stashed
+inputs and outputs.
 
-1F1B is chosen in a way that there are only maximum P microbatches alive at a time. Note that you can definitely chhose to have more than P microbatches alive in 1F1B-like schedule, and this can help you fill the bubble. But the name "1F1B" is specially linked the schedule that only keeps P microbatches alive max at a time.
-
-1F1B suffers from pipeline bubbles. The natural alternative to that is Interleaved 1F1B where you still have P ranks, but each stage is divided into chunks, and then chunks are assinged to the ranks in round robin manner. The main goal of this is to reduce bubble latency, the next chunk can start sooner. Howerve, it keeps more microbatches alive at a time. Inrelieaved 1F1B there has a an extra argument `v` that defines how many chunks per rank. Higher then v, the lower the memory footprint, because you end up releasing the microbatch sooner.
-
-If you are new to PP, the last few lines would feel very confusing. If you know about PP, then hopefully this is a short recap. There is a fascinating PP world out there, which I have yet to explore myself. But the key takeway is that 1F1B has same memory footprint as if there was no PP. And Interleave 1F1B take more memory footprint, but it keeps on reducing as you increase the value of v.
-
-### Interleaved Pipeline Parallelism
-
-Interleaved 1F1B gives each rank `v` smaller stages (virtual stages) instead of
-one: with PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers
-6-11 and 54-59, and so on, so each microbatch loops through the ranks `v`
-times. What it buys is a smaller pipeline bubble, by a factor of `v`, which we
-come back to with the step time. What it costs is memory:
-
-- **Each GPU stores the same weights.** A rank still holds 1/P of the layers,
-  only in `v` pieces: the shards, compute weights and gradients do not change.
-- **More microbatches pile up on the first rank.** Before its first backward,
-  rank 0 runs `(v - 1) x P + 2 x (P - 1)` forward chunks (PyTorch's
-  `ScheduleInterleaved1F1B`), so it holds about `(v + 1) P` chunk-microbatches
-  in flight instead of P. Each chunk has only `93 / (P v)` layers, so in layers
-  that is about `(v + 1) / v` times 1F1B's: 1.5x at `v = 2`, 1.25x at `v = 4`.
-  Everything stashed per layer and microbatch grows with it: the activations,
-  DistMoE's routing indices, and its stashed inputs and outputs.
-
-Rank 0 of each schedule. At 32K the table uses CP 4: without a split, 32K has
-only 8 microbatches per pipeline, and every schedule already holds all 8. With
-CP 4 each GPU holds the same 8,192 tokens per microbatch as 8K without a
-split, so the two contexts give the same numbers:
-
-::: figure pp-vpp-table
-
-Interleaving costs 19 GB with PP 8 at `v = 2`, and less at `v = 4`, whose
-smaller chunks hold fewer layers in flight. Every config that fits with 1F1B
-still fits interleaved: at 32K, PP 8 with TP 4 and PP 16 with CP 4 or TP 4 fit
-at every `v` ([[memory.5]]).
+If you are new to PP, the last few paragraphs may feel confusing; if you know
+PP, hopefully they were a short recap. There is a fascinating PP world out
+there that I have yet to explore myself. The key takeaway: **1F1B holds about
+as much activation memory as no PP, and Interleaved 1F1B holds more, less so as
+`v` grows.** In [[memory.5]], every config that fits with 1F1B also fits
+interleaved, sometimes with more remat or less of DistMoE's buffer bought back.
 
 > NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
 
