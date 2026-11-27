@@ -515,14 +515,9 @@ On the first rank, with attention recomputed at 8K:
 
 ::: figure pp-schedule-acts
 
-If you are new to PP, the last few paragraphs may feel confusing; if you know
-PP, hopefully they were a short recap. There is a fascinating PP world out
-there that I have yet to explore myself. The key takeaway: **1F1B holds about
-as much activation memory as no PP, and Interleaved 1F1B holds more, less so as
-`v` grows.** In [[memory.5]], every config that fits with 1F1B also fits
-interleaved, sometimes with more remat or less of DistMoE's buffer bought back.
-
-> NOTE: The attention residuals' blocks do not add to this. With interleaving, TorchTitan's cache transport ([[step.2]]) keeps on each rank the blocks a microbatch has already brought there, so a hop carries only the new ones. Those cached blocks are the same tensors the stash already counts.
+There is a fascinating world of pipeline schedules out there, and I hope to
+learn it someday and extend this study to more of them. For now, this post is
+complex enough, so we stick with these two.
 
 ## What Parallelism Configs Fit
 
