@@ -439,35 +439,43 @@ To fit the budget, we have to go all the way to full remat, and offload the
 block inputs on top. Is there another lever? Yes: context and tensor
 parallelism. They cut the activation memory, so the remat can be less
 aggressive, but they put communication on the critical path. The question
-becomes which costs more: the remat or the collectives. Let's look Let's do 3 and then 1.at CP and TP
+becomes which costs more: the remat or the collectives. Let's look at CP and TP
 next.
 
 ### Shrinking activations with Context and Tensor Parallelism
 
-We saw earlier how TP shards the dense weights. In pretraining, TP usually
-comes with *sequence parallelism* (SP): the TP ranks share one microbatch, each
-keeps a shard of it for the ops outside the TP GEMMs (norms, residual adds),
-and an all-gather or reduce-scatter sits around each TP GEMM. So TP also cuts
-the activation memory, roughly by its degree.
+We saw earlier how TP shards the dense weights. Let's now look at what it does
+to the activations. In pretraining, TP usually comes with *sequence
+parallelism* (SP): the TP ranks share one microbatch, each keeps a shard of it
+for the ops outside the TP GEMMs (norms, residual adds), and an all-gather or
+reduce-scatter sits around each TP GEMM. So TP also cuts the activation memory,
+roughly by its degree.
 
-*Context parallelism* (CP) targets long sequences instead: it shards each
-sequence across the CP ranks, and adds a mechanism so that attention still sees
-the whole sequence, such as an all-to-all (Ulysses) or a ring of all-gathers
-for dense attention. We use Ulysses for MLA, and for KDA we pass only its small
-recurrent state between ranks. CP leaves the weights untouched; it only cuts
-the activations.
+*Context parallelism* (CP), on the other hand, targets long sequences. It
+shards each sequence across the CP ranks, and adds a mechanism so that
+attention still sees the whole sequence, such as an all-to-all (Ulysses) or a
+ring of all-gathers for dense attention. We use Ulysses for MLA, and for KDA we
+pass only its small recurrent state between ranks. So CP also cuts the
+activation memory roughly by its degree, just like TP, but it leaves the
+weights untouched.
 
-If this was too quick, the [Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)
-covers TP, SP and CP in depth.
+I admit this is a very short explanation of CP and TP. The topic, especially CP
+with linear attention, deserves a post of its own. Here, the one takeaway is
+that both cut the activations by their degree. For the details, read the
+[Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)
+and the background on linear attention.
 
-Both add collectives, and CP's are cheaper here. TP shrinks the GEMMs, which
-lowers their throughput as the degree grows, and it communicates in every
-layer. CP only communicates in the attention layers, and for KDA that is a tiny
-state. So, to set expectations: CP will beat TP, even though both cut the
-activations by about the same amount. Confirming it takes the rankings, but it
-is worth keeping in mind now.
-
-
+So which one should be faster? Before looking at the rankings, a first-order
+estimate: count the bytes each one moves between ranks. TP communicates around
+its GEMMs, so it pays in all 93 layers, KDA and MLA alike. CP communicates only
+around attention. In an MLA layer, CP's all-to-all moves about as much as TP
+does; in a KDA layer, CP moves only the small recurrent state. Kimi K3 has 69
+KDA layers and only 24 MLA layers, so CP moves several times less data than TP.
+TP has a second cost on top: it splits every GEMM into smaller ones, which run
+less efficiently. So on communication, we expect CP to win. (Whether it wins
+the whole step is another question: TP also shards the dense weights, and
+without PP that matters a lot, as [[ranking.1]] shows.) And if you have been
+following along, you guessed it: nugget time.
 
 > NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
 
