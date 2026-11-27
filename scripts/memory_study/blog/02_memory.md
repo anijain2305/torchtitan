@@ -524,30 +524,26 @@ complex enough, so we stick with these two.
 With all of that in place, here are the parallelism configs that fit our
 budget:
 
-Each config's greedy path ([[memory.4.1]]) runs left to right: the peak per GPU
-of every state up to the first that fits one GPU's 288 GB, which is the config's
-pick (outlined), and "not needed" after it. The pick shows its peak, then its
-final peak once the memory left over buys back DistMoE's buffer ("+45% DistMoE
-buffer": 45% of the layers keep their DistMoE intermediates). A row with no
-outlined cell does not fit. The ranking uses each config's pick.
+Each config walks the greedy path ([[memory.4.1]]) from left to right and
+stops at the first state that fits (outlined). If that leaves memory to spare,
+the spare memory buys back part of DistMoE's buffer, shown by the arrow in the
+green cell. The buy-back sets how many MoE layers stop recomputing: "+30%
+DistMoE buffer" means that instead of all of them recomputing, 30% now stash
+their intermediates and 70% still recompute. The tables show 8K; use the toggle
+at the top right for 32K.
 
 ::: tree-step acts snapshot
 
-**FSDP + EP 64.** The shaded row takes a larger microbatch, as the recipe's step
-2 suggests: 2 sequences per microbatch halve the microbatches per step, and with
-them the rounds of FSDP's gathers and reduce-scatters. It holds 16K tokens per
-GPU with FSDP + EP 64's weights, as 32K with CP 2 does, so it borrows that
-config's memory and greedy path. We only grow the microbatch where there is no
-split to lower: under CP or TP, a microbatch of 2 sequences holds as many tokens
-per GPU as half the degree, while still paying the split's communication.
+**FSDP + EP 64.** The table is mostly self-explanatory. The one row to point
+out is the shaded one, with 2 sequences per microbatch: half as many
+microbatches means half as many rounds of FSDP's gathers and reduce-scatters, as
+discussed earlier.
 
 ::: figure fit-configs
 
 **ZeRO-1 + EP 128 + TP**, the 3.2.3 configs without FSDP. TorchTitan cannot
-run ZeRO-1 without PP, so these rows are modeled: FSDP + EP 64 + TP 4's measured
-activations (the same tokens per GPU, halved for TP 8) on top of the ZeRO-1
-weights. TP 4 does not fit even with full remat: its weights leave only about 20
-GB.
+run ZeRO-1 without PP, so these rows are modeled. TP 4 leaves so little memory
+for activations that it does not fit at all.
 
 ::: figure fit-configs-zero1
 

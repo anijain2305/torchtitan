@@ -1448,11 +1448,12 @@ def greedy_policy(g: dict) -> dict:
     return {"remat": remat, "dm_keep": keep, "offload": g["offload"]}
 
 
-def fit_configs_table(kind: str = "fsdp") -> str:
+def fit_configs_table(kind: str = "fsdp", context: str | None = None) -> str:
     """Each config's greedy path to under one GPU's 288 GB: the peak per GPU of
     every state up to the first that fits (the pick), 'not needed' after it, and
     the pick's final peak once the memory left over buys back DistMoE's buffer.
-    The ranking uses each config's pick."""
+    The ranking uses each config's pick. context: only that context's rows (the
+    page's context toggle switches between them)."""
     green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
     pick_style = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
     out = ['<table class="dtable"><tr><th>Config</th>'
@@ -1460,9 +1461,11 @@ def fit_configs_table(kind: str = "fsdp") -> str:
     gb = lambda v: f"{v * 2**30 / 1e9:.0f} GB"
     # kind: fsdp (no PP), zero1 (ZeRO-1 + EP 128 + TP, modeled), pp (1F1B),
     # interleaved (PP rows that fit with 1F1B, v 2 and 4); PP rows grouped by degree
-    rows = [((ctx, 1, tp, 1), 1, 1) for ctx in ("8K", "32K") for tp in (4, 8)] if kind == "zero1" else []
+    ctxs = [context] if context else ["8K", "32K"]
+    rows = [((ctx, 1, tp, 1), 1, 1) for ctx in ctxs for tp in (4, 8)] if kind == "zero1" else []
     pp_order = lambda r: (r[3], r[0] != "8K", r[1] * r[2], r[2])  # PP degree, context, split, CP before TP
-    for r in (FIT_ROWS if kind == "fsdp" else sorted(FIT_ROWS, key=pp_order) if kind != "zero1" else []):
+    fit_rows = [r for r in FIT_ROWS if r[0] in ctxs]
+    for r in (fit_rows if kind == "fsdp" else sorted(fit_rows, key=pp_order) if kind != "zero1" else []):
         if kind == "fsdp" and r[3] == 1:
             rows.append((r, 1, 1))
             rows += [((ctx, cp, 1, 1), mb, 1) for (ctx, cp, mb) in FIT_MICROBATCH if (ctx, cp, 1, 1) == r]
@@ -3389,10 +3392,10 @@ FIGURES.update({"memory-weights": memory_weights_bf16, "memory-by-kind": by_cont
                 "working-set-flip": working_set_flip,
                 "ep-tp-table": ep_tp_table,
                 "pp-weight-table": pp_weight_table,
-                "fit-configs": fit_configs_table,
-                "fit-configs-pp": lambda: fit_configs_table("pp"),
-                "fit-configs-interleaved": lambda: fit_configs_table("interleaved"),
-                "fit-configs-zero1": lambda: fit_configs_table("zero1"),
+                "fit-configs": by_context(lambda c: fit_configs_table("fsdp", c)),
+                "fit-configs-pp": by_context(lambda c: fit_configs_table("pp", c)),
+                "fit-configs-interleaved": by_context(lambda c: fit_configs_table("interleaved", c)),
+                "fit-configs-zero1": by_context(lambda c: fit_configs_table("zero1", c)),
                 "pp-schedule-acts": pp_schedule_acts_table,
                 "cp-table": by_context(cp_table), "tp-table": by_context(tp_table),
                 "split-steps": by_context(split_steps), "pp-table": by_context(pp_table),
