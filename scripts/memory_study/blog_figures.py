@@ -1207,6 +1207,23 @@ FIT_POLICIES = [("nothing", "No remat"), ("off", "Offload"), ("none", "DistMoE r
                 ("sel", "+ attention"), ("seloff", "+ attention + offload"), ("full", "Full remat")]
 
 
+# TP configs run TorchTitan's eager async TP linears (AsyncTensorParallelTransform).
+ASYNC_TP = True
+
+
+def _async_tp_saving(ctx: str, cp: int, tp: int) -> float:
+    """Stash async TP saves over plain TP (bytes, 93 layers): the shared
+    expert's w13 (or layer 0's dense FFN) keeps a 1 / tp shard of its gathered
+    input instead of the whole (T / cp) x D bf16 tensor. The attention
+    projections are not async linears in Kimi K3, so their gathered input stays.
+    Measured with real TP on 64-expert layers: 59 MB per layer at 8K TP 2
+    (bench/async_tp_stash.json)."""
+    if tp == 1 or not ASYNC_TP:
+        return 0.0
+    T = 8192 if ctx == "8K" else 32768
+    return 93 * (T / cp) * 7168 * 2 * (1 - 1 / tp)
+
+
 def _split_stash(ctx: str, cp: int, tp: int, pol: str) -> float:
     """One microbatch's 93-layer stash for a setting (none / sel / full) at this
     split, from its 8-layer inventory (CP 1 / TP 1: the 3.4.1 policy runs)."""
@@ -1215,7 +1232,8 @@ def _split_stash(ctx: str, cp: int, tp: int, pol: str) -> float:
     if pol == "seloff":  # recompute attention + offload
         return _split_stash(ctx, cp, tp, "sel") - _offload_bytes((8192 if ctx == "8K" else 32768) / (cp * tp))
     name = f"{ctx.lower()}_{'cp%d' % cp if cp > 1 else ''}{'tp%d' % tp if tp > 1 else ''}"
-    return scaled_stash(f"fit_sweep/inv_{name}_{pol}.json")
+    # the inventories ran plain TP; full remat keeps only block inputs either way
+    return scaled_stash(f"fit_sweep/inv_{name}_{pol}.json") - (_async_tp_saving(ctx, cp, tp) if pol != "full" else 0.0)
 
 
 def _distmoe_keep_bytes(tokens: float) -> float:
@@ -1339,7 +1357,10 @@ def _setting_estimates(ctx: str, cp: int, tp: int, pp: int, v: int = 1) -> dict:
             break
     else:
         raise ValueError(f"no measured setting for {ctx} CP {cp} TP {tp}")
-    return {pol: v * 2**30 + _split_stash(ctx, cp, tp, pol) - _split_stash(ctx, cp, tp, a)
+    # the anchor is a measured plain-TP run: put back async TP's saving where the
+    # anchor setting had it subtracted, so the anchor itself is corrected too
+    anchor = v * 2**30 - (_async_tp_saving(ctx, cp, tp) if a != "full" else 0.0)
+    return {pol: anchor + _split_stash(ctx, cp, tp, pol) - _split_stash(ctx, cp, tp, a)
             for pol in ("none", "sel", "full")}
 
 
@@ -1378,6 +1399,8 @@ def greedy_fit(ctx: str, cp: int, tp: int, pp: int, v: int = 1, zero1: bool = Fa
     def measured(pol):
         """(GiB or None, note) of a measured run of this setting (1F1B only)."""
         if interleaved:
+            return None, ""
+        if tp > 1 and ASYNC_TP and pol != "full":  # measured with plain TP; use the async estimate
             return None, ""
         st, v = _fit_cell_measured(ctx, cp, tp, pol, pp)
         if st == "oom":
@@ -2940,7 +2963,8 @@ def _ranked(ctx: str, transports: str = "titan", overlap_tp_cp: bool = False) ->
     for fam, kind, P, v, cp, tp, mb, zero1, g in _rank_configs(ctx):
         trs = [None] if P == 1 else ["chain" if v == 1 else "cache"] + (["direct"] if transports == "all" else [])
         for tr in trs:
-            r = m.step(st.Config(ctx, P, cp, tp, v, tr, rows=mb, zero1=zero1, **greedy_policy(g)))
+            r = m.step(st.Config(ctx, P, cp, tp, v, tr, rows=mb, zero1=zero1, async_tp=ASYNC_TP,
+                                 **greedy_policy(g)))
             split = ", ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x)
             name = fam + (f" ({tr})" if tr == "direct" else "") + (f", {split}" if split else "")
             rows.append({"name": name, "P": P, "v": v, "transport": tr, "cp": cp, "tp": tp, "kind": kind,
@@ -2965,6 +2989,7 @@ _RANK_GROUPS = [
         ("penalty_fsdp", "FSDP, compute slowdown", "#eb6834", "hatch"),
         ("penalty_fsdp_comm", "FSDP, collective slowdown", "#eb6834", "cross"),
         ("exposed_tp", "TP, exposed", "#6250d6", "solid"),
+        ("penalty_tpcp", "TP / CP, overlap slowdown", "#6250d6", "hatch"),
         ("exposed_cp", "CP, exposed", "#eda100", "solid"),
         ("exposed_ep", "EP, exposed", "#e87ba4", "solid"),
     ]),
@@ -3094,7 +3119,7 @@ def overlap_tp_cp_table() -> str:
                  | {n for n in base if base[n][1]["step"] - over[n][1]["step"] >= 1.0 and over[n][0] <= 8})
         for n in sorted(names, key=lambda n: over[n][0]):
             rows.append((ctx, n, base[n], over[n]))
-    head = ["Context", "Config", "TP / CP exposed (today)", "TP / CP overlapped"]
+    head = ["Context", "Config", "Today (async TP, CP exposed)", "TP and CP fully overlapped"]
     out = ['<table class="dtable"><caption>Step time, and in brackets the rank among TorchTitan configs'
            '</caption><tr>' + "".join(f"<th>{h}</th>" for h in head) + "</tr>"]
     short = lambda n: n.replace(", EP 64", "").replace(", EP 32", "")
@@ -3162,7 +3187,7 @@ def _greedy_config(ctx: str, P: int, cp: int, tp: int, v: int = 1, transport: st
     g = greedy_fit(ctx, cp, tp, P, v)
     if g["pick"] is None:
         return None, g
-    return st.Config(ctx, P, cp, tp, v, transport, **greedy_policy(g)), g
+    return st.Config(ctx, P, cp, tp, v, transport, async_tp=ASYNC_TP, **greedy_policy(g)), g
 
 
 def transport_compare_table() -> str:

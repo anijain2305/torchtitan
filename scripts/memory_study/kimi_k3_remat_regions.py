@@ -306,7 +306,8 @@ def _generic_parallelism():
     seq = int(os.environ.get("KIMI_K3_SEQ", "8192"))
     cp, tp, pp = (int(os.environ.get(f"KIMI_K3_{k}", "1")) for k in ("CP", "TP", "PP"))
     if pp == 1:
-        par = ParallelismConfig(data_parallel_shard_degree=-1, expert_parallel_degree=64,
+        par = ParallelismConfig(data_parallel_shard_degree=-1,
+                                expert_parallel_degree=int(os.environ.get("KIMI_K3_EP", "64")),
                                 context_parallel_degree=cp, tensor_parallel_degree=tp)
     else:
         dp = 512 // (pp * tp * cp)

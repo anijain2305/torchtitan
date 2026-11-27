@@ -9,13 +9,15 @@ they use, and what compute they can hide behind:
 |---|---|---|---|
 | FSDP | all-gather of each layer's weights (forward, backward); reduce-scatter of its gradients (backward) | NVLink within a PP stage; without PP it spans both NVLink and InfiniBand | the neighbouring layer's compute (one layer ahead) |
 | EP | token dispatch and combine (all-to-all), per MoE layer and pass | NVLink (EP 64 fits in one NVL domain) | the routed-expert GEMMs (fused in DistMoE) |
-| TP | all-gather before column-parallel linears, reduce-scatter after row-parallel ones | NVLink | nothing today: TP's collectives and GEMMs run in sequence (no async TP) |
+| TP | all-gather before column-parallel linears, reduce-scatter after row-parallel ones | NVLink | with TorchTitan's async TP linears, the GEMMs of the projections it converts (in Kimi K3, the attention output projection and the shared expert); the gather before the attention projections stays exposed |
 | CP | MLA: all-to-alls around attention (Ulysses); KDA: recurrent state between ranks | NVLink | nothing today: attention waits for its all-to-all, and the next op for the one after it |
 | PP | activations and the AttnRes block stack between stages | InfiniBand (stages sit in different NVL domains) | nothing: on the critical path |
 
-TP and CP get the same treatment: both are exposed in TorchTitan today. Both
-could be overlapped (async TP, overlapped Ulysses), but the model charges them
-as TorchTitan runs them; [[ranking.5]] asks what overlapping them would change.
+TP and CP are charged the way TorchTitan runs them: TP with its eager async TP
+linears (`AsyncTensorParallelTransform`), which overlap three of TP's four
+collectives per layer with their GEMMs, and CP exposed, since Ulysses' all-to-alls
+run in sequence with attention. [[ranking.5]] asks what overlapping the rest
+would change.
 
 ## Overlap Is Not Free
 

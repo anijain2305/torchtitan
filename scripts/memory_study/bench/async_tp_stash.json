@@ -1,0 +1,45 @@
+{
+ "note": "Stash per layer (allocated growth, bytes) with plain TP vs TorchTitan's eager async TP linears (AsyncTensorParallelTransform), real TP on 2 / 4 GB300s, 8 Kimi K3 layers with 64 routed experts (study-only, so the layers fit), recompute attention, EP = TP. Measured with kimi_k3_remat_regions.py (KIMI_K3_ASYNC_TP, KIMI_K3_NUM_EXPERTS, KIMI_K3_EP).",
+ "runs": {
+  "t8k_tp2_plain": {
+   "layers.0": 1470889984,
+   "layers.1": 1081442816,
+   "layers.2": 1081442816,
+   "layers.3": 1062830592,
+   "layers.4": 1081442816,
+   "layers.5": 1081442816,
+   "layers.6": 1081442816,
+   "layers.7": 1062830592
+  },
+  "t8k_tp2_async": {
+   "layers.0": 1412169728,
+   "layers.1": 1022722560,
+   "layers.2": 1022722560,
+   "layers.3": 1004110336,
+   "layers.4": 1022722560,
+   "layers.5": 1022722560,
+   "layers.6": 1022722560,
+   "layers.7": 1004110336
+  },
+  "t32k_tp4_plain": {
+   "layers.0": 3415736320,
+   "layers.1": 2642985472,
+   "layers.2": 2642985472,
+   "layers.3": 2670772736,
+   "layers.4": 2642985472,
+   "layers.5": 2642985472,
+   "layers.6": 2642985472,
+   "layers.7": 2670772736
+  },
+  "t32k_tp4_async": {
+   "layers.0": 3063414784,
+   "layers.1": 2290663936,
+   "layers.2": 2290663936,
+   "layers.3": 2318451200,
+   "layers.4": 2290663936,
+   "layers.5": 2290663936,
+   "layers.6": 2290663936,
+   "layers.7": 2318451200
+  }
+ }
+}

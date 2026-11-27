@@ -140,7 +140,21 @@ def _kimi_k3(
     validates it (CP needs its attention modules swapped first)."""
     from torchtitan.config.transform import transform_model_config_
 
-    model_config = build_model_config("Kimi-K3", seq_len=seq_len, parallelism=parallelism)
+    num_experts = os.environ.get("KIMI_K3_NUM_EXPERTS")
+    if num_experts:
+        # Study-only: fewer routed experts so a few real layers fit on a handful
+        # of GPUs (the async-TP stash measurement); attention and shared experts
+        # are unchanged.
+        import torchtitan.models.kimi_k3.flavors as _flavors
+
+        orig = _flavors._kimi_k3_config
+        _flavors._kimi_k3_config = lambda **kw: orig(**{**kw, "num_experts": int(num_experts)})
+        try:
+            model_config = build_model_config("Kimi-K3", seq_len=seq_len, parallelism=parallelism)
+        finally:
+            _flavors._kimi_k3_config = orig
+    else:
+        model_config = build_model_config("Kimi-K3", seq_len=seq_len, parallelism=parallelism)
     if model_transforms:
         model_config = transform_model_config_(model_config, list(model_transforms))
     model_config = _triton_attention_residual(model_config)
@@ -468,6 +482,11 @@ def _memory_study(
         )
     if DENSE_MXFP8:
         transforms.append(MXFP8LinearTransform(fqns=list(_MXFP8_DENSE)))
+    if os.environ.get("KIMI_K3_ASYNC_TP") == "1":  # TorchTitan's eager async TP linears
+        from torchtitan.config.transform import AsyncTensorParallelTransform
+
+        transforms.append(AsyncTensorParallelTransform(enable_sequence_parallel=True,
+                                                       disable_inplace_wgrad_accum=True))
     config = _kimi_k3(seq_len, parallelism, steps=3, model_transforms=transforms)
     for layer in config.model.layers:
         if getattr(layer.feed_forward, "routed_experts", None) is not None:

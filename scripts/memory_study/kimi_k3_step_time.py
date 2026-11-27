@@ -178,7 +178,10 @@ class Config:
     the attention kernels replay) or "none". dm_keep: the share of MoE layers
     whose DistMoE keeps its intermediates (the rest recompute them). offload:
     activations offloaded to CPU memory (3.4.1). zero1: ZeRO-1 + EP 128 without
-    PP (gather and reduce-scatter once per step), the 3.2.3 configs."""
+    PP (gather and reduce-scatter once per step), the 3.2.3 configs.
+    async_tp: TorchTitan's eager async TP linears (AsyncTensorParallelTransform)
+    on the projections it converts: in Kimi K3 the attention output projection
+    and the shared expert's w13 / w2."""
 
     def __init__(
         self,
@@ -196,6 +199,7 @@ class Config:
         dm_keep=0.0,
         offload=False,
         zero1=False,
+        async_tp=False,
     ):
         d = bf._data()
         self.ctx, self.P, self.cp, self.tp = ctx, P, cp, tp
@@ -206,6 +210,7 @@ class Config:
         )
         self.T = bf.CTX_TOKENS[ctx]
         self.remat, self.dm_keep, self.offload, self.zero1 = remat, dm_keep, offload, zero1
+        self.async_tp = async_tp and tp > 1
         self.ep = NUM_GPUS // P if P > 1 else 128 if zero1 else 64
         self.Tm = (
             rows * self.T // cp
@@ -674,7 +679,20 @@ class StepModel:
             # (replayed whenever attention is)
             n_tp = 3 if c.remat == "full" else 2
             n_cp = 2 if c.remat == "none" else 3
-            if not self.overlap_tp_cp:
+            if c.async_tp and not self.overlap_tp_cp:
+                # cm["tp"] is four equal collectives per pass: the gathers and
+                # reduce-scatters around attention and the feed-forward. Async TP
+                # overlaps three of them with their GEMMs (the attention output
+                # projection's and the shared expert's); the gather before
+                # attention (in backward, its reduce-scatter) stays exposed, since
+                # the attention projections are not async linears. Backward also
+                # re-gathers w13's input for its weight gradient (overlapped).
+                q = cm["tp"] / 4
+                e, p, x = self.overlap(n_tp * 3 * q + q, lc["dense_fwd"] + lc["dense_bwd"])
+                out["exposed_tp"] += n_tp * q + e
+                out["penalty_tpcp"] += p + x
+                out["exposed_cp"] += n_cp * cm["cp"]
+            elif not self.overlap_tp_cp:
                 out["exposed_tp"] += n_tp * cm["tp"]
                 out["exposed_cp"] += n_cp * cm["cp"]
             else:

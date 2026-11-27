@@ -460,22 +460,22 @@ activation memory roughly by its degree, just like TP, but it leaves the weights
 untouched.
 
 I admit this is a very short explanation of CP and TP. The topic, especially CP
-with linear attention, deserves a post of its own. Here, the one takeaway is
-that both cut the activations by their degree. For the details, read the
-[Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)
-and the background on linear attention.
+with linear attention, requires deeper dive, something that I don't understand
+yet. Here, the one takeaway is that both cut the activations by their degree.
+For the details, read the [Ultra-Scale
+Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and the
+background on linear attention.
 
-I know that we are relying on rankings to tell us which one is better. But its a good mental exercise at this stage to think this.
-So which one should be faster? Before looking at the rankings, a first-order
-estimate: count the bytes each one moves between ranks. TP communicates around
-its GEMMs, so it pays in all 93 layers, KDA and MLA alike. CP communicates only
-around attention. In an MLA layer, CP's all-to-all moves about as much as TP
-does; in a KDA layer, CP moves only the small recurrent state. Kimi K3 has 69
-KDA layers and only 24 MLA layers, so CP moves several times less data than TP.
-TP has a second cost on top: it splits every GEMM into smaller ones, which run
-less efficiently. So on communication, we expect CP to win. (Whether it wins
-the whole step is another question: TP also shards the dense weights, and
-without PP that matters a lot, as [[ranking.1]] shows.) And if you have been
+I know that we are relying on rankings to tell us which one is better. But its a
+good mental exercise at this stage to think this. So which one should be faster?
+The answer is it depends. Let's think what goes in the favor of TP. Suppose your config has FSDP communication cost (so you are either FSDP comms bound, or just seeing high slowdown from the overlapped compute), and suppose you are also EP because of which the dense weights are a considerable portion of your weight related memory footprint, TP can be helpful here - it can reduce the size of all gather and reduce scatter to the TP shard, reducing the FSDP overheead. The extra memory can also be used to perhaps do less remat. But there are costs to TP. First, it shards the gemms, and if sharded a lot, TP gemms efficiency can be slower. Also in Kimi K3, majority of the layers are KDA - linear attention - where the CP communication is just a small recurrence layer transfer, tiney compared to the TP collectives. So, CP can be an attractive choice when you have high context length and have linear attention layers.
+
+
+
+
+
+
+And if you have been
 following along, you guessed it: nugget time.
 
 > NUGGET: With linear attention, CP scales more easily than TP. A linear-attention layer like KDA hands only a small recurrent state to the next CP rank, however long the sequence, while TP communicates activations in every layer and shrinks every GEMM.
@@ -563,19 +563,24 @@ to CPU memory; "host full": it would not fit in a GB300 node's CPU memory, so
 the path continues without it; "OOM": that setting's run ran out of memory.
 Peaks are measured at full depth with a fake process group (CP runs report their
 first step's peak); "~" marks estimates, anchored on the config's own measured
-settings.*
+settings. TP rows run TorchTitan's async TP linears, which save a shard of the
+shared expert's gathered input instead of all of it; their plain-TP runs are
+corrected by that saving, measured with real TP.*
 
 What the table says:
 
 - **Splitting the sequence buys you out of remat.** At 8K, CP 4 needs no remat
   at all and TP 4 only the free offload, while without a split the greedy path
   has to recompute attention as well.
-- **At 32K, CP beats TP for memory too.** CP 4 fits by recomputing attention
-  alone; TP 4 also needs the offload. Without a split, or with a split of 2,
-  only full remat fits, and offload runs out of host memory.
+- **At 32K, CP leaves more room than TP.** CP 4 and TP 4 both fit with the
+  offload and recomputing attention, but CP 4 has room to buy back half of
+  DistMoE's buffer, TP 4 only a fifth: each TP block saves its all-gathered
+  input. Without a split, or with a split of 2, only full remat fits, and
+  offload runs out of host memory.
 - **PP does not save activations.** Its first stage holds about one whole
   sequence's activations in flight, so PP needs the same remat as FSDP without
-  a split, on top of its stage's weights. At 32K, PP fits only with CP 4.
+  a split, on top of its stage's weights. At 32K, PP fits only with a 4-way
+  split.
 
 ::: tree-end
 

@@ -3,8 +3,9 @@
 **From compute to step time.** Without PP (FSDP 512 + EP 64), every microbatch
 runs all 93 layers: FSDP's all-gather and reduce-scatter of the next layer
 overlap the current layer's compute, with the penalties of [[communication]];
-EP's dispatch and combine run inside DistMoE's expert GEMMs; TP's and CP's
-collectives are exposed in full. The step is one microbatch's time, times the
+EP's dispatch and combine run inside DistMoE's expert GEMMs; TP runs
+TorchTitan's async TP linears, which hide most of its collectives behind their
+GEMMs, and CP's collectives are exposed in full. The step is one microbatch's time, times the
 number of microbatches. With PP, the schedule simulation of [[step]] gives the
 step from each chunk's time and each hop, and ZeRO-1 adds the stage's
 all-gather and reduce-scatter once per step; so does ZeRO-1 + EP 128 + TP,
@@ -39,8 +40,8 @@ family and schedule, and sort by the parts the sections below look at):
 - **Communication**, colored by parallelism: solid where it is exposed (it does
   not fit behind the compute it overlaps), hatched for the compute slowdown
   while it overlaps, cross-hatched for the collective's own slowdown when that
-  makes it outlast the compute ([[communication]]). TP and CP are exposed in
-  full: nothing overlaps them in TorchTitan today.
+  makes it outlast the compute ([[communication]]). CP is exposed in full;
+  of TP, only the gather before attention is (async TP hides the rest).
 - **Pipeline**, from the schedule simulation ([[step]]): the **bubble**'s
   warmup and cooldown (filling and draining, plus uneven chunks), about
   `(P - 1) t / v`; the **hops**, the part of the bubble the hops add on top
@@ -55,7 +56,7 @@ family and schedule, and sort by the parts the sections below look at):
   hide behind ([[memory.2.4]]).
 - **Optimizer**: DistMuon's step, at the GPU time it needs ([[compute_roofline.2.3]]).
 
-The bars share one axis at both contexts; the five slowest 8K configs and the
+The bars share one axis at both contexts; the four slowest 8K configs and the
 slowest 32K one run past it (marked &raquo;).
 
 ::: figure ranking-chart
@@ -63,7 +64,7 @@ slowest 32K one run past it (marked &raquo;).
 First, the winners:
 
 - **At 8K, interleaved PP 8 at `v = 4` leads, and the split barely matters:**
-  with CP 2 or without a split it takes 19.1 s, with TP 2 19.4 s. It offloads,
+  19.0 s with TP 2, 19.1 s with CP 2 or without a split. It offloads,
   recomputes attention (or only DistMoE, with TP 2), and buys back part of
   DistMoE's buffer.
 - **At 32K, two very different configs tie** within 0.3 s: FSDP 512 without a
@@ -191,22 +192,24 @@ little for direct to save:
 **Verdict:** for the configs we rank, direct does not help. Where the leaders
 run, TorchTitan's cache is as good, so the attention residuals cost PP little.
 
-## What If TP and CP Were Overlapped?
+## What If CP Were Overlapped Too?
 
-The model charges TP and CP as fully exposed, the way TorchTitan runs them
-today. But nothing prevents overlapping them, like FSDP's collectives: TP's
-behind the dense GEMMs (async TP), CP's behind the rest of the layer. Would
-that change the picture? Charging them like FSDP instead, overlapped and with
-the same NVLink penalties:
+TorchTitan's async TP already hides most of TP's collectives, but CP's
+all-to-alls run in sequence with attention, and the gather before TP's
+attention projections stays exposed. Nothing prevents overlapping those too:
+Ulysses can split the heads into groups and send the next group while attention
+computes the current one. Is CP's missing overlap what makes it slow? Charging
+both like FSDP, overlapped with the same NVLink penalties:
 
 ::: figure overlap-tp-cp-table
 
-- **TP gains more than CP,** since it exposed more: half a second for TP 2 at
-  8K, about 1.2 s for TP 4 at 32K, against a tenth to half a second for CP.
-- **The near-ties flip:** at 8K, PP 8 with TP 2 edges ahead of CP 2; at 32K, PP
-  8 with CP 4 edges ahead of FSDP 512, and PP 8 with TP 4 moves up to third.
+- **Not much moves:** half a second for CP 4 at 32K, a tenth of a second at 8K,
+  and a little less for TP, whose remaining exposed gather is small.
+- **The 32K near-tie flips:** PP 8 with CP 4 edges ahead of FSDP 512.
 
-Overall, overlapping helps TP far more than CP, but it reorders only near-ties.
+So CP's exposed communication is not what makes it slow. Its real costs are
+elsewhere: KDA's CP kernel is slower than the plain one (half a second at 8K
+with CP 2), and without PP every extra microbatch repeats FSDP's gathers.
 
 ## TP or CP?
 
@@ -215,10 +218,10 @@ The ranking says it depends on whether FSDP's communication is the bottleneck:
 
 | Config | TP | CP | Faster |
 |---|---|---|---|
-| 8K, FSDP + EP 64, degree 2 | 40.6 s | 46.1 s | TP, by 5.5 s |
-| 32K, FSDP + EP 64, degree 4 | 25.1 s | 27.7 s | TP, by 2.6 s |
-| 8K, PP 8 interleaved `v = 4`, degree 2 | 19.4 s | 19.1 s | CP, by 0.3 s |
-| 32K, PP 8 interleaved `v = 4`, degree 4 | 24.5 s | 23.4 s | CP, by 1.1 s |
+| 8K, FSDP + EP 64, degree 2 | 40.3 s | 46.1 s | TP, by 5.8 s |
+| 32K, FSDP + EP 64, degree 4 | 24.5 s | 27.7 s | TP, by 3.2 s |
+| 8K, PP 8 interleaved `v = 4`, degree 2 | 19.0 s | 19.1 s | tie |
+| 32K, PP 8 interleaved `v = 4`, degree 4 | 23.5 s | 23.4 s | tie |
 
 - **When FSDP's communication is the bottleneck, TP helps memory and speed.**
   Without PP, FSDP gathers and reduce-scatters every layer every microbatch.
@@ -231,16 +234,14 @@ The ranking says it depends on whether FSDP's communication is the bottleneck:
   PP's ZeRO-1 the weights move once per step, so TP's smaller weights save
   little. What matters is how much each split communicates, how much of it
   overlaps, and how well the computation it splits still runs. CP communicates
-  far less: only around attention, and in the KDA layers just a small state,
-  where TP communicates around every dense layer, exposed (0.7 s against 0.1 s
-  at 8K). CP's cost is a slower KDA kernel, which nearly evens it out at 8K.
-  At 32K TP 4 exposes 2 s, and its stash shrinks less than CP 4's, so it needs
-  more remat.
+  far less: only around attention, and in the KDA layers just a small state.
+  TP communicates around every dense layer, but async TP hides most of it,
+  leaving about 0.4 s of exposed time and overlap slowdown at 8K. CP pays
+  instead with a slower KDA kernel. TP also shrinks the stash less: each TP
+  block saves its all-gathered input, and async TP shards only the shared
+  expert's. The two come out even.
 
-> NUGGET: TP or CP depends on how often the weights move. When FSDP gathers every layer every microbatch, TP wins: it shrinks the dense weights that dominate FSDP's traffic once EP has split the experts. When the weights move once per step (ZeRO-1 under PP), CP wins: with linear attention it communicates far less.
-
-An overlapped TP ([[ranking.5]]) narrows the second case: it flips the 8K
-near-tie to TP, but CP still leads at 32K.
+> NUGGET: TP or CP depends on how often the weights move. When FSDP gathers every layer every microbatch, TP wins: it shrinks the dense weights that dominate FSDP's traffic once EP has split the experts. When the weights move once per step (ZeRO-1 under PP), TP's advantage is gone, and with async TP hiding most of its communication, the two come out even.
 
 ## How Far to Trust the Ranking
 
@@ -249,7 +250,7 @@ But there is a catch: this is a model, and the leaders sit within a few
 percent of each other. Small changes to the model can flip their order:
 
 - **What it assumes:** NVLink bandwidth and overlap inside a 64-GPU NVL domain
-  (measured up to 32 GPUs), TP and CP fully exposed, a hop moving as soon as
+  (measured up to 32 GPUs), TP with async TP and CP exposed, a hop moving as soon as
   both sides are ready, the optimizer at its GPU time, and every remat and
   offload cost scaled from the measured 8K FSDP 512 + EP 64 steps. EP 128's
   expert kernels are assumed as efficient as EP 64's (not benchmarked).
