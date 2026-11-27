@@ -3317,6 +3317,9 @@ def pp_table(ctx: str = "8K", degrees=(8, 16)) -> str:
     return "".join(out)
 
 
+FIT_SPLITS = [(1, 1), (2, 1), (1, 2), (4, 1), (1, 4)]
+
+
 def fit_map(ctx: str = "8K") -> str:
     """Every config of this section: FSDP + EP 64 and PP 8 / 16 (ZeRO-1), each
     with no split, CP 2 / 4 or TP 2 / 4. Green: fits in 288 GB; red: does not."""
