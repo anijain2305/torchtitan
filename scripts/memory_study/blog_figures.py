@@ -1456,7 +1456,7 @@ def fit_configs_table(kind: str = "fsdp", context: str | None = None) -> str:
     page's context toggle switches between them)."""
     green, red = "background: rgba(0, 131, 0, 0.12);", "background: rgba(227, 73, 72, 0.12);"
     pick_style = "outline: 2px solid #2a78d6; outline-offset: -2px; font-weight: 600;"
-    out = ['<table class="dtable"><tr><th>Config</th>'
+    out = ['<table class="dtable fit-compact"><tr><th>Config</th>'
            + "".join(f"<th>{lab}</th>" for _, lab in GREEDY_STATES) + "</tr>"]
     gb = lambda v: f"{v * 2**30 / 1e9:.0f} GB"
     # kind: fsdp (no PP), zero1 (ZeRO-1 + EP 128 + TP, modeled), pp (1F1B),
@@ -1479,35 +1479,37 @@ def fit_configs_table(kind: str = "fsdp", context: str | None = None) -> str:
             out.append(f'<tr><td colspan="{len(GREEDY_STATES) + 1}" style="font-weight: 600; '
                        f'background: var(--code-bg, rgba(0, 0, 0, 0.04));">PP {pp}</td></tr>')
             last_pp = pp
-        split = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
-        if pp > 1:
-            split = f"ZeRO-1 + PP {pp}" + (f", CP {cp}" if cp > 1 else "") + (f", TP {tp}" if tp > 1 else "")
-        dp = 512 // (pp * cp * tp)
-        mesh = ", ".join([f"DP {dp}"] + ([f"PP {pp}"] if pp > 1 else []) + ([f"CP {cp}"] if cp > 1 else [])
-                         + ([f"TP {tp}"] if tp > 1 else []) + [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"])
+        # one short label (the context toggle sets the context; PP rows sit under
+        # their PP group header) and one small mesh line
+        label = " x ".join(x for x in (f"CP {cp}" if cp > 1 else "", f"TP {tp}" if tp > 1 else "") if x) or "no split"
         if zero1:
-            split, mesh = f"ZeRO-1 + EP 128 + TP {tp}", f"DP {dp}, TP {tp}, EP 128, no FSDP"
-        mesh += f"<br>microbatch: {mb} sequence{'s' if mb > 1 else ''}"
-        if pp > 1:
-            mesh += "; 1F1B" if v == 1 else f"; Interleaved 1F1B, v {v}"
+            label = f"TP {tp}"
+        if v > 1:
+            label += f", v = {v}"
+        dp = 512 // (pp * cp * tp)
+        mesh = " &middot; ".join([f"DP {dp}"] + ([f"CP {cp}"] if cp > 1 else [])
+                                 + ([f"TP {tp}"] if tp > 1 else [])
+                                 + (["EP 128", "no FSDP"] if zero1 else
+                                    [f"FSDP {dp * cp}", f"EP {64 if pp == 1 else 512 // pp}"]))
+        if mb > 1:
+            label += f", {mb} sequences per microbatch"
         g = greedy_fit(*(FIT_MICROBATCH[(ctx, cp, mb)] if mb > 1 else (ctx, cp, tp, pp)), v=v, zero1=zero1)
         cells, done = "", False
-        for key, v, e, note in g["states"]:
+        inline = lambda t: f' <span class="subi">{t}</span>' if t else ""
+        for key, val, e, note in g["states"]:
             if done:
-                cells += '<td style="color: var(--muted);">not needed</td>'
+                cells += '<td style="color: var(--muted);">&ndash;</td>'
                 continue
             if key == g["pick"]:
-                txt = gb(v) if not g["back"] else f"{gb(v)} &rarr; {gb(g['final'])}"
-                pnote = (f"+{g['back']:.0%} DistMoE buffer" if g["back"] else
+                txt = gb(val) if not g["back"] else f"{gb(val)} &rarr; {gb(g['final'])}"
+                pnote = (f"+{g['back']:.0%}" if g["back"] else
                          "+ block offload" if (ctx, cp, tp, pp, mb) == ("32K", 1, 1, 1, 1) else "")
-                sub = f'<span class="sub">{pnote}</span>' if pnote else ""
-                cells += f'<td style="{green}{pick_style}">{"~" if e else ""}{txt}{sub}</td>'
+                cells += f'<td style="{green}{pick_style}">{"~" if e else ""}{txt}{inline(pnote)}</td>'
                 done = True
                 continue
-            sub = f'<span class="sub">{note}</span>' if note else ""
-            cells += f'<td style="{red}">{"~" if e else ""}{gb(v)}{sub}</td>'
+            cells += f'<td style="{red}">{"~" if e else ""}{gb(val)}{inline(note)}</td>'
         tint = ' style="background: rgba(42, 120, 214, 0.05);"' if mb > 1 else ""
-        out.append(f'<tr{tint}><td>{ctx}, {split}<span class="sub">{mesh}</span></td>{cells}</tr>')
+        out.append(f'<tr{tint}><td>{label}<span class="sub">{mesh}</span></td>{cells}</tr>')
     out.append("</table>")
     return "".join(out)
 

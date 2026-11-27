@@ -508,10 +508,10 @@ budget:
 Each config walks the greedy path ([[memory.4.1]]) from left to right and
 stops at the first state that fits (outlined). If that leaves memory to spare,
 the spare memory buys back part of DistMoE's buffer, shown by the arrow in the
-green cell. The buy-back sets how many MoE layers stop recomputing: "+30%
-DistMoE buffer" means that instead of all of them recomputing, 30% now stash
-their intermediates and 70% still recompute. The tables show 8K; use the toggle
-at the top right for 32K.
+green cell. The buy-back sets how many MoE layers stop recomputing: "+30%"
+means that instead of all of them recomputing, 30% now stash their
+intermediates and 70% still recompute. "&ndash;": not needed after the pick. The
+tables show 8K; use the toggle at the top right for 32K.
 
 ::: tree-step acts snapshot
 

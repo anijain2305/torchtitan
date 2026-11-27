@@ -150,6 +150,10 @@ EXTRA_CSS = """
 .dtable th { white-space: normal; vertical-align: bottom; text-align: center !important; }
 .dtable th:first-child { text-align: left !important; }
 .dtable td, .dtable th { padding: 6px 8px; }
+.dtable.fit-compact td { padding: 2px 8px; line-height: 1.25; }
+.dtable.fit-compact .sub { font-size: 10.5px; margin: 0; }
+.dtable.fit-compact td:first-child { white-space: normal; max-width: 190px; }
+.dtable .subi { color: var(--muted); font-size: 11px; font-weight: 400; }
 .placeholder { border: 1px dashed var(--axis); border-radius: 10px; padding: 18px; margin: 14px 0;
                color: var(--muted); text-align: center; font-size: 14px; }
 .notes { border-top: 1px dashed var(--grid); margin-top: 18px; padding-top: 6px; color: var(--muted);
