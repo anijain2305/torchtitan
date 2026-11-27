@@ -137,7 +137,7 @@ this same wall. Their answer was expert parallelism.
 same 512 GPUs that FSDP shards over. Let's take EP 64 as an example. Each
 layer's 896 experts are divided into 64 groups of 14, and each group is then
 FSDP-sharded over the remaining 512 / 64 = 8 GPUs. The dense layers do not
-take part in EP: they stay FSDP-sharded over all 512 GPUs.
+take part in EP, they stay FSDP-sharded over all 512 GPUs.
 
 ::: tree-step ep snapshot
 
@@ -146,13 +146,11 @@ GPU still holds a 1/512 shard. What changes is what each GPU **gathers** for a
 layer, its working set: only its group's 14 experts, instead of all 896. The
 working set shrinks dramatically, from 304 GB to just 12.2 GB, bringing the
 persistent state plus working set down to 86.5 GB, way under our 288 GB budget
-and leaving about 200 GB for activations (we tackle those later).
+and leaving about 200 GB for activations.
 
 ::: figure zero-ep-table
 
-However, **EP is not free**. It adds all-to-alls on the critical path, while
-FSDP's communication can be overlapped with compute. These all-to-alls are so
-expensive that serious training runs use custom kernels like DistMoE
+The EP cost is all-to-alls on the critical path, which can be so expensive that serious training runs use custom kernels like DistMoE
 (introduced later) to overlap them with the routed experts' own compute.
 
 **Wait, why pair EP with FSDP and not with TP?** That is what my colleague
@@ -233,16 +231,17 @@ GPUs, EP spreads the stage's experts over them, and the same goes for TP and CP
 (discussed later).
 
 The interesting part is that PP makes ZeRO-1 affordable. Let's see how, by
-comparing plain ZeRO-1 from 3.2.1 with ZeRO-1 + PP on its first stage. As we
-saw, plain ZeRO-1 keeps 2.84 TB of compute weights and 11.1 TB of unsharded
-gradients alive for the whole step. Now look at the PP rows:
+comparing ZeRO-1 + EP 64 from 3.2.3 with ZeRO-1 + PP on its first stage. PP 8
+runs the same EP 64 inside each stage, so the difference is PP's alone. As we
+saw, ZeRO-1 + EP 64 keeps 156 GB of compute weights and 397 GB of unsharded
+gradients alive for the whole step, over the GPU in total. Now look at the PP
+rows:
 
 - The master weights and optimizer state stay roughly the same, 1/512 of the
   model each.
-- But a GPU now keeps compute weights and gradients only for its stage. PP
-  divides them by the number of stages, and EP inside the stage divides the
-  experts further. At PP 8, that is 21 GB of compute weights and 53 GB of
-  gradients.
+- But a GPU now keeps compute weights and gradients only for its stage's
+  layers. At PP 8, that is 12 of the 93 layers: 21 GB of compute weights and 53
+  GB of gradients, about 7.5x less.
 
 ::: tree-step pp snapshot
 
