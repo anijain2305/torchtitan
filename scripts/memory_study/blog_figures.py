@@ -343,9 +343,10 @@ def activations_distmoe(ctx: str = "8K") -> str:
     """One sequence's activations, nothing else rematerialized, on a linear
     axis: first without DistMoE (PyTorch stashes the routed experts like any
     layer; the fake-tensor inventory), then DistMoE's two extremes (measured
-    runs): the rest of the model's stash, DistMoE's stashed inputs, its output
-    (stashed for the next ops), its intermediates (only when it keeps them) and
-    its scratch."""
+    runs) and the 30% buy-back in between (30% of the MoE layers stash, as the
+    greedy path's "+30%"): the rest of the model's stash, DistMoE's stashed
+    inputs, its output (stashed for the next ops), its intermediates (only in
+    the layers that keep them) and its scratch."""
     d = _data()
     dm = d["cp_sweep"][ctx]["1"]["nopp_f4"]
     acts = d["contexts"][ctx]["activations"]
@@ -363,10 +364,12 @@ def activations_distmoe(ctx: str = "8K") -> str:
     return linear_stacked_bars(
         [("No DistMoE", [(acts["total"] - routed_naive, c_rest, "rest of the model"),
                          (routed_naive, c_naive, "routed experts")]),
-         ("DistMoE keeps its intermediates", base + [(inter, c_int, "DistMoE intermediates"),
-                                                     (scratch, c_sc, "DistMoE scratch")]),
-         ("DistMoE recomputes them (default)", base + [(scratch, c_sc, "DistMoE scratch")])],
-        f"activations of one {ctx} sequence, without DistMoE and at DistMoE's two extremes, by part",
+         ("DistMoE +100%", base + [(inter, c_int, "DistMoE intermediates"),
+                                                        (scratch, c_sc, "DistMoE scratch")]),
+         ("DistMoE +30%", base + [(0.3 * inter, c_int, "DistMoE intermediates"),
+                                                       (scratch, c_sc, "DistMoE scratch")]),
+         ("DistMoE +0% (default)", base + [(scratch, c_sc, "DistMoE scratch")])],
+        f"activations of one {ctx} sequence, without DistMoE and with DistMoE's buffer at 100%, 30% and 0%, by part",
         legend=[("Rest of the model", c_rest), ("Routed experts, stashed by PyTorch", c_naive),
                 ("DistMoE inputs", c_in), ("DistMoE output", c_out),
                 ("DistMoE intermediates", c_int), ("DistMoE scratch", c_sc)])

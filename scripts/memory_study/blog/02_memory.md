@@ -251,25 +251,15 @@ Time for a nugget:
 
 > NUGGET: PP makes ZeRO-1 affordable. The persistent shards stay at 1/512, but everything ZeRO-1 keeps unsharded for the whole step, the compute weights and the gradients, shrinks to one stage's worth. That is how PP avoids FSDP's per-microbatch communication, and why TorchTitan's FSDP defaults to ZeRO-1 under PP.
 
-Every PP degree fits. A higher degree, though, means more stages, and so a
-bigger pipeline bubble and more hops between them; we will see what that costs
-in the rankings. An attentive reader might wonder why we have not discussed
-pipeline schedules. For the widely used schedules, the weight footprint is the
-same; only the activation footprint changes. So PP comes back when we count the
-activations.
-
-That wraps up the weights. Three families fit: FSDP + EP, and two ways of affording ZeRO-1: ZeRO-1 + EP + TP and ZeRO-1 + PP. The tree that has been growing
-alongside the text tracks which configs fit so far, and how much of each GPU
-their weights take. Whatever is left is each config's budget for activations, and
-that is where we go next.
+That wraps up the weights. We have a few candidates that fit in memory; now our
+job is to fit the activations in the budget each one leaves.
 
 ::: tree-end
 
 ## How big are the activations?
 
-Let's set up the problem for activations, as we did for the persistent state.
-First, a reminder of what they are: the tensors the forward pass stashes for
-the backward pass to use later. With a microbatch of one sequence, PyTorch
+Let's set up the problem for activations. First, a reminder of what they are:
+the tensors the forward pass stashes for the backward pass to use later. With a microbatch of one sequence, PyTorch
 stashes **746 GB at 8K** (and 3.0 TB at 32K), far more than a GPU's 288 GB.
 Where does it go, at 8K?
 
@@ -286,14 +276,16 @@ each of its expert intermediates is stashed 16 times over.
 
 But this assumes no special kernels for the MoE layers. In practice, MoE
 layers run on custom kernels, in our case
-[DistMoE](https://github.com/meta-pytorch/dist_moe), and DistMoE manages their
-activations itself. Kernels like it handle MoE activations separately because
-the number of tokens each GPU receives varies from step to step. DistMoE
-stashes the expert intermediates in its own activation buffer, whose size we
-choose when we set up the model. At runtime it checks how many tokens arrived,
-and the rows that do not fit in the buffer are not stashed but recomputed in
-backward. Conceptually this is rematerialization, but built into the kernels
-and decided at runtime rather than ahead of time.
+[DistMoE](https://github.com/meta-pytorch/dist_moe). DistMoE stashes the MoE
+intermediates in one activation buffer shared by the whole model, whose size we
+set at model init. At runtime, each MoE layer checks how much room is left in
+the buffer: if there is enough, it stashes its inputs and its intermediates; if
+not, only its inputs, and it recomputes the rest in backward. So with the
+smallest buffer every MoE layer recomputes, and with a big enough one every
+layer stashes. In between it is a dial: size the buffer at 30% of that range,
+and about 30% of the MoE layers stash while the rest recompute. Conceptually
+this is rematerialization, built into the kernel and decided at runtime,
+depending on how unevenly the tokens are routed.
 
 Besides the intermediates, three DistMoE allocations always count toward the
 peak:
@@ -307,34 +299,25 @@ peak:
   With uneven routing these temporaries can get big, so the scratch is sized
   for an imbalance of 4.
 
-To see its impact, take its two extremes, with nothing else in the model
-rematerialized:
+Let's look at the total activations for three buffer sizes, written as the
+share of that range, as in the rest of the post:
 
-- **DistMoE keeps everything** (buffers big enough for balanced routing): no
-  recompute.
-- **DistMoE recomputes everything** (no buffers, today's default): our
-  counterpart to full remat, for the routed experts. Its backward takes a bit
-  longer.
-
-Let's look at the numbers:
+- **+100%** (big enough for balanced routing): every MoE layer stashes, nothing
+  is recomputed. 683 GB.
+- **+30%**: 30% of the MoE layers stash, the rest recompute. 463 GB.
+- **+0%** (the smallest buffer, today's default): every MoE layer recomputes,
+  our counterpart to full remat for the routed experts, at the cost of a
+  slightly longer backward. 368 GB.
 
 ::: figure activations-distmoe
 
-The naive PyTorch stash is 746 GB at 8K. DistMoE keeping everything already
-brings it down to 683 GB, scratch included. DistMoE recomputing everything
-removes the intermediates entirely, leaving 368 GB.
-
-Its inputs and output are small, and so is the scratch at 8K. At 32K, though,
-the scratch grows to about a third of a GPU. Once you know how uneven the
-routing really is in a training run, you can size the scratch for a smaller
-imbalance than 4; for now we keep 4.
+Even at +100%, DistMoE stashes less than PyTorch's 746 GB, scratch included;
+at +0% the intermediates are gone entirely.
 
 > NOTE: The meta point here is that a roofline must account for the implementation details of the components that dominate it. DistMoE changes both the memory footprint and the latency of the MoE layers, the most expensive and most dynamic part of the model. Leave it out early on, and your roofline can be way off.
 
-That sets up the problem. With no recompute at all, one 8K sequence needs
-683 GB of activations, far more than what is left of a GPU's 288 GB once the
-weights' persistent state and working set are in place. Next, let's see how to
-shrink the activations to fit.
+That is our problem statement: at 8K, fit up to 683 GB of activations into
+whatever budget each parallelism config leaves.
 
 ## Use the leftover memory for activations effectively
 
