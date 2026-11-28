@@ -38,21 +38,20 @@ the norms and a few small projections), which is only 0.09% of the parameters.
 
 **Stashed activations.** These are the tensors the forward pass keeps for the
 backward pass (through `save_for_backward` in an `autograd.Function`, and the
-same mechanism inside PyTorch's own ops). We look at them in detail later. Without
-any rematerialization or offloading, one sequence stashes 746 GB at 8K and
-3.0 TB at 32K (4x the footprint at 8K) without DistMoE. We measure them with a simple pair of
+same mechanism inside PyTorch's own ops). We look at them in detail later.
+Without any rematerialization, offloading or DistMoE, one sequence stashes
+746 GB at 8K and 3.0 TB at 32K. We measure them with a simple pair of
 [saved-tensor hooks](https://docs.pytorch.org/tutorials/intermediate/autograd_saved_tensors_hooks_tutorial.html).
 
 All of this is deliberately simple: no parallelism, no remat, no offloading yet.
 As we bring those in, these two categories shrink, but new ones creep in, such
-as FSDP's transient buffers. Here is all of it on a log2 scale, where each
-gridline is a factor of 2.
+as FSDP's transient buffers. Here is all of it:
 
 ::: figure memory-by-kind
 
 *Log2 axis: each gridline is a factor of 2, so halving something (say, sharding
 it over 2 GPUs) shortens its bar by exactly one gridline. The dashed line is one
-GPU. Both charts in this section share the axis.*
+GPU.*
 
 The key takeaway is the scale. The whole cluster has 512 x 288 GB = 147 TB, and
 the persistent state alone fills a quarter of it. The stashed activations of a
@@ -98,8 +97,8 @@ off. Once the master weights are sharded, how does a GPU run the model?
 Specifically, where does it get the weights from? Each GPU all-gathers the full
 compute weights from the shards, once per step, and keeps them for the whole
 step: *that copy is the working set*. We compute in MXFP8, so most compute
-weights take 1 byte per parameter, which is why the it is close to 2.78T, number
-of parameters. Keep an eye on the working set; it matters a lot in a roofline
+weights take 1 byte per parameter, which is why it is close to 2.78 TB, about
+one byte per parameter. Keep an eye on the working set; it matters a lot in a roofline
 study. Overall, ZeRO-1 takes us from 33.4 TB per GPU to 14.0 TB.
 
 ::: tree-step zero2
@@ -168,7 +167,7 @@ part. Percentages are each part's share of that config's working set.*
 
 This flip is what Tianyu was pointing at. TP shards the dense layers. Before
 EP they were 3% of the working set, so TP had little to gain; after EP they are
-the larger part, and TP can go after them. So, lets take a step back from FSDP and explore TP.
+the larger part, and TP can go after them. So, let's take a step back from FSDP and explore TP.
 
 > NOTE: The TP direction is mostly an exercise in building the mental model. TP puts communication on the critical path in every one of the 93 layers, on top of EP's all-to-alls, so this config will likely be slow. We work it out anyway and add it to the configs that fit in memory; the rankings will show whether it is indeed slow.
 
@@ -184,7 +183,7 @@ the dense weights, and each TP shard is then FSDP-sharded over the FSDP axis.
 With TP 2, the mesh is 256 (FSDP) x 2 (TP), and a TP-sharded parameter is still
 split 2 x 256 = 512 ways, so the persistent state per GPU does not move.
 
-The interesting question is how TP works inside the MoE layers. torchtitan has
+The interesting question is how TP works inside the MoE layers. TorchTitan has
 no expert TP. Instead, the TP ranks become EP ranks: EP is carved out of the
 FSDP and TP axes together. With EP 64 and TP 2, an EP group of 64 GPUs spans 32
 positions on the FSDP axis times the 2 TP ranks, and each group of 14 experts
@@ -193,8 +192,8 @@ shrinks the dense part.
 
 ::: tree-step tp snapshot
 
-**What TP buys.** Under FSDP + EP, not much: the dense part of the working set
-is already small. So let's go back to a clean slate and start from ZeRO-1,
+**What TP buys.** For memory under FSDP + EP, not much: the dense part of the
+working set is already small. So let's go back to a clean slate and start from ZeRO-1,
 which we discarded earlier.
 
 ::: figure ep-tp-table
@@ -402,7 +401,7 @@ pass only its small recurrent state between ranks. So CP also cuts the
 activation memory by its degree, inputs included, but it leaves the weights
 untouched.
 
-I admit this is a very short explanation of CP and TP.  Here, the one takeaway
+I admit this is a very short explanation of CP and TP. Here, the one takeaway
 is that both cut the activations by about their degree. For the details, read
 the [Ultra-Scale
 Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and the
@@ -461,10 +460,8 @@ On the first rank, with attention recomputed at 8K:
 
 ## What Parallelism Configs Fit
 
-With all of that in place, here are the parallelism configs that fit our
-budget:
-
-Each config walks the greedy path ([[memory.4.1]]) from left to right and
+With all the pieces in place, here are the parallelism configs that fit our
+budget. Each config walks the greedy path ([[memory.4.1]]) from left to right and
 stops at the first state that fits (outlined). If that leaves memory to spare,
 the spare memory buys back part of DistMoE's buffer, shown by the arrow in the
 green cell. The buy-back sets how many MoE layers stop recomputing: "+30%"
@@ -480,6 +477,10 @@ microbatches means half as many rounds of FSDP's gathers and reduce-scatters, as
 discussed earlier.
 
 ::: figure fit-configs
+
+*"~": estimated; "host full": the offload would not fit in the node's CPU
+memory, so the path skips it; "OOM": that setting's measured run ran out of
+memory.*
 
 Note that CP and TP let a config get away with less remat and offload. Whether
 that pays off, or the extra FSDP communication from more microbatches outweighs
