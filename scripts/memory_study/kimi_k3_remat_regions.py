@@ -197,7 +197,8 @@ if os.environ.get("KIMI_K3_INVENTORY_POLICY") == "none" and not _PLAIN:
 
 
 def _write():
-    if not OUT or not (_events or _block_events):
+    # with real multi-GPU runs, only rank 0 writes (identical inventories)
+    if not OUT or not (_events or _block_events) or int(os.environ.get("RANK", "0")) != 0:
         return
     torch.cuda.synchronize()
     times = defaultdict(list)
