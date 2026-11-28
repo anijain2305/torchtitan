@@ -1,31 +1,59 @@
 {
- "note": "32K, FSDP 512 + EP 64, CP 1, 93 layers, eager, fake PG on one GB300, DistMoE recomputing (default). peak_reserved_gib: the last-step 'memory:' value; step_s: 32768 tokens per GPU per step / median tps of the steps after the first. From the run logs in /tmp/claude-anijain/runs/r32*_*93.log (2026-11-25, not kept).",
- "runs": {
-  "full": {
-   "peak_reserved_gib": 268.69,
-   "tps": [
-    1425,
-    1383,
-    1367,
-    1437,
-    1397,
-    1376,
-    1448
-   ],
-   "step_s": 23.45597709377237
-  },
-  "full_block": {
-   "peak_reserved_gib": 244.94,
-   "tps": [
-    1535,
-    1497,
-    1454,
-    1548,
-    1522,
-    1470,
-    1547
-   ],
-   "step_s": 21.529566360052563
-  }
- }
+    "note": "32K, FSDP 512 + EP 64, CP 1, 93 layers, eager, fake PG on one GB300, DistMoE recomputing (default). peak_reserved_gib: the last-step 'memory:' value; step_s: 32768 tokens per GPU per step / median tps of the steps after the first. From the run logs in /tmp/claude-anijain/runs/r32*_*93.log (2026-11-25, not kept). Re-run 2026-11-27 (5 steps, one GPU each, both at once): full remat at 268.6 GiB retries the allocator every step (4 retries per step, cumulative 8 / 12 / 16 at steps 3-5) and ran at 684 tokens/s, half the first run's; full_block at 244.9 GiB has no retries and repeats ~1,460 tokens/s. Full remat's time is set by allocator retries at the memory limit, not compute, so the chart uses full_block's time for it (the block offload hides behind compute).",
+    "runs": {
+        "full": {
+            "peak_reserved_gib": 268.69,
+            "tps": [
+                1425,
+                1383,
+                1367,
+                1437,
+                1397,
+                1376,
+                1448
+            ],
+            "step_s": 23.45597709377237
+        },
+        "full_block": {
+            "peak_reserved_gib": 244.94,
+            "tps": [
+                1535,
+                1497,
+                1454,
+                1548,
+                1522,
+                1470,
+                1547
+            ],
+            "step_s": 21.529566360052563
+        }
+    },
+    "rerun_2026_11_27": {
+        "full": {
+            "peak_reserved_gib": 268.63,
+            "tps": [
+                258,
+                509,
+                684,
+                604,
+                684
+            ],
+            "alloc_retries_by_step": {
+                "3": 8,
+                "4": 12,
+                "5": 16
+            }
+        },
+        "full_block": {
+            "peak_reserved_gib": 244.94,
+            "tps": [
+                44,
+                1318,
+                1466,
+                1455,
+                1469
+            ],
+            "alloc_retries": 0
+        }
+    }
 }

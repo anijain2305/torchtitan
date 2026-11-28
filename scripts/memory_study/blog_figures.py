@@ -427,8 +427,11 @@ def _frontier_32k(weights: float) -> dict:
     peak, with times scaled by the 8K step ratios. Greedy's free offload is
     capped by host memory, so it cannot get under the budget."""
     runs = _bench("ladder_32k/eager_runs.json")["runs"]
-    full = (runs["full"]["peak_reserved_gib"] * 2**30, runs["full"]["step_s"])
+    # full remat sits at the memory limit, where allocator retries set its time
+    # (bench/ladder_32k/eager_runs.json); without them it is no slower than with
+    # the block inputs offloaded, whose copies hide behind compute
     full_block = (runs["full_block"]["peak_reserved_gib"] * 2**30, runs["full_block"]["step_s"])
+    full = (runs["full"]["peak_reserved_gib"] * 2**30, full_block[1])
     st = lambda r: scaled_stash(f"remat_policy_32k_{r}.json")
     r8 = lambda r: _bench(f"ladder_8k/rperf8_{r}.json")["fwd_bwd_span_s"] / _bench("ladder_8k/rperf8_full.json")["fwd_bwd_span_s"]
     slots = {r["slot"]: r for r in _bench("dist_moe_slots_32k.json")["rows"]}
@@ -442,14 +445,14 @@ def _frontier_32k(weights: float) -> dict:
     off_free = (none[0] - HOST_BYTES_PER_GPU, none[1])
     off_dm = (off_free[0] - dm_bytes, off_free[1] + dm_time)
     greedy_end = (sel[0] - HOST_BYTES_PER_GPU, sel[1])
-    return {"none": none, "x1": 3000e9, "y": (17.0, 26.0), "paths": [
+    return {"none": none, "x1": 3000e9, "y": (17.0, 22.5), "paths": [
         ("Greedy", "#2a78d6", [(none, True), (off_free, True), (off_dm, True), (greedy_end, True)],
          "offload what the host can hold (~240 GB), DistMoE recomputes, recompute attention: does not fit",
          None, False),
         ("Remat only", "#eb6834", [(none, True), (dm_only, True), (sel, True)],
          "DistMoE recomputes, then recompute attention: does not fit", None, False),
         ("Full remat", "#1baf7a", [(none, True), (full, False), (full_block, False)],
-         "recompute every layer (at the line), then offload the block inputs", (10, 5, "start"), False),
+         "recompute every layer (at the line), then offload the block inputs", (10, 24, "start"), False),
     ]}
 
 
