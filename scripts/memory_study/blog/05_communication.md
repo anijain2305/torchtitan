@@ -9,7 +9,7 @@ they use, and what compute they can hide behind:
 |---|---|---|---|
 | FSDP | all-gather of each layer's weights (forward, backward); reduce-scatter of its gradients (backward) | NVLink within a PP stage; without PP it spans both NVLink and InfiniBand | the neighbouring layer's compute (one layer ahead) |
 | EP | token dispatch and combine (all-to-all), per MoE layer and pass | NVLink (EP 64 fits in one NVL domain) | the routed-expert GEMMs (fused in DistMoE) |
-| TP | all-gather before column-parallel linears, reduce-scatter after row-parallel ones | NVLink | with TorchTitan's async TP linears, the GEMMs of the projections it converts (in Kimi K3, the attention output projection and the shared expert); the gather before the attention projections stays exposed |
+| TP | all-gather before column-parallel linears, reduce-scatter after row-parallel ones | NVLink | with TorchTitan's async TP linears, the GEMMs of the projections it converts (in Kimi K3, the attention output projection and the shared expert); the gather before the attention projections stays exposed, and backward gathers it again instead of keeping it |
 | CP | MLA: all-to-alls around attention (Ulysses); KDA: recurrent state between ranks | NVLink | nothing today: attention waits for its all-to-all, and the next op for the one after it |
 | PP | activations and the AttnRes block stack between stages | InfiniBand (stages sit in different NVL domains) | nothing: on the critical path |
 

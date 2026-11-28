@@ -5,7 +5,9 @@ runs all 93 layers: FSDP's all-gather and reduce-scatter of the next layer
 overlap the current layer's compute, with the penalties of [[communication]];
 EP's dispatch and combine run inside DistMoE's expert GEMMs; TP runs
 TorchTitan's async TP linears, which hide most of its collectives behind their
-GEMMs, and CP's collectives are exposed in full. The step is one microbatch's time, times the
+GEMMs, and gathers the attention input again in backward instead of keeping it
+(so TP cuts the activations as much as CP); CP's collectives are exposed in
+full. The step is one microbatch's time, times the
 number of microbatches. With PP, the schedule simulation of [[step]] gives the
 step from each chunk's time and each hop, and ZeRO-1 adds the stage's
 all-gather and reduce-scatter once per step; so does ZeRO-1 + EP 128 + TP,
@@ -221,9 +223,9 @@ The ranking says it depends on whether FSDP's communication is the bottleneck:
 | Config | TP | CP | Faster |
 |---|---|---|---|
 | 8K, FSDP + EP 64, degree 2 | 40.3 s | 46.1 s | TP, by 5.8 s |
-| 32K, FSDP + EP 64, degree 4 | 24.5 s | 27.7 s | TP, by 3.2 s |
+| 32K, FSDP + EP 64, degree 4 | 24.6 s | 27.7 s | TP, by 3.1 s |
 | 8K, PP 8 interleaved `v = 4`, degree 2 | 19.0 s | 19.1 s | tie |
-| 32K, PP 8 interleaved `v = 4`, degree 4 | 23.5 s | 23.4 s | tie |
+| 32K, PP 8 interleaved `v = 4`, degree 4 | 23.6 s | 23.4 s | tie |
 
 - **When FSDP's communication is the bottleneck, TP helps memory and speed.**
   Without PP, FSDP gathers and reduce-scatters every layer every microbatch.
@@ -238,10 +240,10 @@ The ranking says it depends on whether FSDP's communication is the bottleneck:
   overlaps, and how well the computation it splits still runs. CP communicates
   far less: only around attention, and in the KDA layers just a small state.
   TP communicates around every dense layer, but async TP hides most of it,
-  leaving about 0.4 s of exposed time and overlap slowdown at 8K. CP pays
-  instead with a slower KDA kernel. TP also shrinks the stash less: each TP
-  block saves its all-gathered input, and async TP shards only the shared
-  expert's. The two come out even.
+  leaving about half a second of exposed time and overlap slowdown at 8K,
+  including the attention input it gathers again in backward instead of
+  keeping. CP pays instead with a slower KDA kernel. With that re-gather, TP's
+  stash is as small as CP's. The two come out even.
 
 > NUGGET: TP or CP depends on how often the weights move. When FSDP gathers every layer every microbatch, TP wins: it shrinks the dense weights that dominate FSDP's traffic once EP has split the experts. When the weights move once per step (ZeRO-1 under PP), TP's advantage is gone, and with async TP hiding most of its communication, the two come out even.
 
@@ -252,7 +254,8 @@ But there is a catch: this is a model, and the leaders sit within a few
 percent of each other. Small changes to the model can flip their order:
 
 - **What it assumes:** NVLink bandwidth and overlap inside a 64-GPU NVL domain
-  (measured up to 32 GPUs), TP with async TP and CP exposed, a hop moving as soon as
+  (measured up to 32 GPUs), TP with async TP and the attention gather
+  recomputed, CP exposed, a hop moving as soon as
   both sides are ready, the optimizer at its GPU time, and every remat and
   offload cost scaled from the measured 8K FSDP 512 + EP 64 steps. EP 128's
   expert kernels are assumed as efficient as EP 64's (not benchmarked).

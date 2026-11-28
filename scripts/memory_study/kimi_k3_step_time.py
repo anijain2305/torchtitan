@@ -180,8 +180,9 @@ class Config:
     activations offloaded to CPU memory (3.4.1). zero1: ZeRO-1 + EP 128 without
     PP (gather and reduce-scatter once per step), the 3.2.3 configs.
     async_tp: TorchTitan's eager async TP linears (AsyncTensorParallelTransform)
-    on the projections it converts: in Kimi K3 the attention output projection
-    and the shared expert's w13 / w2."""
+    on the projections it converts (in Kimi K3 the attention output projection
+    and the shared expert's w13 / w2), plus recomputing the attention input's
+    all-gather (attention.tp_gather) instead of keeping its output."""
 
     def __init__(
         self,
@@ -689,7 +690,11 @@ class StepModel:
                 # re-gathers w13's input for its weight gradient (overlapped).
                 q = cm["tp"] / 4
                 e, p, x = self.overlap(n_tp * 3 * q + q, lc["dense_fwd"] + lc["dense_bwd"])
-                out["exposed_tp"] += n_tp * q + e
+                # the attention input's gather is recomputed (attention.tp_gather)
+                # instead of kept: backward gathers it once more, exposed, unless
+                # full remat replays the layer (and the gather) anyway
+                regather = q if c.remat != "full" else 0.0
+                out["exposed_tp"] += n_tp * q + regather + e
                 out["penalty_tpcp"] += p + x
                 out["exposed_cp"] += n_cp * cm["cp"]
             elif not self.overlap_tp_cp:

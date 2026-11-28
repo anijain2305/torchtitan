@@ -480,7 +480,8 @@ discussed earlier.
 
 *"~": estimated; "host full": the offload would not fit in the node's CPU
 memory, so the path skips it; "OOM": that setting's measured run ran out of
-memory.*
+memory. TP rows use TorchTitan's async TP and gather the attention input again
+in backward instead of keeping it, so TP cuts the activations by its degree.*
 
 Note that CP and TP let a config get away with less remat and offload. Whether
 that pays off, or the extra FSDP communication from more microbatches outweighs

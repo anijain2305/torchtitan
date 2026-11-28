@@ -1228,21 +1228,26 @@ FIT_POLICIES = [("nothing", "No remat"), ("off", "Offload"), ("none", "DistMoE r
                 ("sel", "+ attention"), ("seloff", "+ attention + offload"), ("full", "Full remat")]
 
 
-# TP configs run TorchTitan's eager async TP linears (AsyncTensorParallelTransform).
+# TP configs run the best TP TorchTitan offers today: its eager async TP linears
+# (AsyncTensorParallelTransform) plus recomputing the attention input's
+# all-gather (the attention.tp_gather remat region).
 ASYNC_TP = True
 
 
 def _async_tp_saving(ctx: str, cp: int, tp: int) -> float:
-    """Stash async TP saves over plain TP (bytes, 93 layers): the shared
-    expert's w13 (or layer 0's dense FFN) keeps a 1 / tp shard of its gathered
-    input instead of the whole (T / cp) x D bf16 tensor. The attention
-    projections are not async linears in Kimi K3, so their gathered input stays.
-    Measured with real TP on 64-expert layers: 59 MB per layer at 8K TP 2
-    (bench/async_tp_stash.json)."""
+    """Stash this TP setup saves over plain TP (bytes, 93 layers), measured with
+    real TP on 64-expert layers (bench/async_tp_stash.json):
+      - recomputing attention.tp_gather: the attention projections no longer
+        keep the whole gathered (T / cp) x D bf16 input (470 MB per layer at
+        32K TP 4); backward re-gathers it from the sequence shard;
+      - async TP: the shared expert's w13 (or layer 0's dense FFN) keeps a
+        1 / tp shard of its gathered input instead of all of it (352 MB per
+        layer at 32K TP 4, 59 MB at 8K TP 2)."""
     if tp == 1 or not ASYNC_TP:
         return 0.0
     T = 8192 if ctx == "8K" else 32768
-    return 93 * (T / cp) * 7168 * 2 * (1 - 1 / tp)
+    x = (T / cp) * 7168 * 2
+    return 93 * (x + x * (1 - 1 / tp))
 
 
 def _split_stash(ctx: str, cp: int, tp: int, pol: str) -> float:
