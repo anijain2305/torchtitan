@@ -281,7 +281,7 @@ layers run on custom kernels, in our case
 intermediates in one activation buffer shared by the whole model, whose size we
 set at model init. At runtime, each MoE layer checks how much room is left in
 the buffer. If there is enough, it stashes its inputs and its intermediates. If
-not, only its inputs, and it recomputes the rest in backward. So with the
+not, it stashes only its inputs and recomputes the rest in backward. So with the
 smallest buffer every MoE layer recomputes, and with a big enough one every
 layer stashes. In between it is a dial: size the buffer at 30% of that range,
 and about 30% of the MoE layers stash while the rest recompute. Conceptually
@@ -301,7 +301,7 @@ peak:
   for an imbalance of 4.
 
 Let's look at the total activations for three buffer sizes, written as the
-share of that range. We use this notion in this post as well.
+share of that range. We use this notation throughout the post:
 
 - **+100%** (big enough for balanced routing): every MoE layer stashes, nothing
   is recomputed. 683 GB.
@@ -334,14 +334,15 @@ Here is the general recipe I followed:
    sequence ([[memory.4.2]]). For each CP or TP degree, find its best remat and
    offload setting, and let the ranking pick.
 
-Lets look into this recipe in more detail.
+Let's look at each lever in more detail.
 
 ### Rematerialization and offloading
 
 There are two ways to stash less, and both trade something for memory:
 
 - **Rematerialization** (with [torch_remat](https://github.com/meta-pytorch/remat))
-  does not stash a region's tensors; it recomputes them in backward. The cost is the recompute overhead. DistMoE's own config from 3.3 also sits here: the size of its activation buffers.
+  does not stash a region's tensors; it recomputes them in backward, at the
+  cost of the recompute time. DistMoE's buffer size from 3.3 also sits here.
 - **Offloading** stashes them in CPU memory instead: forward copies them out,
   backward copies them back, over the link between the GPU and its CPU (on a
   GB300, the C2C link to the Grace CPU). It costs bandwidth, and it is free as
@@ -377,7 +378,7 @@ A general insight that was new to me from this experiment: offloading is very
 powerful. If you are not using the C2C link for anything else, it removes a
 good part of the memory footprint for free.
 
-> NUGGET: Offloading is free until the CPU link saturates, and that free budget is best spent on the bytes most expensive to recompute.
+> NUGGET: Offloading is free as long as it hides behind compute, and that free budget is best spent on the bytes most expensive to recompute.
 
 This experiment covers just one parallelism config. Every config needs its own
 run of these steps, because each leaves a different budget for activations. But
