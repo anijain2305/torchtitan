@@ -408,17 +408,16 @@ the [Ultra-Scale
 Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and the
 background on linear attention.
 
-So which one should be faster? The rankings will tell us, but it is a good
-mental exercise to think it through first. The answer: it depends.
+At this point, it is also worth building a mental model of which one should be
+faster. The answer: it depends.
 
 - **What favors TP.** If FSDP's communication holds your config back, and EP
-  has made the dense weights a big part of what FSDP moves ([[memory.2.2]]), TP
-  shrinks every all-gather and reduce-scatter to its shard, and the memory it
+  has made the dense weights a big part of what FSDP moves (the flip we saw in
+  [[memory.2.2]]), TP shrinks every all-gather and reduce-scatter to its shard, and the memory it
   frees can buy back some remat.
 - **What it costs.** TP splits every GEMM, which runs less efficiently when
   split too far, and it communicates around every dense layer. CP communicates
-  only around attention, and in Kimi K3's KDA layers, most of the model, just a
-  small recurrent state.
+  only around attention, and in the KDA layers just a small recurrent state.
 
 So CP is an attractive choice for long contexts with linear attention, unless
 FSDP's communication is what holds you back. And if you have been following
@@ -433,14 +432,16 @@ degrees, and run the greedy search to fit each one into its activation budget.
 
 As a reminder, we brought in PP because it makes ZeRO-1 affordable, which
 saves FSDP's per-microbatch communication. The question now is how it affects
-the activation footprint. The answer: it depends on the pipeline schedule.
+the activation footprint. It depends on the pipeline schedule.
 
 Of the many PP schedules, this study keeps two, 1F1B and Interleaved 1F1B, and
 for each we care about its bubble and its activation footprint.
 
 **1F1B.** Each stage holds 1/P of the layers, but up to P microbatches are
-alive on the first stage, so it holds about one whole sequence's activations:
-the same as without PP.
+alive on the first stage, so it holds about one whole sequence's activations,
+roughly the same as without PP. But 1F1B suffers from pipeline bubbles: while
+the pipeline fills at the start of a step and drains at the end, ranks sit
+idle.
 
 **Interleaved 1F1B.** To shrink 1F1B's bubble, Interleaved 1F1B cuts the
 model into `v` times more, smaller chunks and deals them to the ranks round
@@ -449,15 +450,14 @@ robin. With PP 8 and `v = 2`, rank 0 runs layers 0-5 and 48-53, rank 1 layers
 pieces, and the bubble shrinks by about `v` (we come back to this with the step
 time). The price is memory: to keep every rank busy, the first rank starts more
 microbatches before its first backward, so more activations are alive at once.
-A larger `v` gives some of that back, since its chunks are smaller.
+A larger `v` gives some of that back, because with smaller chunks, the
+microbatches in flight are released sooner.
 
 On the first rank, with attention recomputed at 8K:
 
 ::: figure pp-schedule-acts
 
-There is a fascinating world of pipeline schedules out there, and I hope to
-learn it someday and extend this study to more of them. For now, this post is
-complex enough, so we stick with these two.
+> NOTE: There is a fascinating world of pipeline schedules out there, and I hope to learn it someday and extend this study to more of them. For now, this post is complex enough, so we stick with these two.
 
 ## What Parallelism Configs Fit
 
