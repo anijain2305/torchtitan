@@ -137,7 +137,7 @@ this same wall. Their answer was expert parallelism.
 same 512 GPUs that FSDP shards over. Let's take EP 64 as an example. Each
 layer's 896 experts are divided into 64 groups of 14, and each group is then
 FSDP-sharded over the remaining 512 / 64 = 8 GPUs. The dense layers do not
-take part in EP, they stay FSDP-sharded over all 512 GPUs.
+take part in EP; they stay FSDP-sharded over all 512 GPUs.
 
 ::: tree-step ep snapshot
 
@@ -150,7 +150,8 @@ and leaving about 200 GB for activations.
 
 ::: figure zero-ep-table
 
-The EP cost is all-to-alls on the critical path, which can be so expensive that serious training runs use custom kernels like DistMoE
+EP's cost is its all-to-alls, which sit on the critical path. They can be so
+expensive that serious training runs use custom kernels like DistMoE
 (introduced later) to overlap them with the routed experts' own compute.
 
 **Wait, why pair EP with FSDP and not with TP?** That is what my colleague
