@@ -205,9 +205,10 @@ both like FSDP, overlapped with the same NVLink penalties:
 
 ::: figure overlap-tp-cp-table
 
-- **Not much moves:** half a second for CP 4 at 32K, a tenth of a second at 8K,
-  and a little less for TP, whose remaining exposed gather is small.
-- **The 32K near-tie flips:** PP 8 with CP 4 edges ahead of FSDP 512.
+- **Not much moves:** half a second for CP 4 at 32K and a tenth of a second at
+  8K; TP gains up to 0.7 s at 32K, since its attention gather and the backward
+  re-gather are the part async TP leaves exposed.
+- **The 32K near-tie flips:** PP 8 with CP 4 or TP 4 edges ahead of FSDP 512.
 
 So CP's exposed communication is not what makes it slow. Its real costs are
 elsewhere: folding in the earlier ranks' recurrent state makes KDA's CP kernel
