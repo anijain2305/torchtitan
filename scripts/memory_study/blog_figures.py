@@ -456,8 +456,9 @@ def _frontier_32k(weights: float) -> dict:
 def remat_offload_frontier(ctx: str = "8K") -> str:
     """Paths from no remat to under the activation budget FSDP + EP 64 leaves:
     step time against memory for activations (peak minus the weight
-    footprint). Filled points are measured at full depth, hollow ones
-    estimated; at 8K the greedy path's steps are numbered."""
+    footprint). Points are measured at full depth or estimated from measured
+    differences (not distinguished on the chart); at 8K the greedy path's steps
+    are numbered."""
     fsdp = zero_parts("8K")[-1]
     weights = sum(fsdp["persistent"]) + sum(fsdp["working"])
     budget = GPU_BYTES - weights
@@ -500,8 +501,8 @@ def remat_offload_frontier(ctx: str = "8K") -> str:
                        + " ".join(f"{X(act(p)):.1f},{Y(p[1]):.1f}" for p, _ in pts[-2:]) + '"/>')
         for p, est in pts[1:]:
             out.append(f'<g><title>{html.escape(name)}: {p[1]:.2f} s, {_dec(act(p))} for activations'
-                       f'{" (estimated)" if est else ""}</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '
-                       f'r="{4 if est else 6}" fill="{SURFACE if est else c}" stroke="{c}" stroke-width="2"/></g>')
+                       f'</title><circle cx="{X(act(p)):.1f}" cy="{Y(p[1]):.1f}" '
+                       f'r="6" fill="{c}" stroke="{c}" stroke-width="2"/></g>')
         if numbered:  # numbered badges: the order of the greedy steps
             for n, ((p, _), (bx, by)) in enumerate(zip(pts[1:], ((0, 17), (0, 17), (-15, -13), (-14, -15))), 1):
                 cx, cy = X(act(p)) + bx, Y(p[1]) + by
@@ -515,9 +516,9 @@ def remat_offload_frontier(ctx: str = "8K") -> str:
         tag = f"{p[1]:.2f} s" if fits else "does not fit"
         out.append(halo(_text(X(act(p)) + dx, Y(p[1]) + dy, f"{name}: {tag}", 12, INK, anchor, weight=600)))
     x, y = X(act(none)), Y(none[1])  # the shared start
-    out.append(f'<g><title>No remat: {none[1]:.2f} s, {_dec(act(none))} for activations (estimated)</title>'
-               f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="{SURFACE}" stroke="{INK}" stroke-width="2"/></g>')
-    out.append(halo(_text(x + 10, y + 24, "No remat (est.)", 12, INK, "end", weight=600)))
+    out.append(f'<g><title>No remat: {none[1]:.2f} s, {_dec(act(none))} for activations</title>'
+               f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="{INK}" stroke="{INK}" stroke-width="2"/></g>')
+    out.append(halo(_text(x + 10, y + 24, "No remat", 12, INK, "end", weight=600)))
     for i, (name, c, _, desc, _, _) in enumerate(paths):  # legend: each path's steps
         ly = h - b + 62 + 16 * i
         out.append(f'<line x1="{l}" x2="{l + 18}" y1="{ly - 4}" y2="{ly - 4}" stroke="{c}" stroke-width="3"/>')

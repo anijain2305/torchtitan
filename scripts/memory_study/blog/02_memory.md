@@ -280,7 +280,7 @@ layers run on custom kernels, in our case
 [DistMoE](https://github.com/meta-pytorch/dist_moe). DistMoE stashes the MoE
 intermediates in one activation buffer shared by the whole model, whose size we
 set at model init. At runtime, each MoE layer checks how much room is left in
-the buffer: if there is enough, it stashes its inputs and its intermediates; if
+the buffer. If there is enough, it stashes its inputs and its intermediates. If
 not, only its inputs, and it recomputes the rest in backward. So with the
 smallest buffer every MoE layer recomputes, and with a big enough one every
 layer stashes. In between it is a dial: size the buffer at 30% of that range,
@@ -301,7 +301,7 @@ peak:
   for an imbalance of 4.
 
 Let's look at the total activations for three buffer sizes, written as the
-share of that range, as in the rest of the post:
+share of that range. We use this notion in this post as well.
 
 - **+100%** (big enough for balanced routing): every MoE layer stashes, nothing
   is recomputed. 683 GB.
@@ -334,16 +334,14 @@ Here is the general recipe I followed:
    sequence ([[memory.4.2]]). For each CP or TP degree, find its best remat and
    offload setting, and let the ranking pick.
 
-The rest of this section follows the recipe: the remat and offload frontier,
-then context and tensor parallelism. Last, we look at how pipeline schedules
-affect the activation footprint.
+Lets look into this recipe in more detail.
 
 ### Rematerialization and offloading
 
 There are two ways to stash less, and both trade something for memory:
 
 - **Rematerialization** (with [torch_remat](https://github.com/meta-pytorch/remat))
-  does not stash a region's tensors; backward recomputes them. We pay recompute overhead. DistMoE's own config from 3.3 also sits here: the size of its buffers.
+  does not stash a region's tensors; it recomputes them in backward. The cost is the recompute overhead. DistMoE's own config from 3.3 also sits here: the size of its activation buffers.
 - **Offloading** stashes them in CPU memory instead: forward copies them out,
   backward copies them back, over the link between the GPU and its CPU (on a
   GB300, the C2C link to the Grace CPU). It costs bandwidth, and it is free as
@@ -364,9 +362,6 @@ that end up slower. To read the chart, start at the bottom right, with no remat
 and no offload. Each line then applies its own steps in order.
 
 ::: figure remat-offload-frontier
-
-*Filled points are measured at full depth, hollow ones estimated. 8K runs use
-CUDA graphs; 32K runs (the toggle at the top right) are eager.*
 
 - **Remat only.** Let DistMoE recompute, then recompute attention. It lands
   right on the budget line.
