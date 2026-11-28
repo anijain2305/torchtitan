@@ -380,20 +380,10 @@ good part of the memory footprint for free.
 
 > NUGGET: Offloading is free as long as it hides behind compute, and that free budget is best spent on the bytes most expensive to recompute.
 
-This experiment covers just one parallelism config. Every config needs its own
-run of these steps, because each leaves a different budget for activations. But
-part of the analysis carries over: the price of each step per byte freed. TP and
-CP shrink the memory footprint and the forward time together, so these prices
-stay roughly the same. We run this greedy approach for every config.
-
-
 Now look at the same config at 32K context (use the toggle at the top right).
 To fit the budget, we have to go all the way to full remat, and offload the
-block inputs on top. Is there another lever? Yes: context and tensor
-parallelism. They cut the activation memory, so the remat can be less
-aggressive, but they put communication on the critical path. The question
-becomes which costs more: the remat or the collectives. Let's look at CP and TP
-next.
+block inputs on top, and full remat is slow. Is there another lever? Yes:
+context and tensor parallelism.
 
 ### Shrinking activations with Context and Tensor Parallelism
 
